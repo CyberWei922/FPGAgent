@@ -25,20 +25,21 @@ export function makePasswordLockBugs(fixedCode: string): BugClinicCase[] {
   const to = `        if (!rst_n) begin
             key0_d   <= 1'b0;
         end else begin`;
+  const buggyCode = replaceOnce(fixedCode, from, to, 'password-missing-reset');
   return [
     {
       id: 'password-missing-reset',
       title: '隐蔽故障：复位漏掉密码进度寄存器',
       pitfallTag: 'missing-reset',
-      symptom: '上电后数码管随机显示进度，偶尔一上电就亮起开锁指示灯',
-      buggyCode: replaceOnce(fixedCode, from, to, 'password-missing-reset'),
+      symptom: '中途按下复位后数码管仍显示旧的密码进度，上电时也可能残留随机状态',
+      buggyCode,
       diagnosis: {
         level1Hint: '复位那一拍，所有需要记住状态的寄存器都回到已知值了吗？',
         level2Cause:
-          '复位分支只清了 key0_d，step 与 unlocked 没有复位：仿真初值不确定，上板后进度和开锁状态可能随机。',
+          '复位分支只清了 key0_d，step 与 unlocked 没有复位：进度保留、开锁灯可能残留，仿真初值也不确定。',
         level3PatchCode: fixedCode,
-        highlightLine: lineOf(fixedCode, 'if (!rst_n)'),
-        highlightCycle: 0,
+        highlightLine: lineOf(buggyCode, "key0_d   <= 1'b0;"),
+        highlightCycle: 14,
       },
     },
   ];
@@ -46,24 +47,34 @@ export function makePasswordLockBugs(fixedCode: string): BugClinicCase[] {
 
 /** 1011 序列检测器：状态机转移写错导致漏检（重叠前缀丢失）。 */
 export function makeSequenceDetectorBugs(fixedCode: string): BugClinicCase[] {
+  const transitionBuggy = replaceOnce(
+    fixedCode,
+    'if (din) state <= S1; else state <= S2;',
+    'if (din) state <= S0; else state <= S2;',
+    'sequence-fsm-transition',
+  );
+  const stickyBuggy = replaceOnce(
+    fixedCode,
+    `        end else begin
+            hit <= 1'b0;
+            case (state)`,
+    `        end else begin
+            case (state)`,
+    'sequence-hit-sticky',
+  );
   return [
     {
       id: 'sequence-fsm-transition',
       title: '隐蔽故障：状态机漏掉重叠前缀',
       pitfallTag: 'fsm-transition',
       symptom: '连续输入 1、1 之后，再输入 0、1、1 检测灯不亮；从单个 1 开始的序列才有机会命中',
-      buggyCode: replaceOnce(
-        fixedCode,
-        'if (din) state <= S1; else state <= S2;',
-        'if (din) state <= S0; else state <= S2;',
-        'sequence-fsm-transition',
-      ),
+      buggyCode: transitionBuggy,
       diagnosis: {
         level1Hint: '已经收到一个 1 之后又收到 1，最长的“已匹配后缀”还保留着吗？',
         level2Cause:
           'S1（已收到一个 1）遇到 din=1 时错误回到 S0，而正确做法是保持 S1；否则以 "11" 开头的 1011 重叠序列会被漏检。',
         level3PatchCode: fixedCode,
-        highlightLine: lineOf(fixedCode, 'S1: begin'),
+        highlightLine: lineOf(transitionBuggy, 'if (din) state <= S0;'),
       },
     },
     {
@@ -71,20 +82,12 @@ export function makeSequenceDetectorBugs(fixedCode: string): BugClinicCase[] {
       title: '隐蔽故障：命中标志只置位不清零',
       pitfallTag: 'missing-clear',
       symptom: '第一次检测到 1011 后 LED 一直亮着，后续输入任何序列都无法熄灭',
-      buggyCode: replaceOnce(
-        fixedCode,
-        `        end else begin
-            hit <= 1'b0;
-            case (state)`,
-        `        end else begin
-            case (state)`,
-        'sequence-hit-sticky',
-      ),
+      buggyCode: stickyBuggy,
       diagnosis: {
         level1Hint: '这个 LED 表示“本拍命中”，它每一拍都应该被重新计算吗？',
         level2Cause: '正常分支缺少 hit <= 1\'b0 清零，检测到一次后 hit 恒为 1，指示灯常亮。',
         level3PatchCode: fixedCode,
-        highlightLine: lineOf(fixedCode, 'case (state)'),
+        highlightLine: lineOf(stickyBuggy, 'case (state)'),
         highlightCycle: 5,
       },
     },
@@ -93,18 +96,19 @@ export function makeSequenceDetectorBugs(fixedCode: string): BugClinicCase[] {
 
 /** 数字秒表：BCD 进位链断裂，十位不增长。 */
 export function makeStopwatchBugs(fixedCode: string): BugClinicCase[] {
+  const buggyCode = replaceOnce(fixedCode, "end else d1 <= d1 + 4'd1;", 'end else d1 <= d1;', 'stopwatch-bcd-carry');
   return [
     {
       id: 'stopwatch-bcd-carry',
       title: '隐蔽故障：BCD 进位链缺失',
       pitfallTag: 'bcd-carry',
       symptom: '计时从 0009 直接回到 0000，十位数字永远不增长',
-      buggyCode: replaceOnce(fixedCode, "end else d1 <= d1 + 4'd1;", 'end else d1 <= d1;', 'stopwatch-bcd-carry'),
+      buggyCode,
       diagnosis: {
         level1Hint: '个位从 9 回到 0 的那一拍，应该向哪一位进位？',
         level2Cause: '个位清零时没有让十位加 1，BCD 进位链断裂，计时永远停在个位。',
         level3PatchCode: fixedCode,
-        highlightLine: lineOf(fixedCode, "d1 <= d1 + 4'd1"),
+        highlightLine: lineOf(buggyCode, 'end else d1 <= d1;'),
         highlightCycle: 12,
       },
     },
@@ -113,18 +117,19 @@ export function makeStopwatchBugs(fixedCode: string): BugClinicCase[] {
 
 /** 四人抢答器：锁存条件被删掉，后按者会覆盖先按者。 */
 export function makeBuzzerBugs(fixedCode: string): BugClinicCase[] {
+  const buggyCode = replaceOnce(fixedCode, 'end else if (!locked) begin', 'end else begin', 'buzzer-missing-lock');
   return [
     {
       id: 'buzzer-missing-lock',
       title: '隐蔽故障：抢答结果没有锁存',
       pitfallTag: 'missing-lock',
       symptom: '先按下的选手灯会被后按下的选手覆盖，无法裁定第一个按下的人',
-      buggyCode: replaceOnce(fixedCode, 'end else if (!locked) begin', 'end else begin', 'buzzer-missing-lock'),
+      buggyCode,
       diagnosis: {
         level1Hint: '抢答器“先到先得”的语义，依赖哪个条件一直保持？',
         level2Cause: '分支条件删掉了 !locked 判断，锁存后仍继续仲裁，后按下的按键会改写 winner。',
         level3PatchCode: fixedCode,
-        highlightLine: lineOf(fixedCode, 'if (!locked)'),
+        highlightLine: lineOf(buggyCode, 'end else begin'),
       },
     },
   ];

@@ -84,6 +84,9 @@ const PASSWORD_LOCK_VECTORS: TestVectorStep[] = [
   { cycle: 9, inputs: { rst_n: 1, key: 0, sw: 9 }, expect: { led: 1 }, note: '开锁后保持点亮' },
   { cycle: 10, inputs: { rst_n: 1, key: 1, sw: 9 }, expect: { led: 1 }, note: '开锁状态下错误数字不会上锁' },
   { cycle: 11, inputs: { rst_n: 1, key: 2, sw: 0 }, expect: { led: 0, seg: 0 }, note: 'KEY1 重新上锁并清空进度' },
+  { cycle: 12, inputs: { rst_n: 1, key: 0, sw: 1 }, expect: { seg: 0 }, note: '重新开始输入' },
+  { cycle: 13, inputs: { rst_n: 1, key: 1, sw: 1 }, expect: { seg: 1 }, note: '提交数字 1，进度变为 1' },
+  { cycle: 14, inputs: { rst_n: 0, key: 0, sw: 0 }, expect: { led: 0, seg: 0 }, note: '中途复位：开锁灯熄灭且密码进度清零' },
 ];
 
 const PASSWORD_LOCK_BLUEPRINT: PresetProject['blueprint'] = {
