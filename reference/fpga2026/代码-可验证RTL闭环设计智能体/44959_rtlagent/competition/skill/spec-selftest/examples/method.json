@@ -1,0 +1,14 @@
+{
+  "method": "logic",
+  "sources": [
+    "S2"
+  ],
+  "params": {
+    "inputs": [
+      "left",
+      "right"
+    ],
+    "out": "value",
+    "op": "xor"
+  }
+}

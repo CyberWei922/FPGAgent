@@ -1,0 +1,28 @@
+{
+  "name": "rtl-fixed-flow-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A bounded Pi agent for RTL generation and Vivado validation",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check:prob154": "node scripts/check-prob154-diagnostic.mjs",
+    "doctor": "node src/cli.mjs doctor --config config.example.json",
+    "demo": "node scripts/demo.mjs",
+    "skills": "node src/cli.mjs skills --config config.example.json",
+    "check:skills": "node scripts/check-skills.mjs",
+    "check:patterns": "node scripts/check-inline-pattern.mjs",
+    "sim:skills": "node scripts/simulate-skill-suite.mjs",
+    "bench:harder": "node scripts/harder-bench.mjs",
+    "mcp": "node src/mcp-server.mjs --config config.example.json"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.87.0",
+    "@earendil-works/pi-ai": "0.87.0",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.3.6"
+  }
+}

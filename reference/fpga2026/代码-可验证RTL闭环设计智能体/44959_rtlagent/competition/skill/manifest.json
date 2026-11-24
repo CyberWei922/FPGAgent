@@ -1,0 +1,250 @@
+{
+  "source_commit": "dcbf0f6efb98ddee5fac02329025f2db5f2e2c4c",
+  "files": [
+    {
+      "path": "competition/skill/deterministic-cli.mjs",
+      "bytes": 2105,
+      "sha256": "fee62443d841aff57b321a384bd5c38cd2f55d4e1e5e2641d15a63b811835127"
+    },
+    {
+      "path": "competition/skill/index.json",
+      "bytes": 4271,
+      "sha256": "a3b109d8accb63764d340edda9b60df11f5b0ce69201135f264337ace5657b96"
+    },
+    {
+      "path": "competition/skill/rtl-interface-check/SKILL.md",
+      "bytes": 2393,
+      "sha256": "d97ab13017950a51f79b4681e109867535be4936b37f14d9229d93bc06524fe1"
+    },
+    {
+      "path": "competition/skill/rtl-interface-check/examples/bad-width.sv",
+      "bytes": 111,
+      "sha256": "c238f30bc14fcae3b2b70694b069671d64131e672339f6c103ba73ef6bd73cf3"
+    },
+    {
+      "path": "competition/skill/rtl-interface-check/examples/dut.sv",
+      "bytes": 106,
+      "sha256": "ec3ddbc2216c2bda5e65c8ef6005c06fbe80052405ec885596ea65f0794fbd49"
+    },
+    {
+      "path": "competition/skill/rtl-interface-check/examples/expected-bad-width.json",
+      "bytes": 1063,
+      "sha256": "3a25442913e3b14ce3c1aa54170068cc1a642f6c9d04475157f0c974336cdf8d"
+    },
+    {
+      "path": "competition/skill/rtl-interface-check/examples/expected.json",
+      "bytes": 981,
+      "sha256": "f15bf4ce17190e0e325166149b7626cf5e25c81b9b51d47a05bc7b95e1fea1a5"
+    },
+    {
+      "path": "competition/skill/rtl-interface-check/examples/prompt.txt",
+      "bytes": 107,
+      "sha256": "31d09ef360fcdad0bf7d5e084a4490100257387a72138df2497629ffcedc8771"
+    },
+    {
+      "path": "competition/skill/rtl-interface-check/scripts/rtl-interface-check.mjs",
+      "bytes": 1553,
+      "sha256": "a449b84d0633d58ade3442f8769250fc715d13b605df0ab7b85127a52c383a38"
+    },
+    {
+      "path": "competition/skill/rtl-lint-rules/SKILL.md",
+      "bytes": 4068,
+      "sha256": "c6db20ef20f460674adefa25ebad276920a7a63d8401392756832438952c3cef"
+    },
+    {
+      "path": "competition/skill/rtl-lint-rules/examples/clean.sv",
+      "bytes": 120,
+      "sha256": "6a01db1f35b113982a344b896299836f0c6aacc8883fdcf89a0bcc72bbd56b6e"
+    },
+    {
+      "path": "competition/skill/rtl-lint-rules/examples/dut.sv",
+      "bytes": 111,
+      "sha256": "d3d1121d6f63ddbc3e801894cc16ba38f63f3262379b3110ad444d331db6f654"
+    },
+    {
+      "path": "competition/skill/rtl-lint-rules/examples/expected-clean.json",
+      "bytes": 390,
+      "sha256": "105bb8f0c4db73a2d2a1694d062d629e31f3de4cc21c326840628a4b2076d043"
+    },
+    {
+      "path": "competition/skill/rtl-lint-rules/examples/expected.json",
+      "bytes": 674,
+      "sha256": "b8a3e89dbc7e394c9cad64b1f032f257e30cfe4464e2b8d7249cc8656aad61c3"
+    },
+    {
+      "path": "competition/skill/rtl-lint-rules/scripts/rtl-lint-rules.mjs",
+      "bytes": 2203,
+      "sha256": "fa752606ece334b60f4d1e05f4fe52a40d979091b281de15dbc2635018c837eb"
+    },
+    {
+      "path": "competition/skill/rtl-pitfalls/SKILL.md",
+      "bytes": 10003,
+      "sha256": "db20601e94d836e24c947fad5673c0d555db36cec68941247425de5c3db1d0d5"
+    },
+    {
+      "path": "competition/skill/rtl-pitfalls/examples/expected.json",
+      "bytes": 1567,
+      "sha256": "8fe94d94f281e4d5d403c5f5053da72b8b9ff60acc4d032689ceba8cad51341e"
+    },
+    {
+      "path": "competition/skill/rtl-pitfalls/examples/query.json",
+      "bytes": 64,
+      "sha256": "5268dee02a45eded76735481cce82b93b68dc234f567fed6c9a086569cca6af7"
+    },
+    {
+      "path": "competition/skill/rtl-pitfalls/pitfalls.json",
+      "bytes": 15515,
+      "sha256": "dd11bed329e7a1036c65b7c1c915030e198f0e625409fe241b9ed8375556e4c3"
+    },
+    {
+      "path": "competition/skill/rtl-pitfalls/scripts/rtl-pitfalls.mjs",
+      "bytes": 1712,
+      "sha256": "e50a27658e726e07811b67d871c6eec91b1d7468b084e86f9516ea76891d9c57"
+    },
+    {
+      "path": "competition/skill/spec-selftest/SKILL.md",
+      "bytes": 4524,
+      "sha256": "3c486394f128278bacbe44a20de6022f764e38edde26c1fd5e17b9a9d421bd30"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/dut.sv",
+      "bytes": 115,
+      "sha256": "4b6755492decf5b20a92f774c9d3771b4bfec1d36ea9ffa4ab641ae7a3a1907f"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/expected-negative-control.sv",
+      "bytes": 122,
+      "sha256": "f0fafa587ccff5d4a592ce043d2575fbffa0c3bacfc9b4bbb55c4f5e6cb5a8b0"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/expected-rejected.json",
+      "bytes": 211,
+      "sha256": "d6a8afe344157b99ebf58e7059a0230226d59d357b91890db7016b1f92e3038a"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/expected-tb.sv",
+      "bytes": 8114,
+      "sha256": "a54b29daabf93c05ad06fd50de2ed5e24269c597a857ea7dc16fa2a8b519fefa"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/expected.json",
+      "bytes": 4662,
+      "sha256": "46eefef1175ed6fee3005967e8fae702141a2df7659a381c7fec28364d3c114f"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/interface.sv",
+      "bytes": 84,
+      "sha256": "dde276971d3684a50270240df32649bd1fd6103e8d33ebd543931f4e274df8dc"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/method.json",
+      "bytes": 159,
+      "sha256": "b1e274a73dec5963e943c32664550ba7be6af1d214a67526228e5409a50cd118"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/prompt.txt",
+      "bytes": 155,
+      "sha256": "7001f707f8406e6d23d263c5be68481a4e9173b4275e823c5aa73913bc91a55f"
+    },
+    {
+      "path": "competition/skill/spec-selftest/examples/rejected-method.json",
+      "bytes": 208,
+      "sha256": "964bba897930416ee80703079f28014252d4881dfddf379695e48dae16b8bb5c"
+    },
+    {
+      "path": "competition/skill/spec-selftest/scripts/spec-selftest.mjs",
+      "bytes": 5456,
+      "sha256": "68e96e3b510112d488f11437b0b3f08307428f44cf54ba3efacc6b2a3c596c88"
+    },
+    {
+      "path": "competition/skill/sv-combinational/SKILL.md",
+      "bytes": 1096,
+      "sha256": "bb906c6ff3a241f5b566208f31a49846a96f383a17073fe6c9473305a9a574db"
+    },
+    {
+      "path": "competition/skill/sv-combinational/assets/example.sv",
+      "bytes": 731,
+      "sha256": "0254f9afeed5dd73a72cd6ed1b24d009f3ba7ec1512ea55e6003112d0c4daa15"
+    },
+    {
+      "path": "competition/skill/sv-combinational/references/notes.md",
+      "bytes": 1115,
+      "sha256": "f566c5de6b96e299681a9331e9485f1c9b5faf2a9a6aed04e2b326e02135acd9"
+    },
+    {
+      "path": "competition/skill/sv-fifo/SKILL.md",
+      "bytes": 1798,
+      "sha256": "06106e611d2aac21b09d67d6e7dae2739716a9e3c4a04884a4aea5e8fe7438f1"
+    },
+    {
+      "path": "competition/skill/sv-fifo/assets/example.sv",
+      "bytes": 1333,
+      "sha256": "66f382816bf573b4e059ff8b6bc459a7031d1bfb0f17b60b6129d4b42d888340"
+    },
+    {
+      "path": "competition/skill/sv-fifo/references/notes.md",
+      "bytes": 1652,
+      "sha256": "8334c333fc3d4f2b9b50a3d4d84b1609368b343c63d674adc898b22160df3fca"
+    },
+    {
+      "path": "competition/skill/sv-fsm/SKILL.md",
+      "bytes": 2265,
+      "sha256": "cae1b8a9154127088cac916190899e7a80ce2d1e1d4de71014f623a6d9c49ba6"
+    },
+    {
+      "path": "competition/skill/sv-fsm/assets/example.sv",
+      "bytes": 849,
+      "sha256": "ce281be695a3cd9aeae01b1253fd72acd643d460f96ab967bee0482be70ecd84"
+    },
+    {
+      "path": "competition/skill/sv-fsm/references/notes.md",
+      "bytes": 1285,
+      "sha256": "ba50a706adb553455934bf735a465b21a70b8a67dbd04ec0d58ca923d63a98b2"
+    },
+    {
+      "path": "competition/skill/sv-sequential/SKILL.md",
+      "bytes": 2577,
+      "sha256": "6e3add78102debc2c95537f5a2b0a4c52068afb99436d2594b27b4663fdf1a79"
+    },
+    {
+      "path": "competition/skill/sv-sequential/assets/example.sv",
+      "bytes": 445,
+      "sha256": "c546c9467f5a70d42631fcd400c72ef4197eff1b7438c9e91797ce71dc6093ae"
+    },
+    {
+      "path": "competition/skill/sv-sequential/references/notes.md",
+      "bytes": 1110,
+      "sha256": "c80e87a5d26360944c34f1c6ce72eded8d9320e8bfeffe9cf59ce0ffab9bf257"
+    },
+    {
+      "path": "competition/skill/sv-width-sign/SKILL.md",
+      "bytes": 2010,
+      "sha256": "250f39dfd862b61f74309ab6afde2d166c4f528e1d2a6deca3133a72a2fbd9c3"
+    },
+    {
+      "path": "competition/skill/sv-width-sign/assets/example.sv",
+      "bytes": 371,
+      "sha256": "4bae8924cfb9fea0b1d5ad51d2984b5cfbcbc0f212cb6f6dd995f3e42bf71058"
+    },
+    {
+      "path": "competition/skill/sv-width-sign/references/notes.md",
+      "bytes": 1304,
+      "sha256": "0df7e54b2656394730cf44a831e96c487c04935d37f68345d809cf7f2af54fe0"
+    },
+    {
+      "path": "competition/skill/vivado-sv/SKILL.md",
+      "bytes": 2638,
+      "sha256": "7c410d5f0d1b0073b7efc8860b132850a3bb69765df3b86623dc5c22f621ec7b"
+    },
+    {
+      "path": "competition/skill/vivado-sv/assets/example.sv",
+      "bytes": 641,
+      "sha256": "7fd49d73ef6ae825e302e88bde03f3f296039a09264e3d076694205b7feb1881"
+    },
+    {
+      "path": "competition/skill/vivado-sv/references/notes.md",
+      "bytes": 1481,
+      "sha256": "d6f52971176809b9ce7046591371291a7c09a37140403ba6f99ce5bd7b2eb01f"
+    }
+  ]
+}

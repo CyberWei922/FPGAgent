@@ -1,0 +1,444 @@
+{
+  "schema_version": 1,
+  "snapshot_date": "2026-10-17",
+  "timezone": "Asia/Shanghai",
+  "repositories": [
+    {
+      "name": "fpgachina26-amd",
+      "url": "https://gitee.com/Vickyiii/fpgachina26-amd",
+      "commit": "e47e4a81c2a6a35dbd0b25dcaa4d2edef9daf643"
+    },
+    {
+      "name": "rtlagent2026",
+      "url": "https://gitee.com/Vickyiii/rtlagent2026",
+      "commit": "f7a8bd465c2a820e006c7a00ecc7df468974635b"
+    },
+    {
+      "name": "hlsagent2026",
+      "url": "https://gitee.com/Vickyiii/hlsagent2026",
+      "commit": "7aa511bd6fc6721edc1cc460a14ab1f134f4403a"
+    }
+  ],
+  "snapshot_root": "competition/reference/rtlagent2026",
+  "snapshot_files": [
+    {
+      "path": ".gitignore",
+      "sha256": "41eb09e59616cbdc3663ca94f41e02c137215a11774bf7c1ee0567e65980fb1f",
+      "bytes": 337,
+      "git_mode": "100644"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "2e5c9605f7b45921136ac59e99fec73edab61593e8adfe876e4cddcc6d806cf1",
+      "bytes": 1060,
+      "git_mode": "100644"
+    },
+    {
+      "path": "README.md",
+      "sha256": "1d22fcc003bd0d1316bc42afd36d4f2aec3e91473bd4cd9aad15c7b458ec07a3",
+      "bytes": 22464,
+      "git_mode": "100644"
+    },
+    {
+      "path": "REPORT_TEMPLATE.md",
+      "sha256": "ecbbfc33d33b84e7492f79320d0e5f37f9679b5620b74800132485482a74f880",
+      "bytes": 10447,
+      "git_mode": "100644"
+    },
+    {
+      "path": "SCORING.md",
+      "sha256": "c61b8ef9082425935616b8e69c3bef8c21326ba1e808a1f764dfd62ff33dd3b5",
+      "bytes": 21385,
+      "git_mode": "100644"
+    },
+    {
+      "path": "docs/API_CONTRACT.md",
+      "sha256": "69785b3f9504057cd3695c0faddbcdc6a3447db2e76452daa80fe409eb21ee81",
+      "bytes": 23491,
+      "git_mode": "100644"
+    },
+    {
+      "path": "docs/FAQ.md",
+      "sha256": "79a4e564782ec3345be2eadf8989006ea25096cab39d37debccd69d920eb9c78",
+      "bytes": 21155,
+      "git_mode": "100644"
+    },
+    {
+      "path": "docs/SUBMISSION.md",
+      "sha256": "91466f5b7357c6143ab8796fbf11a2f71a6f9e556fab971ed5e69cb793cad5b7",
+      "bytes": 5766,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/Dockerfile",
+      "sha256": "0842120a07fd8c51959be497b417d64128a645ba892e592b2d9cfc8ac0de0057",
+      "bytes": 2347,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/README.md",
+      "sha256": "ee79278b5989f1db5c79ef5690bd865b17fef4c4623abcf859140c558dd20eef",
+      "bytes": 7439,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/REPORT.md",
+      "sha256": "19feba47fe7b589ffd097c14288339ec9a8ff82df4dd874681182bbbfcc61ee6",
+      "bytes": 9360,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/agent/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/agent/llm.py",
+      "sha256": "00c1247c9bdc2218427428383b67f179d189b46ee2b7bb9cd7a887af926159bb",
+      "bytes": 10256,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/agent/main.py",
+      "sha256": "c09c1a69fd54e9f68a0b187cb92f717f2b89752f506a0681e731a25255ec72f2",
+      "bytes": 10129,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/agent/prompts/repair.md",
+      "sha256": "b834198ba2533ebeb2f1e9722acba9825c85b49c1a66c11fb52ae64a9de06206",
+      "bytes": 1140,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/agent/prompts/system.md",
+      "sha256": "b0f4af53f60350c9d0d3fb055fea581f74abd305db0bd81e206f0f364a50da17",
+      "bytes": 2025,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/agent/skills.py",
+      "sha256": "137619ba566c35a0a1340507c69cc7d5659a0c641b63752d3bfa907466aa6000",
+      "bytes": 6350,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/agent/tools.py",
+      "sha256": "1d791882c44b8508b95e15271d7a471e6d0b15f4af2def394bf1a426ecf64899",
+      "bytes": 12877,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/baseline.py",
+      "sha256": "17aaa609d4dbd36a94d1390e39f769394448f8588f3ccdd2bd37db9e34ed05e2",
+      "bytes": 8919,
+      "git_mode": "100755"
+    },
+    {
+      "path": "example/manifest.json",
+      "sha256": "649851c5d0a644c6f1f69803281028503adfa3d2aa0086e7583d5d92d549c139",
+      "bytes": 959,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/model/MODEL.md",
+      "sha256": "b71b9d1406709eac85c45366728a48d2fde9c9b27d5bfee98e3e6485c4be2968",
+      "bytes": 4295,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/requirements.txt",
+      "sha256": "c5da7702f1ac75889dcb340e8a2900f4557829025c070ad1d3e6fcce6c1e324b",
+      "bytes": 293,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/run.sh",
+      "sha256": "b25e15b9186afe6b8e863107dbe71c667f1c36d25ab97ce92cc6598b9d27098e",
+      "bytes": 1476,
+      "git_mode": "100755"
+    },
+    {
+      "path": "example/run_baseline.sh",
+      "sha256": "5c46c40d32c0cf4c4e1dc52ae12e60f8396a0deccafaa4e6f69d7316a3482e75",
+      "bytes": 269,
+      "git_mode": "100755"
+    },
+    {
+      "path": "example/serve/README.md",
+      "sha256": "01aa646894b3a6aea8c880f439624330037a8057848ca9966b784685390d996d",
+      "bytes": 6155,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/serve/serve_api.py",
+      "sha256": "bd87e530cd0004a4437f663801bb9de0e42c0a9d366daa42d3e5d2cfb08bb9a4",
+      "bytes": 9995,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/serve/start.sh",
+      "sha256": "870921e50738d8000ee711ff3eac3109edf0e8aa64264d0880bfbfef47752c67",
+      "bytes": 3920,
+      "git_mode": "100755"
+    },
+    {
+      "path": "example/serve/vllm.sh",
+      "sha256": "19636056478c3551c1428bab34959526c60dac1222fc82b35e0b7039003f9b4e",
+      "bytes": 2446,
+      "git_mode": "100755"
+    },
+    {
+      "path": "example/skill/README.md",
+      "sha256": "498ff0cd0b6f7542c72f9ee43349ba89a24fc3f9a21fe9d1f7d6da7a1c52a7bd",
+      "bytes": 5800,
+      "git_mode": "100644"
+    },
+    {
+      "path": "example/skill/rtl-module-interface-contract/SKILL.md",
+      "sha256": "68c7b522e3c95e35c85f1005d880a663a09dad188bb9e4e2fc181e113ed05e9a",
+      "bytes": 9512,
+      "git_mode": "100644"
+    },
+    {
+      "path": "notebooks/rtl_quickstart.ipynb",
+      "sha256": "4ee4926164cd82575818f9a7cbb2ca904dc1e44836008b63a11babb08bdbd2b2",
+      "bytes": 33290,
+      "git_mode": "100644"
+    },
+    {
+      "path": "selftest/README.md",
+      "sha256": "fcc8c04ccbd79102d70a7e305df3f2610f80536d8a0464d24d8601ae983e8316",
+      "bytes": 9239,
+      "git_mode": "100644"
+    },
+    {
+      "path": "selftest/env.sh.example",
+      "sha256": "cc864af1af263f547d1eaa2f8b5f8b0a69e14c2edebdea30492774013a86712c",
+      "bytes": 2868,
+      "git_mode": "100644"
+    },
+    {
+      "path": "selftest/judge.py",
+      "sha256": "02238c62b598de5a835374b8dcbff9eebbeca7cd9fc01db8b5aad2d018882e10",
+      "bytes": 7646,
+      "git_mode": "100644"
+    },
+    {
+      "path": "selftest/judge/PROVENANCE.md",
+      "sha256": "30ed3a4eb340326321e6c0c286154df5e49a79fd4bfd3cc2966ee88796f64cc2",
+      "bytes": 1170,
+      "git_mode": "100644"
+    },
+    {
+      "path": "selftest/judge/l3_synth.tcl",
+      "sha256": "3d9c9aa4d975f75af2d3189fd407c6452b293bff19c3aef13acb8db202951cb3",
+      "bytes": 3282,
+      "git_mode": "100755"
+    },
+    {
+      "path": "selftest/judge/sv-xsim-analyze",
+      "sha256": "75bf840cab5fca7bd258206b711b373b5edeb29aaf70c7581a6182379e8183e2",
+      "bytes": 12639,
+      "git_mode": "100755"
+    },
+    {
+      "path": "selftest/judge/veval-judge",
+      "sha256": "320089d096fa161921644feb205cc4e11a9a7da52f9669a78cf719fff000747c",
+      "bytes": 15571,
+      "git_mode": "100755"
+    },
+    {
+      "path": "selftest/run_selftest.sh",
+      "sha256": "05009f5daa41567bbdcb5f3cb91b81d667b6b9b902f8582288e949f6b0d5200f",
+      "bytes": 6218,
+      "git_mode": "100755"
+    },
+    {
+      "path": "selftest/score.py",
+      "sha256": "74dadf07df62db6d46689530d634de1cde903a99bcef3f76242f2300f162ff19",
+      "bytes": 8492,
+      "git_mode": "100644"
+    },
+    {
+      "path": "selftest/veval_import.py",
+      "sha256": "c6c77e5363560425478a2b615ce9c88690d823c4392c3738197dd432c6556aed",
+      "bytes": 7087,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/README.md",
+      "sha256": "8431e98b47f1cd42946fdbca8f191e18a390c773627a8acda6ff8b32746aef38",
+      "bytes": 5484,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex01_popcount8/prompt.txt",
+      "sha256": "9dd4a51171649f8af9bb7af372f9594bbe309f1e413f190dac85d33aea20b967",
+      "bytes": 414,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex01_popcount8/ref.sv",
+      "sha256": "926d41534e538afc2e52a53f6330ffc2ddd6ee3b340a42e129028e89eb7a8bd1",
+      "bytes": 163,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex01_popcount8/reference/solution.sv",
+      "sha256": "173cb0c46ab0ff6bd58ccf52e2270fad229c7b345bad3f4e05ee8f00b8c63fcc",
+      "bytes": 478,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex01_popcount8/task.json",
+      "sha256": "5301e3f1d9249e4b574895af7f3d49ff52f4c9dd4144c5a82d05acbc2c230c1c",
+      "bytes": 242,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex01_popcount8/tb.sv",
+      "sha256": "0ade8d3f6a81218669f21c185083638ce28ae2563c0b8464d8d1b001747c464c",
+      "bytes": 1397,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex01_popcount8/top.txt",
+      "sha256": "9cf5a7413b67098afd503a3100b5dc8b4ca79c2f1e0326f4272e80c86c406368",
+      "bytes": 10,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex02_detect_1101/prompt.txt",
+      "sha256": "9b6811cec90f6783423915248a1eaab557cb76f1b1028a0ca72ade46c39dbd58",
+      "bytes": 991,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex02_detect_1101/ref.sv",
+      "sha256": "8919104c1f08262580447e1eadb22d5cfda6cadaad3dcfd062f862a20f445084",
+      "bytes": 330,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex02_detect_1101/reference/solution.sv",
+      "sha256": "fc6f16c81e9dc9c70332e9cf51b61b8c2f0b5cf56f1f4ee03b33fd4dd6f31b00",
+      "bytes": 1105,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex02_detect_1101/task.json",
+      "sha256": "1334978cb6e19fd8ce5d5130a8f4acfef46151aa802d6b6f7d08f47e53ddd3e0",
+      "bytes": 244,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex02_detect_1101/tb.sv",
+      "sha256": "594512423149db8ace9d3619696007b929463a5039968853b943dda59c4a9767",
+      "bytes": 1890,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex02_detect_1101/top.txt",
+      "sha256": "9cf5a7413b67098afd503a3100b5dc8b4ca79c2f1e0326f4272e80c86c406368",
+      "bytes": 10,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex03_lfsr8/prompt.txt",
+      "sha256": "08edec4feda726f82fffd030c68737a9177e9904963993ed3fbea707cf519830",
+      "bytes": 822,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex03_lfsr8/ref.sv",
+      "sha256": "a10d18001fb56e15f1c6f42cf4d8f73c4eddc618bffeab985c90191c35ccf443",
+      "bytes": 345,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex03_lfsr8/reference/solution.sv",
+      "sha256": "83b1993b716ae0e4996818246c60be54e327db91b736844667aa27e2246e5dc0",
+      "bytes": 472,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex03_lfsr8/task.json",
+      "sha256": "db123b5f3f6642a6343d97c27479d5880d1365572b1d5d49de88496d986ba496",
+      "bytes": 238,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex03_lfsr8/tb.sv",
+      "sha256": "3c4515a6fe4a9d7c40be649e034cbcab26e8140e10cd229a549d332b8f86c7e0",
+      "bytes": 1995,
+      "git_mode": "100644"
+    },
+    {
+      "path": "tasks/ex03_lfsr8/top.txt",
+      "sha256": "9cf5a7413b67098afd503a3100b5dc8b4ca79c2f1e0326f4272e80c86c406368",
+      "bytes": 10,
+      "git_mode": "100644"
+    }
+  ],
+  "protected_files": [
+    {
+      "path": "competition/baseline.py",
+      "source": "example/baseline.py",
+      "sha256": "17aaa609d4dbd36a94d1390e39f769394448f8588f3ccdd2bd37db9e34ed05e2",
+      "git_mode": "100755"
+    },
+    {
+      "path": "competition/run_baseline.sh",
+      "source": "example/run_baseline.sh",
+      "sha256": "5c46c40d32c0cf4c4e1dc52ae12e60f8396a0deccafaa4e6f69d7316a3482e75",
+      "git_mode": "100755"
+    }
+  ],
+  "policy": "Pinned official reference; changes require a separately reviewed upstream update. Runtime agent must not read reference or evaluation fixtures.",
+  "previous_snapshots": [
+    {
+      "snapshot_date": "2026-10-15",
+      "repositories": [
+        {
+          "name": "fpgachina26-amd",
+          "url": "https://gitee.com/Vickyiii/fpgachina26-amd",
+          "commit": "e47e4a81c2a6a35dbd0b25dcaa4d2edef9daf643"
+        },
+        {
+          "name": "rtlagent2026",
+          "url": "https://gitee.com/Vickyiii/rtlagent2026",
+          "commit": "48dfadef047710644f52822d1413d36b6ecdeb03"
+        },
+        {
+          "name": "hlsagent2026",
+          "url": "https://gitee.com/Vickyiii/hlsagent2026",
+          "commit": "f9164da2c6994efeacadc6a779d3fa4964565a56"
+        }
+      ],
+      "reason": "Superseded by official asynchronous submission and normalized-gain update."
+    },
+    {
+      "snapshot_date": "2026-10-15",
+      "repositories": [
+        {
+          "name": "fpgachina26-amd",
+          "url": "https://gitee.com/Vickyiii/fpgachina26-amd",
+          "commit": "e47e4a81c2a6a35dbd0b25dcaa4d2edef9daf643"
+        },
+        {
+          "name": "rtlagent2026",
+          "url": "https://gitee.com/Vickyiii/rtlagent2026",
+          "commit": "f7a8bd465c2a820e006c7a00ecc7df468974635b"
+        },
+        {
+          "name": "hlsagent2026",
+          "url": "https://gitee.com/Vickyiii/hlsagent2026",
+          "commit": "7aa511bd6fc6721edc1cc460a14ab1f134f4403a"
+        }
+      ],
+      "reason": "Superseded by the official 2026-10-17 deadline, baseline and cloud-environment update."
+    }
+  ]
+}

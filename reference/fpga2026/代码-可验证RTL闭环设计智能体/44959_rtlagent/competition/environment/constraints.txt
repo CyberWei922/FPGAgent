@@ -1,0 +1,6 @@
+# Constraints for optional future Python additions, NOT an installation list.
+# These packages are provided by the official validation image. Do not pip
+# install/upgrade them to replace its ROCm builds. The GGUF agent itself uses
+# only the Python standard library and does not require a torch/vLLM import.
+torch==2.12.0+rocm10.0.0
+vllm==0.27.1

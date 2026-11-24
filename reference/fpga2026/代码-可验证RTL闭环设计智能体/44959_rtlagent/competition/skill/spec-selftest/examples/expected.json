@@ -1,0 +1,246 @@
+{
+  "status": "ready",
+  "method": "logic",
+  "coverage": {
+    "kind": "partial",
+    "method": "logic",
+    "semantic_correctness": "unproven",
+    "comparisons": 16,
+    "source_steps": 16,
+    "method_profile": {
+      "review": false,
+      "focus": [
+        "zero and all ones",
+        "asymmetric inputs",
+        "high and low input bits"
+      ],
+      "limits": [
+        "one output",
+        "no compound expressions or sequential logic"
+      ]
+    }
+  },
+  "scenarios": [
+    {
+      "id": "T1",
+      "description": "Harness-generated logic checks",
+      "steps": [
+        {
+          "drive": {
+            "left": "0x0",
+            "right": "0x0"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x0"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x1",
+            "right": "0x0"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x1"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x2",
+            "right": "0x0"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x2"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x3",
+            "right": "0x0"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x3"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x0",
+            "right": "0x1"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x1"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x1",
+            "right": "0x1"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x0"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x2",
+            "right": "0x1"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x3"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x3",
+            "right": "0x1"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x2"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x0",
+            "right": "0x2"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x2"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x1",
+            "right": "0x2"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x3"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x2",
+            "right": "0x2"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x0"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x3",
+            "right": "0x2"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x1"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x0",
+            "right": "0x3"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x3"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x1",
+            "right": "0x3"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x2"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x2",
+            "right": "0x3"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x1"
+          },
+          "because": [
+            "C1"
+          ]
+        },
+        {
+          "drive": {
+            "left": "0x3",
+            "right": "0x3"
+          },
+          "cycles": 0,
+          "expect": {
+            "value": "0x0"
+          },
+          "because": [
+            "C1"
+          ]
+        }
+      ]
+    }
+  ],
+  "expectedChecks": 16,
+  "files": [
+    "tb.sv",
+    "negative-control.sv",
+    "plan.json",
+    "calculations.json"
+  ]
+}

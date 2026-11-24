@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "profile_id": "observed-cloud-w7900d-20261017",
+  "scope": "Observed competition W7900D image; explicit alternative to the meeting-PPT target, not final R9700 acceptance",
+  "source": "Authorized SSH inventory on 2026-10-17: Python 3.14.7, SDK 10.0.0, HIP 7.15.26333, Vivado 2026.1 SW Build 6511674, preinstalled llama.cpp f114f91",
+  "base_image": null,
+  "platform": {
+    "system": "Linux",
+    "distribution": "ubuntu",
+    "version": "24.04",
+    "gpu_architecture": "gfx1100"
+  },
+  "provided_by_image": {
+    "python": "3.14",
+    "rocm": "10.0.0",
+    "hip": "7.15",
+    "torch": "2.12.0+rocm10.0.0",
+    "vllm": "0.27.1.dev5+gf46a9dfe2.d20260827.rocm100",
+    "llama_cpp_build": 1,
+    "vivado": "2026.1",
+    "llama_cpp_sha256": "290708d22f8b495d36b8aedd0afb0cdc081c415548f855e6a950a75dd742ad97"
+  },
+  "project_runtime": {
+    "node": "24.15.0",
+    "python_pip_dependencies": [],
+    "default_backend": "llama.cpp"
+  },
+  "policy": {
+    "python_match": "major.minor",
+    "hip_match": "major.minor",
+    "rocm_match": "release_prefix",
+    "node_match": "major",
+    "inherit_gpu_packages": true,
+    "install_gpu_packages_from_pypi": false
+  },
+  "validation": {
+    "gpu_device_enumeration": "passed_W7900D_ROCm0",
+    "real_model": "pending",
+    "reference_eda": "passed_three_official_reference_tasks_L3",
+    "offline": "pending",
+    "r9700": "pending"
+  }
+}

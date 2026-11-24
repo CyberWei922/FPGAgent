@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "profile_id": "validation-w7900-20261015",
+  "scope": "Meeting PPT validation image (W7900/gfx1100), not an announced final R9700 image",
+  "source": "User-provided meeting PPT: official base image contents, archived 2026-10-15",
+  "base_image": null,
+  "platform": {"system": "Linux", "distribution": "ubuntu", "version": "24.04", "gpu_architecture": "gfx1100"},
+  "provided_by_image": {"python": "3.14", "rocm": "10.0.0", "hip": "7.15", "torch": "2.12.0+rocm10.0.0", "vllm": "0.27.1", "llama_cpp_build": 1326, "vivado": "2026.1"},
+  "project_runtime": {"node": "24.15.0", "python_pip_dependencies": [], "default_backend": "llama.cpp"},
+  "policy": {"python_match": "major.minor", "hip_match": "major.minor", "rocm_match": "release_prefix", "node_match": "major", "inherit_gpu_packages": true, "install_gpu_packages_from_pypi": false},
+  "validation": {"local_python_314": "passed_windows_cpython_3.14.8_standard_library_and_local_http_tests", "real_gpu_stack": "pending", "official_image": "pending", "r9700": "pending"}
+}

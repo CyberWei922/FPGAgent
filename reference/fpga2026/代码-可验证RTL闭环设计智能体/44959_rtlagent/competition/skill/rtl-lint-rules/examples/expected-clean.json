@@ -1,0 +1,17 @@
+{
+  "status": "pass",
+  "reason": "no_findings",
+  "findings": [],
+  "otherCodes": {
+    "-Wsign-conversion": 1
+  },
+  "sourceSha256": "6a01db1f35b113982a344b896299836f0c6aacc8883fdcf89a0bcc72bbd56b6e",
+  "rules": [
+    "-Wstatic-init-value",
+    "-Wunassigned-variable",
+    "-Wundriven-port",
+    "-Wunsigned-arith-shift",
+    "-Wmultiple-always-assigns",
+    "-Wmixed-var-assigns"
+  ]
+}

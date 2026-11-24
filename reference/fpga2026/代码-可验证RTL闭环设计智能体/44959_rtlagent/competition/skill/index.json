@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "skills": [
+    {
+      "id": "sv-sequential",
+      "description": "Preserve reset, enable, pipeline latency, and data/valid alignment in sequential RTL.",
+      "summary": "Follow specified reset polarity/synchrony and enable priority. Nonblocking RHS uses old state. Align data and valid; do not add an unspecified register or pipeline cycle.",
+      "path": "sv-sequential/SKILL.md",
+      "keywords": ["reset", "register", "posedge", "negedge", "flip-flop", "pipeline", "latency", "stall", "复位", "寄存器", "流水", "延迟"],
+      "example": "sv-sequential/assets/example.sv",
+      "reference": "sv-sequential/references/notes.md",
+      "top": "enabled_word",
+      "clockPort": "clk",
+      "clockPeriodNs": 5
+    },
+    {
+      "id": "sv-combinational",
+      "description": "Implement complete combinational assignments and specified mux priority.",
+      "summary": "Assign every combinational output on every path; avoid unintended latches. Preserve specified priority and defaults. Use blocking assignments in combinational procedural logic.",
+      "path": "sv-combinational/SKILL.md",
+      "keywords": ["combinational", "always_comb", "latch", "multiplexer", "mux", "priority", "组合", "锁存", "优先"],
+      "example": "sv-combinational/assets/example.sv",
+      "reference": "sv-combinational/references/notes.md",
+      "top": "priority_word_mux"
+    },
+    {
+      "id": "sv-width-sign",
+      "description": "Make arithmetic widths, sign extension, shifts, and truncation explicit.",
+      "summary": "Explicitly widen operands before arithmetic; keep signedness consistent. Check shifts, sign extension, overflow and truncation at the exact specified output width.",
+      "path": "sv-width-sign/SKILL.md",
+      "keywords": ["signed", "unsigned", "width", "overflow", "truncate", "truncation", "arithmetic", "saturation", "saturat", "符号", "位宽", "溢出", "饱和"],
+      "example": "sv-width-sign/assets/example.sv",
+      "reference": "sv-width-sign/references/notes.md",
+      "top": "signed_widen_add"
+    },
+    {
+      "id": "sv-fsm",
+      "description": "Preserve FSM output cycles and transaction state across packet completion and consumption.",
+      "summary": "Distinguish Moore from Mealy output timing. Trace old-state transitions at sequence boundaries; preserve packet/transaction state until its specified completion or consumption event.",
+      "path": "sv-fsm/SKILL.md",
+      "keywords": ["fsm", "state machine", "state transition", "moore", "mealy", "packet", "crc", "checksum", "transaction", "in_last", "状态机", "状态转移", "分包"],
+      "example": "sv-fsm/assets/example.sv",
+      "reference": "sv-fsm/references/notes.md",
+      "top": "moore_job_control",
+      "clockPort": "clk",
+      "clockPeriodNs": 5
+    },
+    {
+      "id": "sv-fifo",
+      "description": "Specify accepted FIFO operations, boundary behavior, occupancy, and read latency.",
+      "summary": "Derive accepted reads/writes from the specified empty/full policy, especially simultaneous operations at boundaries. Wrap pointers at the actual depth and preserve read latency.",
+      "path": "sv-fifo/SKILL.md",
+      "keywords": ["fifo", "queue", "enqueue", "dequeue", "occupancy", "almost_full", "almost_empty", "underflow", "队列"],
+      "example": "sv-fifo/assets/example.sv",
+      "reference": "sv-fifo/references/notes.md",
+      "top": "sync_fifo4x8",
+      "clockPort": "clk",
+      "clockPeriodNs": 5
+    },
+    {
+      "id": "vivado-sv",
+      "description": "Use the supported SystemVerilog synthesis subset without changing functional latency.",
+      "summary": "Use synthesizable SystemVerilog supported by the tool. When fixing an unsupported construct, preserve bit widths, memory read latency and all specified cycle behavior.",
+      "path": "vivado-sv/SKILL.md",
+      "keywords": ["vivado", "xvlog", "xelab", "synth 8-", "unsupported", " rom", "rom_", "read-only memory", "packed", "综合", "不支持"],
+      "example": "vivado-sv/assets/example.sv",
+      "reference": "vivado-sv/references/notes.md",
+      "top": "tiny_sync_rom",
+      "clockPort": "clk",
+      "clockPeriodNs": 5
+    }
+  ]
+}

@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:rtl2llm:protocol:v1",
+  "title": "RTL2LLM v1 controller envelope",
+  "description": "Structural validation only. Semantic gates are mandatory in docs/new-agent/PROTOCOL.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "kind", "request_id", "task_id", "payload"],
+  "properties": {
+    "protocol": {"const": "rtl2llm.v1"},
+    "kind": {"enum": ["spec_request", "spec_response", "review_request", "review_response", "repair_request", "repair_response"]},
+    "request_id": {"$ref": "#/$defs/id"},
+    "task_id": {"$ref": "#/$defs/id"},
+    "payload": {"type": "object"}
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "spec_request"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/specRequest"}}}},
+    {"if": {"properties": {"kind": {"const": "spec_response"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/specResponse"}}}},
+    {"if": {"properties": {"kind": {"const": "review_request"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/reviewRequest"}}}},
+    {"if": {"properties": {"kind": {"const": "review_response"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/reviewResponse"}}}},
+    {"if": {"properties": {"kind": {"const": "repair_request"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/repairRequest"}}}},
+    {"if": {"properties": {"kind": {"const": "repair_response"}}}, "then": {"properties": {"payload": {"$ref": "#/$defs/repairResponse"}}}}
+  ],
+  "$defs": {
+    "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"},
+    "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "text": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "reason": {"type": "string", "maxLength": 4000},
+    "spec": {"type": "string", "minLength": 1, "maxLength": 131072},
+    "interface": {"type": "string", "maxLength": 32768},
+    "rtl": {"type": "string", "minLength": 1, "maxLength": 131072},
+    "ids": {"type": "array", "maxItems": 64, "uniqueItems": true, "items": {"$ref": "#/$defs/id"}},
+    "texts": {"type": "array", "maxItems": 32, "items": {"$ref": "#/$defs/text"}},
+    "quote": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source", "quote"],
+      "properties": {"source": {"enum": ["spec", "interface"]}, "quote": {"$ref": "#/$defs/text"}}
+    },
+    "constraint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "source", "quote", "claim"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"}, "source": {"enum": ["spec", "interface"]},
+        "quote": {"$ref": "#/$defs/text"}, "claim": {"$ref": "#/$defs/text"}
+      }
+    },
+    "constraints": {"type": "array", "maxItems": 24, "items": {"$ref": "#/$defs/constraint"}},
+    "rule": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "text", "applies_when"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "text": {"$ref": "#/$defs/text"}, "applies_when": {"$ref": "#/$defs/text"}}
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "source", "summary"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "source": {"enum": ["interface_check", "compiler", "self_test", "synthesis", "static_analysis", "spec_reasoning"]},
+        "summary": {"$ref": "#/$defs/text"}
+      }
+    },
+    "evidenceList": {"type": "array", "maxItems": 64, "items": {"$ref": "#/$defs/evidence"}},
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "sha256", "rtl"],
+      "properties": {"id": {"$ref": "#/$defs/id"}, "sha256": {"$ref": "#/$defs/hash"}, "rtl": {"$ref": "#/$defs/rtl"}}
+    },
+    "unit": {
+      "type": "object", "additionalProperties": false,
+      "required": ["unit_id", "kind", "start_byte", "end_byte", "old_sha256"],
+      "properties": {
+        "unit_id": {"$ref": "#/$defs/id"},
+        "kind": {"enum": ["assign", "always", "function", "declarations"]},
+        "start_byte": {"type": "integer", "minimum": 0},
+        "end_byte": {"type": "integer", "minimum": 1},
+        "old_sha256": {"$ref": "#/$defs/hash"},
+        "old_text": {"$ref": "#/$defs/rtl"}
+      }
+    },
+    "editableUnit": {"allOf": [{"$ref": "#/$defs/unit"}, {"required": ["old_text"]}]},
+    "issue": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "category", "severity", "scope", "unit_ids", "requirement_quotes", "evidence_ids", "explanation", "repair_goal"],
+      "properties": {
+        "id": {"$ref": "#/$defs/id"},
+        "category": {"enum": ["syntax", "type_width", "timing", "logic", "spec_misunderstanding", "checker"]},
+        "severity": {"enum": ["blocking", "major", "minor"]},
+        "scope": {"enum": ["local", "multi_unit", "global", "unknown"]},
+        "unit_ids": {"$ref": "#/$defs/ids"},
+        "requirement_quotes": {"type": "array", "maxItems": 24, "items": {"$ref": "#/$defs/quote"}},
+        "evidence_ids": {"$ref": "#/$defs/ids"},
+        "explanation": {"$ref": "#/$defs/text"},
+        "repair_goal": {"$ref": "#/$defs/text"}
+      }
+    },
+    "specRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["spec_text", "interface_text", "rules"],
+      "properties": {
+        "spec_text": {"$ref": "#/$defs/spec"}, "interface_text": {"$ref": "#/$defs/interface"},
+        "rules": {"type": "array", "maxItems": 12, "items": {"$ref": "#/$defs/rule"}}
+      }
+    },
+    "specResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "constraints", "ambiguities", "reason"],
+      "properties": {
+        "status": {"enum": ["ready", "abstain"]}, "constraints": {"$ref": "#/$defs/constraints"},
+        "ambiguities": {"$ref": "#/$defs/texts"}, "reason": {"$ref": "#/$defs/reason"}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "ready"}}}, "then": {"properties": {"constraints": {"minItems": 1}}}},
+        {"if": {"properties": {"status": {"const": "abstain"}}}, "then": {"properties": {"constraints": {"maxItems": 0}, "reason": {"minLength": 1}}}}
+      ]
+    },
+    "reviewRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["spec_text", "interface_text", "constraints", "candidate", "units", "evidence", "coverage"],
+      "properties": {
+        "spec_text": {"$ref": "#/$defs/spec"}, "interface_text": {"$ref": "#/$defs/interface"},
+        "constraints": {"$ref": "#/$defs/constraints"}, "candidate": {"$ref": "#/$defs/candidate"},
+        "units": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/unit"}},
+        "evidence": {"$ref": "#/$defs/evidenceList"}, "coverage": {"enum": ["full", "partial"]}
+      }
+    },
+    "reviewResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_sha256", "verdict", "issues", "limitations"],
+      "properties": {
+        "candidate_sha256": {"$ref": "#/$defs/hash"},
+        "verdict": {"enum": ["no_issue_found", "issues_found", "uncertain", "checker_suspect"]},
+        "issues": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/issue"}},
+        "limitations": {"$ref": "#/$defs/texts"}
+      },
+      "allOf": [
+        {"if": {"properties": {"verdict": {"const": "no_issue_found"}}}, "then": {"properties": {"issues": {"maxItems": 0}}}},
+        {"if": {"properties": {"verdict": {"const": "issues_found"}}}, "then": {"properties": {"issues": {"minItems": 1, "contains": {"properties": {"category": {"not": {"const": "checker"}}}}}}}},
+        {"if": {"properties": {"verdict": {"const": "checker_suspect"}}}, "then": {"properties": {"issues": {"minItems": 1, "contains": {"properties": {"category": {"const": "checker"}}}}}}}
+      ]
+    },
+    "repairRequest": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package_id", "candidate_id", "base_sha256", "mode", "spec_text", "interface_text", "issue_ids", "diagnosis", "evidence", "editable_units", "readonly_context", "must_preserve"],
+      "properties": {
+        "package_id": {"$ref": "#/$defs/id"}, "candidate_id": {"$ref": "#/$defs/id"}, "base_sha256": {"$ref": "#/$defs/hash"},
+        "mode": {"enum": ["local", "expanded"]},
+        "spec_text": {"$ref": "#/$defs/spec"}, "interface_text": {"$ref": "#/$defs/interface"},
+        "issue_ids": {"allOf": [{"$ref": "#/$defs/ids"}, {"minItems": 1}]}, "diagnosis": {"$ref": "#/$defs/text"},
+        "evidence": {"$ref": "#/$defs/evidenceList"},
+        "editable_units": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"$ref": "#/$defs/editableUnit"}},
+        "readonly_context": {
+          "type": "array", "maxItems": 64,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["text", "reason"],
+            "properties": {"text": {"$ref": "#/$defs/rtl"}, "reason": {"$ref": "#/$defs/text"}}
+          }
+        },
+        "must_preserve": {"allOf": [{"$ref": "#/$defs/texts"}, {"minItems": 1}]}
+      }
+    },
+    "replacement": {
+      "type": "object", "additionalProperties": false,
+      "required": ["unit_id", "old_sha256", "new_text"],
+      "properties": {"unit_id": {"$ref": "#/$defs/id"}, "old_sha256": {"$ref": "#/$defs/hash"}, "new_text": {"$ref": "#/$defs/rtl"}}
+    },
+    "repairResponse": {
+      "type": "object", "additionalProperties": false,
+      "required": ["package_id", "base_sha256", "status", "replacements", "reason"],
+      "properties": {
+        "package_id": {"$ref": "#/$defs/id"}, "base_sha256": {"$ref": "#/$defs/hash"},
+        "status": {"enum": ["replacement", "cannot_repair"]},
+        "replacements": {"type": "array", "maxItems": 8, "items": {"$ref": "#/$defs/replacement"}},
+        "reason": {"$ref": "#/$defs/reason"}
+      },
+      "allOf": [
+        {"if": {"properties": {"status": {"const": "replacement"}}}, "then": {"properties": {"replacements": {"minItems": 1}}}},
+        {"if": {"properties": {"status": {"const": "cannot_repair"}}}, "then": {"properties": {"replacements": {"maxItems": 0}, "reason": {"minLength": 1}}}}
+      ]
+    }
+  }
+}

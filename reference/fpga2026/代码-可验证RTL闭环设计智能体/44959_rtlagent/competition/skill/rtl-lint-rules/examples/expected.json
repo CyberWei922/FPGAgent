@@ -1,0 +1,24 @@
+{
+  "status": "fail",
+  "reason": "rule_findings",
+  "findings": [
+    {
+      "code": "-Wunsigned-arith-shift",
+      "severity": "warning",
+      "line": 2,
+      "column": 19,
+      "message": "arithmetic right shift of unsigned type 'logic[6:0]' will always shift in zeros (use logical shift if that is intended)",
+      "source_line": "assign result = data >>> 2;"
+    }
+  ],
+  "otherCodes": {},
+  "sourceSha256": "d3d1121d6f63ddbc3e801894cc16ba38f63f3262379b3110ad444d331db6f654",
+  "rules": [
+    "-Wstatic-init-value",
+    "-Wunassigned-variable",
+    "-Wundriven-port",
+    "-Wunsigned-arith-shift",
+    "-Wmultiple-always-assigns",
+    "-Wmixed-var-assigns"
+  ]
+}

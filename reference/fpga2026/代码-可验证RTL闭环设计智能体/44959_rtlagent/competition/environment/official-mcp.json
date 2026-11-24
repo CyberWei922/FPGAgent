@@ -1,0 +1,16 @@
+{
+  "vendor": "AMD",
+  "product": "Ross Vivado MCP Server",
+  "target_version": "2026.9.1",
+  "linux_filename": "vivado-mcp-server-linux-amd64-2026.9.1",
+  "download_page": "https://www.amd.com/en/support/downloads/ross-agentic-ai.html",
+  "documentation": "https://github.com/Xilinx/ross-ai-assistant/blob/main/docs/reference/vivado-mcp-tools.md",
+  "binary_sha256": "2d1ac42f2628dab2db37bd214b4ad45d2275e541fe6eb71e879ac6ea123bb8bc",
+  "windows_binary_sha256": "9b43ea6c43b8b1147c4de53e6b50f11eb5d94a89f15e27b9e457f7b402f29016",
+  "official_published_md5": {"linux": "d62b050db4316889a051da4c38661bd3", "windows": "28906784c3af1c3a379ace4213ab68b7"},
+  "installation": "user_downloaded_both_platforms_official_md5_matched",
+  "adapter": "rtl-agent/src/ross-backend.mjs",
+  "required_tools": ["vivado_start", "vivado_stop", "vivado_execute", "vivado_status", "vivado_log_messages"],
+  "transport": "native_stdio_per_request_no_shared_daemon",
+  "acceptance": {"protocol_fixtures": true, "actual_official_binary": true, "windows_capability_discovery": true, "windows_compile_sim_synth_known_counter": true, "windows_cancel_exit_and_next_request": true, "linux_capability_discovery": true, "isolated_network_imports_and_protocol_only": true, "linux_vivado": false, "offline": false}
+}

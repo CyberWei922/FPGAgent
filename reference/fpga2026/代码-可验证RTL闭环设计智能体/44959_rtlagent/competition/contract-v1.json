@@ -1,0 +1,110 @@
+{
+  "schema_version": 2,
+  "contract_id": "rtl-competition-contract-v2",
+  "status": "implemented_local_contract_tests_cloud_acceptance_pending",
+  "runtime_oracle_access": false,
+  "track": "rtl",
+  "entry": {
+    "runtime_wrapper": "competition/run.sh",
+    "agent": "competition/agent/main.mjs",
+    "agent_arguments": [
+      "--input",
+      "<absolute_input_dir>",
+      "--output",
+      "<absolute_output_dir>"
+    ],
+    "baseline_wrapper": "competition/run_baseline.sh",
+    "required_input": [
+      "prompt.txt"
+    ],
+    "optional_input": [
+      "interface.txt"
+    ],
+    "required_output": [
+      "solution.v",
+      "trace.jsonl"
+    ],
+    "environment": [
+      "AGENT_CONFIG",
+      "AGENT_DEADLINE_S",
+      "LLM_BASE_URL",
+      "MODEL_NAME"
+    ]
+  },
+  "http": {
+    "bind": "127.0.0.1",
+    "health": "/v1/health",
+    "solve": "/v1/solve",
+    "jobs": "/v1/jobs/<job_id>",
+    "accepted_status": 202,
+    "job_states": [
+      "queued",
+      "running",
+      "done"
+    ],
+    "nonce_idempotency": true,
+    "queue_time_counts": true,
+    "modes": [
+      "agent",
+      "baseline"
+    ],
+    "request_fields": [
+      "task_id",
+      "nonce",
+      "mode",
+      "prompt",
+      "interface",
+      "deadline_s"
+    ],
+    "response_fields": [
+      "job_id",
+      "task_id",
+      "status",
+      "solution",
+      "trace",
+      "elapsed_s"
+    ]
+  },
+  "target": {
+    "vivado": "2026.1",
+    "part": "xczu3eg-sbva484-1-e",
+    "period_ns": 5,
+    "single_gpu_vram_limit_gb": 32
+  },
+  "scoring": {
+    "coefficients": {
+      "L0": 0,
+      "L1": 0.2,
+      "L2": 0.7,
+      "L3": 1
+    },
+    "weights": {
+      "capability": 30,
+      "gain": 40,
+      "wall_clock": 10,
+      "engineering": 20
+    },
+    "gain_formula": "(A-B)/(1-B)",
+    "gain_full_mark": 0.6,
+    "wall_clock_reference_s": null,
+    "task_deadline_s": "request.deadline_s",
+    "announced_task_deadline_s": 900
+  },
+  "runtime_excludes": [
+    "competition/reference/",
+    "evaluation/",
+    "verilog-eval-main/",
+    "repos/",
+    "phase2-ui/benchmarks/"
+  ],
+  "implemented_at_common_baseline": {
+    "official_baseline_vendored": true,
+    "agent_entry": false,
+    "runtime_wrapper": false,
+    "http_service": false,
+    "dockerfile": false,
+    "final_manifest": false,
+    "offline_32gb_acceptance": false,
+    "r9700_acceptance": false
+  }
+}

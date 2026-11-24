@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "source": "https://pypi.org/pypi/numpy/2.3.4/json",
+  "packages": [
+    {"python": "3.12", "filename": "numpy-2.3.4-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", "bytes": 16641271, "sha256": "4121c5beb58a7f9e6dfdee612cb24f4df5cd4db6e8261d7f4d7450a997a65d6a"},
+    {"python": "3.14", "filename": "numpy-2.3.4-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", "bytes": 16638601, "sha256": "d5e081bc082825f8b139f9e9fe42942cb4054524598aaeb177ff476cc76d09d2"}
+  ]
+}

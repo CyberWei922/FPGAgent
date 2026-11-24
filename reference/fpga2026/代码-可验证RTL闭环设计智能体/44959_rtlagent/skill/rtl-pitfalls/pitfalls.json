@@ -1,0 +1,370 @@
+[
+  {
+    "id": "static-declaration-initializer",
+    "category": "RTL data flow",
+    "symptom": "A signal-dependent declaration initializer is reported.",
+    "cause": "A static initializer evaluates once; it is not a continuous driver.",
+    "rule": "Declare the signal separately. Drive changing logic with assign or always_comb.",
+    "detect_with": [
+      "rtl-lint-rules: -Wstatic-init-value"
+    ],
+    "applies_to": [
+      "Static variable initializers that reference signals"
+    ],
+    "not_for": [
+      "A specified constant initialization"
+    ],
+    "evidence": [
+      {
+        "artifact": "docs/new-agent/evidence/rtl-lint-20261026/audit-archive.json",
+        "pointer": "/findings/0",
+        "artifact_sha256": "51583056a6df06b36d1ff5a64eba5bbc418fded2ad0be2b8af737b2d6fdc8849",
+        "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/harness-modular-20261024/recovered/r4/five-task-screen-absolute/rows/Prob144_conwaylife/agent/output",
+        "task": "Prob144_conwaylife",
+        "commit": "2bd9203",
+        "commit_role": "audit",
+        "numbers": {
+          "source_findings_for_rule": 8,
+          "line": 52,
+          "column": 17
+        },
+        "source_file": "/Users/wei/Documents/FPGA AMD/coordination/harness-modular-20261024/recovered/r4/five-task-screen-absolute/rows/Prob144_conwaylife/agent/output/solution.v"
+      }
+    ]
+  },
+  {
+    "id": "multiple-procedural-drivers",
+    "category": "RTL data flow",
+    "symptom": "pyslang rejects next_state written by multiple processes.",
+    "cause": "An always_comb variable also has another procedural writer.",
+    "rule": "Keep one process responsible for each variable. Preserve reset and enable priority.",
+    "detect_with": [
+      "rtl-lint-rules: -Wmultiple-always-assigns",
+      "Vivado compile / synthesize"
+    ],
+    "applies_to": [
+      "Variables assigned by always_comb or always_ff"
+    ],
+    "not_for": [
+      "Resolved nets with intentional multiple drivers"
+    ],
+    "evidence": [
+      {
+        "artifact": "docs/new-agent/evidence/rtl-lint-20261026/audit-archive.json",
+        "pointer": "/findings/2",
+        "artifact_sha256": "51583056a6df06b36d1ff5a64eba5bbc418fded2ad0be2b8af737b2d6fdc8849",
+        "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/off-instance-final-20261023/contents/var/tmp/planner-phase1-20261022/v14/modular-smoke/rows/Prob146_fsm_serialdata/baseline/output",
+        "task": "Prob146_fsm_serialdata",
+        "commit": "2bd9203",
+        "commit_role": "audit",
+        "numbers": {
+          "source_findings_for_rule": 1,
+          "line": 63,
+          "column": 9
+        },
+        "source_file": "/Users/wei/Documents/FPGA AMD/coordination/off-instance-final-20261023/contents/var/tmp/planner-phase1-20261022/v14/modular-smoke/rows/Prob146_fsm_serialdata/baseline/output/solution.v"
+      }
+    ]
+  },
+  {
+    "id": "unsigned-arithmetic-shift",
+    "category": "RTL data flow",
+    "symptom": "An intended sign-preserving shift fills high bits with zero.",
+    "cause": "The left operand of >>> is unsigned.",
+    "rule": "When the specification requires sign extension, use a signed operand. For zero fill, use >>.",
+    "detect_with": [
+      "rtl-lint-rules: -Wunsigned-arith-shift",
+      "spec-selftest: shift_register"
+    ],
+    "applies_to": [
+      "Arithmetic right shifts on unsigned packed values"
+    ],
+    "not_for": [
+      "Logical right shifts required by the specification"
+    ],
+    "evidence": [
+      {
+        "artifact": "docs/new-agent/evidence/rtl-lint-20261026/audit-archive.json",
+        "pointer": "/findings/7",
+        "artifact_sha256": "51583056a6df06b36d1ff5a64eba5bbc418fded2ad0be2b8af737b2d6fdc8849",
+        "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/off-instance-final-20261023/contents/var/tmp/planner-phase1-20261022/v27/gatefix-smoke/rows/Prob115_shift18/baseline/output",
+        "task": "Prob115_shift18",
+        "commit": "2bd9203",
+        "commit_role": "audit",
+        "numbers": {
+          "source_findings_for_rule": 2,
+          "line": 17,
+          "column": 37
+        },
+        "source_file": "/Users/wei/Documents/FPGA AMD/coordination/off-instance-final-20261023/contents/var/tmp/planner-phase1-20261022/v27/gatefix-smoke/rows/Prob115_shift18/baseline/output/solution.v"
+      }
+    ]
+  },
+  {
+    "id": "undriven-output",
+    "category": "RTL data flow",
+    "symptom": "An output port has no driver.",
+    "cause": "The implementation omitted the output assignment.",
+    "rule": "Drive the declared output from the specified logic. Check port connections before simulation.",
+    "detect_with": [
+      "rtl-lint-rules: -Wundriven-port",
+      "Vivado simulate"
+    ],
+    "applies_to": [
+      "Observable outputs"
+    ],
+    "not_for": [
+      "Deliberately undriven interfaces explicitly permitted by the specification"
+    ],
+    "evidence": [
+      {
+        "artifact": "docs/new-agent/evidence/rtl-lint-20261026/audit-archive.json",
+        "pointer": "/findings/9",
+        "artifact_sha256": "51583056a6df06b36d1ff5a64eba5bbc418fded2ad0be2b8af737b2d6fdc8849",
+        "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/harness-modular-20261024/recovered/r4/five-task-screen-absolute/rows/Prob144_conwaylife/baseline/output",
+        "task": "Prob144_conwaylife",
+        "commit": "2bd9203",
+        "commit_role": "audit",
+        "numbers": {
+          "source_findings_for_rule": 1,
+          "line": 5,
+          "column": 26
+        },
+        "source_file": "/Users/wei/Documents/FPGA AMD/coordination/harness-modular-20261024/recovered/r4/five-task-screen-absolute/rows/Prob144_conwaylife/baseline/output/solution.v"
+      }
+    ]
+  },
+  {
+    "id": "unassigned-state-variable",
+    "category": "RTL data flow",
+    "symptom": "A state variable is read but never assigned.",
+    "cause": "The next-state variable has no producer.",
+    "rule": "Assign each required state value in its owning process. Check all specified branches.",
+    "detect_with": [
+      "rtl-lint-rules: -Wunassigned-variable",
+      "Vivado simulate"
+    ],
+    "applies_to": [
+      "Internal state and next-state variables"
+    ],
+    "not_for": [
+      "Unused declarations that are never read"
+    ],
+    "evidence": [
+      {
+        "artifact": "docs/new-agent/evidence/rtl-lint-20261026/audit-archive.json",
+        "pointer": "/findings/9",
+        "artifact_sha256": "51583056a6df06b36d1ff5a64eba5bbc418fded2ad0be2b8af737b2d6fdc8849",
+        "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/harness-modular-20261024/recovered/r4/five-task-screen-absolute/rows/Prob144_conwaylife/baseline/output",
+        "task": "Prob144_conwaylife",
+        "commit": "2bd9203",
+        "commit_role": "audit",
+        "numbers": {
+          "source_findings_for_rule": 1,
+          "line": 9,
+          "column": 19
+        },
+        "source_file": "/Users/wei/Documents/FPGA AMD/coordination/harness-modular-20261024/recovered/r4/five-task-screen-absolute/rows/Prob144_conwaylife/baseline/output/solution.v"
+      }
+    ]
+  },
+  {
+    "id": "waveform-simultaneous-input",
+    "category": "Sampling and coverage",
+    "symptom": "Reading same-row new inputs as edge samples contradicts the audited waveform replay.",
+    "cause": "The source tables use edge-before-new-input ordering at simultaneous changes.",
+    "rule": "For these source tables, retain previous-row inputs at an active edge. Keep falling edges and final displayed combinational or transparent outputs distinct.",
+    "detect_with": [
+      "spec-selftest: source-backed timing parameters",
+      "Vivado simulate: independently reproduce source observations"
+    ],
+    "applies_to": [
+      "Waveform tables with this audited sampling convention"
+    ],
+    "not_for": [
+      "A universal SystemVerilog scheduling rule",
+      "Every displayed output being a registered next state"
+    ],
+    "evidence": [
+      {
+        "artifact": "/Users/wei/Documents/FPGA AMD/coordination/waveform-w-20261028/audit-r2/inventory.json",
+        "pointer": "/rows",
+        "artifact_sha256": "9f5db88bbaa04b2f18a9309e288a5a0ae6ca0194ecbc3ae02a356068735aa65d",
+        "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/waveform-w-20261028/audit-r2",
+        "task": "Prob098_circuit7, Prob117_circuit9, Prob145_circuit8, Prob147_circuit10",
+        "commit": "c902dbc",
+        "commit_role": "audit",
+        "numbers": {
+          "clocked_tasks": 4,
+          "compared_outputs": 194,
+          "mismatches": 0,
+          "simultaneous_input_changes": 20
+        }
+      }
+    ]
+  },
+  {
+    "id": "unspecified-reset-value",
+    "category": "Sampling and coverage",
+    "symptom": "Preparation refuses a register method because the reset value is absent.",
+    "cause": "The old method required zero or ones even when the specification did not.",
+    "rule": "Do not invent the reset value. Establish known state with a specified full write, then check only defined behavior.",
+    "detect_with": [
+      "spec-selftest: register",
+      "Vivado simulate: known-state setup"
+    ],
+    "applies_to": [
+      "Registers with unspecified reset values and a specified full write"
+    ],
+    "not_for": [
+      "A rule to initialize every register to zero",
+      "Verification of the unspecified reset output"
+    ],
+    "evidence": [
+      {
+        "artifact": "/Users/wei/Documents/FPGA AMD/coordination/testbench-methods-20261024/recovered/methods-r1/Prob073_dff16e/RESULT.json",
+        "pointer": "/reason",
+        "artifact_sha256": "1239f4e206c9a7ef8c0a29718dc02cf4e0824fafe858f0b4242f306a90ecde24",
+        "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/testbench-methods-20261024/recovered/methods-r1",
+        "task": "Prob073_dff16e",
+        "commit": "c958e78",
+        "commit_role": "runtime",
+        "numbers": {
+          "usable": 0,
+          "comparisons": 0,
+          "elapsed_ms": 27833
+        }
+      }
+    ]
+  },
+  {
+    "id": "executable-checker-wrong-semantics",
+    "category": "Sampling and coverage",
+    "symptom": "A generated checker rejects an independently correct implementation in 4 of 264 comparisons.",
+    "cause": "The copied FSM table treated either side collision as a direction flip. CPU arithmetic faithfully executed the wrong semantic table.",
+    "rule": "Review event roles, priorities and source conditions. Treat compilation and negative controls as partial checks; report uncertain semantics before repairing a DUT.",
+    "detect_with": [
+      "spec-selftest: coverage.semantic_correctness",
+      "Vivado simulate: independent checker audit"
+    ],
+    "applies_to": [
+      "Model-filled FSM tables and other semantic method parameters"
+    ],
+    "not_for": [
+      "Proof that a negative control validates every expected value",
+      "An official-score claim from self-tests"
+    ],
+    "evidence": [
+      {
+        "artifact": "/Users/wei/Documents/FPGA AMD/coordination/testbench-methods-20261024/recovered/methods-r1/judge/SUMMARY.json",
+        "pointer": "/rows/5/reference",
+        "artifact_sha256": "e124cf0898ba43d6e547b50aa2600d55ecfc74eca02332a29fb6b36b9185cdd6",
+        "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/testbench-methods-20261024/recovered/methods-r1",
+        "task": "Prob142_lemmings2",
+        "commit": "c958e78",
+        "commit_role": "runtime",
+        "numbers": {
+          "checks": 264,
+          "failures": 4,
+          "prepared_cases": 5,
+          "valid_reference_cases": 4
+        }
+      }
+    ]
+  },
+  {
+    "id": "citation-line-wrapping",
+    "category": "Method transport and provenance",
+    "symptom": "A corrected timing quote differs from its source only by line wrapping.",
+    "cause": "A literal substring check treats whitespace layout as a content change.",
+    "rule": "Normalize whitespace for quote comparison. Preserve words, case and operators. Do not accept paraphrases.",
+    "detect_with": [
+      "spec-selftest: compileTestMethod source checks"
+    ],
+    "applies_to": [
+      "Source provenance checks on wrapped prose"
+    ],
+    "not_for": [
+      "Paraphrase acceptance",
+      "Claim that source matching proves semantic correctness"
+    ],
+    "evidence": [
+      {
+        "artifact": "/Users/wei/Documents/FPGA AMD/coordination/param-normalize-20261028/p-inventory-r2/raw/Prob096_review2015_fsmseq/verification-task-output.8e6276f9-8849-486c-a533-d0926c4a09e7.json",
+        "pointer": "/text",
+        "artifact_sha256": "888e89b2220a1d5be11d29f782dfa8deeabd96ad1995c6944c635609e76ac2fa",
+        "run_dir": "/var/tmp/eda/rtl2llm-evidence/dual-run.19bf3e89-b39b-4053-9abd-8a9cac42e17f",
+        "task": "Prob096_review2015_fsmseq",
+        "commit": "52cd5f8",
+        "commit_role": "fix",
+        "numbers": {
+          "quote_chars": 75,
+          "exact_substring": 0,
+          "whitespace_normalized_match": 1
+        }
+      },
+      {
+        "artifact": "/Users/wei/Documents/FPGA AMD/coordination/param-normalize-20261028/inventory-baseline-r1.json",
+        "pointer": "/rows/41",
+        "artifact_sha256": "1b39418539c63742e03149fb1e835621ccca82193506f6b3c2f805ed1928e07b",
+        "run_dir": "/var/tmp/eda/rtl2llm-evidence/dual-run.19bf3e89-b39b-4053-9abd-8a9cac42e17f",
+        "task": "Prob096_review2015_fsmseq",
+        "commit": "52cd5f8",
+        "commit_role": "fix",
+        "numbers": {
+          "quote_chars": 75,
+          "exact_substring": 0,
+          "whitespace_normalized_match": 1
+        }
+      }
+    ]
+  },
+  {
+    "id": "json-with-fences-or-prose",
+    "category": "Method transport and provenance",
+    "symptom": "Method correction ends normally but is rejected with OUTPUT_INVALID.",
+    "cause": "The response mixes transport text and Markdown fences with the JSON object.",
+    "rule": "Provide one bounded JSON object. Save format failures separately from unsupported methods and DUT failures.",
+    "detect_with": [
+      "spec-selftest: strict JSON input",
+      "Agent method preparation: OUTPUT_INVALID"
+    ],
+    "applies_to": [
+      "Method JSON transport"
+    ],
+    "not_for": [
+      "Silently extracting arbitrary nested JSON",
+      "Treating normal stop as validated output"
+    ],
+    "evidence": [
+      {
+        "artifact": "/Users/wei/Documents/FPGA AMD/coordination/param-normalize-20261028/p-inventory-r2/raw/Prob135_m2014_q6b/verification-task-output.07aa3aa8-33ec-48fb-86da-2d88b44911cc.json",
+        "pointer": "/text",
+        "artifact_sha256": "f8131ebf5de5032d83ed713cd4dcbf036b6cb7e902caf59c5b65335b1ec880c8",
+        "run_dir": "/var/tmp/eda/rtl2llm-evidence/dual-run.5529c882-3da3-4b47-9890-a8cc9528ff67",
+        "task": "Prob135_m2014_q6b",
+        "commit": "caf9e9a",
+        "commit_role": "report snapshot",
+        "numbers": {
+          "visible_text_chars": 2260,
+          "markdown_fence_markers": 2,
+          "normal_stop": 1
+        }
+      },
+      {
+        "artifact": "/Users/wei/Documents/FPGA AMD/coordination/param-normalize-20261028/inventory-baseline-r1.json",
+        "pointer": "/rows/64",
+        "artifact_sha256": "1b39418539c63742e03149fb1e835621ccca82193506f6b3c2f805ed1928e07b",
+        "run_dir": "/var/tmp/eda/rtl2llm-evidence/dual-run.5529c882-3da3-4b47-9890-a8cc9528ff67",
+        "task": "Prob135_m2014_q6b",
+        "commit": "caf9e9a",
+        "commit_role": "report snapshot",
+        "numbers": {
+          "visible_text_chars": 2260,
+          "markdown_fence_markers": 2,
+          "normal_stop": 1
+        }
+      }
+    ]
+  }
+]

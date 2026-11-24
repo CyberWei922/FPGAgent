@@ -1,0 +1,137 @@
+{
+  "schema_version": 1,
+  "track": "rtl",
+  "status": "competition_candidate_dual_model",
+  "runtime_versions": {
+    "profile_file": "competition/environment/versions.json",
+    "profile_id": "validation-w7900-20261015",
+    "live_gpu_verified": false,
+    "cloud_profile_file": "competition/environment/versions-cloud-w7900d-20261017.json",
+    "cloud_profile_id": "observed-cloud-w7900d-20261017",
+    "profile_selection": "Set RTL_ENVIRONMENT_PROFILE explicitly; the original PPT target remains recorded"
+  },
+  "model": {
+    "name": "siliconmind-v1-qwen3-8b-q6-cloud",
+    "role": "main model: the only RTL author; the official baseline uses the same service",
+    "base_model": "AS-SiliconMind/SiliconMind-V1-Qwen3-8B",
+    "parameters": "8B",
+    "source": "https://huggingface.co/thuniverse-ai/SiliconMind-V1-Qwen3-8B-GGUF",
+    "revision": "11a6c35ef3693c18c32bc82c30599de9a5d0a61e",
+    "file": "SiliconMind-V1-Qwen3-8B-Q6_K.gguf",
+    "bytes": 6725899744,
+    "sha256": "8c31e966b4cd1cff7d309513a571c7fff0cf5a9e4f8f277af1026635516b3921",
+    "quantization": "Q6_K",
+    "license": "Apache-2.0",
+    "measured_vram_gb": 10.73,
+    "finetuned": false,
+    "finetune_weights_url": null
+  },
+  "auxiliary_models": [
+    {
+      "name": "qwen3.8-27b-q4-cloud",
+      "base_model": "Qwen3.8-27B",
+      "parameters": "27B",
+      "purpose": "planning, self-test method selection and parameters, semantic review, failure diagnosis; never generates RTL",
+      "location": "same GPU, llama.cpp on 127.0.0.1:8001",
+      "source": "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF",
+      "revision": "287999af67436bfaa4f4ee09dc34af328a495ba6",
+      "file": "Qwen3.8-27B-UD-Q4_K_M.gguf",
+      "bytes": 16464440224,
+      "sha256": "322e194ff79741c7baa497c240f677f54b201b0efab44ca8e50f122b39123482",
+      "quantization": "UD-Q4_K_M",
+      "license": "Apache-2.0",
+      "finetuned": false,
+      "measured_vram_gib": 19.63,
+      "vram_note": "27B process including the DSpark draft head, after load"
+    },
+    {
+      "name": "qwen3.8-27b-dspark-draft",
+      "base_model": "RadixArk/Qwen3.8-27B-DSpark",
+      "parameters": "draft head for Qwen3.8-27B",
+      "purpose": "speculative-decoding draft for the 27B auxiliary model only; does not produce output on its own",
+      "location": "same GPU, loaded inside the 27B llama.cpp process",
+      "source": "https://huggingface.co/Anbeeld/Qwen3.8-27B-DSpark-GGUF",
+      "revision": "77843de41a67edb1c6294d641ea38fa78f9c8124",
+      "file": "Qwen3.8-27B-DSpark-Q4_K_M.gguf",
+      "bytes": 1104595648,
+      "sha256": "02307a130d58ad478996c640753f2fe5f813f548c48e1881b7df56506ca7d545",
+      "quantization": "Q4_K_M",
+      "license": "other (see the upstream model card)",
+      "finetuned": false,
+      "measured_vram_gib": 1.03,
+      "vram_note": "draft weights inside the 27B process; included in its 19.63 GiB"
+    }
+  ],
+  "measured_vram": {
+    "peak_gib_all_models": 31.28,
+    "hardware": "Radeon PRO W7900 (Radeon Cloud instance; preliminary and final rounds)",
+    "method": "rocm-smi VRAM Total Used, 2-second sampling during 60-task and pilot runs",
+    "per_process_after_load_gib": {
+      "main_8b": 10.73,
+      "aux_27b_with_draft": 19.63,
+      "total": 30.4
+    }
+  },
+  "context": {
+    "max_model_len": 32768,
+    "max_output_tokens": 12288,
+    "baseline_max_output_tokens": 16384,
+    "rope_scaling": null
+  },
+  "generation": {
+    "chat_template_kwargs": {
+      "enable_thinking": true
+    },
+    "reasoning_effort": null
+  },
+  "serving": {
+    "backend": "llama.cpp",
+    "version": "preinstalled /opt/llamacpp build f114f91 (sha256 290708d22f8b495d36b8aedd0afb0cdc081c415548f855e6a950a75dd742ad97)",
+    "start_command": "./serve/start.sh",
+    "port": 8000,
+    "bind": "127.0.0.1",
+    "reasoning_budget_tokens": 2048
+  },
+  "deployment": {
+    "main": {
+      "port": 8000,
+      "context": 32768,
+      "parallel": 2,
+      "kv_unified": true
+    },
+    "aux": {
+      "port": 8001,
+      "context": 20480,
+      "parallel": 1,
+      "max_output_tokens": 6144,
+      "draft_n_max": 7
+    },
+    "vram_limit_gib": 32
+  },
+  "endpoints": {
+    "solve": "./run.sh",
+    "baseline": "./run_baseline.sh",
+    "http_port": 7860
+  },
+  "agent": {
+    "max_rounds": 3,
+    "eda_backend": "fixed_persistent",
+    "tools": [
+      "check_interface",
+      "lint",
+      "xvlog",
+      "xelab",
+      "xsim",
+      "synth"
+    ],
+    "skills": [
+      "sv-combinational",
+      "sv-sequential",
+      "sv-fsm",
+      "sv-fifo",
+      "sv-width-sign",
+      "vivado-sv"
+    ]
+  },
+  "official_reference_commit": "f7a8bd465c2a820e006c7a00ecc7df468974635b"
+}

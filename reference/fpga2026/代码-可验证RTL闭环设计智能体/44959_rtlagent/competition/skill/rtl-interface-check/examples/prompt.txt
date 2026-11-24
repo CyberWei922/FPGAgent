@@ -1,0 +1,4 @@
+Build top-level module LaneCopy.
+Copy payload to result.
+- input payload (5 bits)
+- output result (5 bits)

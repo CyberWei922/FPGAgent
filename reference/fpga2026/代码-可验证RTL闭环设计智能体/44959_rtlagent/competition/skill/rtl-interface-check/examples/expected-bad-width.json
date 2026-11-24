@@ -1,0 +1,52 @@
+{
+  "status": "mismatch",
+  "ports": [
+    {
+      "name": "payload",
+      "expected": {
+        "direction": "input",
+        "name": "payload",
+        "width": 5
+      },
+      "actual": {
+        "name": "payload",
+        "direction": "input",
+        "width": 5
+      },
+      "name_match": true,
+      "direction_match": true,
+      "width_match": true
+    },
+    {
+      "name": "result",
+      "expected": {
+        "direction": "output",
+        "name": "result",
+        "width": 5
+      },
+      "actual": {
+        "name": "result",
+        "direction": "output",
+        "width": 4
+      },
+      "name_match": true,
+      "direction_match": true,
+      "width_match": false
+    }
+  ],
+  "check": {
+    "rc": 1,
+    "authoritative": false,
+    "blocking": true,
+    "blockingDifferences": [
+      "result: expected 5 bits, found 4"
+    ],
+    "differences": [
+      "result: expected 5 bits, found 4"
+    ],
+    "unresolved": [],
+    "excerpt": "result: expected 5 bits, found 4",
+    "source": "prompt.txt",
+    "functional_verified": false
+  }
+}

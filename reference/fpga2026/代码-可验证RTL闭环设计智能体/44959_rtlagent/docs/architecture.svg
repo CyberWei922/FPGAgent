@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 836" width="680" height="836" role="img" aria-label="RTL 智能体总体架构">
+<title>RTL 智能体总体架构</title>
+<style>
+.t { font: 500 14px "PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Source Han Sans SC",sans-serif; }
+.s { font: 400 12px "PingFang SC","Hiragino Sans GB","Microsoft YaHei","Noto Sans CJK SC","Source Han Sans SC",sans-serif; }
+.a { fill: none; stroke: #8B949E; stroke-width: 1.2; }
+</style>
+<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#8B949E" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+<rect x="240" y="30" width="200" height="44" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="340.0" y="52.0" class="t" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">题面 · POST /v1/solve</text>
+<path d="M340 74 L340 92 L130 92 L130 108" class="a" marker-end="url(#ah)"/>
+<rect x="40" y="110" width="180" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="130.0" y="129" class="t" fill="#3C3489" text-anchor="middle" dominant-baseline="central">27B 规划</text>
+<text x="130.0" y="148" class="s" fill="#534AB7" text-anchor="middle" dominant-baseline="central">行为要点 · 交接文档</text>
+<line x1="220" y1="138" x2="248" y2="138" class="a" marker-end="url(#ah)"/>
+<rect x="250" y="110" width="180" height="56" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="340.0" y="129" class="t" fill="#3C3489" text-anchor="middle" dominant-baseline="central">27B 选方法填参数</text>
+<text x="340.0" y="148" class="s" fill="#534AB7" text-anchor="middle" dominant-baseline="central">带原文引用 · 程序校验</text>
+<line x1="430" y1="138" x2="458" y2="138" class="a" marker-end="url(#ah)"/>
+<rect x="460" y="110" width="180" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="550.0" y="129" class="t" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">CPU 算期望值</text>
+<text x="550.0" y="148" class="s" fill="#5F5E5A" text-anchor="middle" dominant-baseline="central">测试台 · 变异体负对照</text>
+<path d="M130 166 L130 228 L248 228" class="a" marker-end="url(#ah)"/>
+<rect x="250" y="200" width="180" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="340.0" y="219" class="t" fill="#085041" text-anchor="middle" dominant-baseline="central">8B 写 RTL</text>
+<text x="340.0" y="238" class="s" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">全新会话 · 唯一写代码</text>
+<line x1="340" y1="256" x2="340" y2="288" class="a" marker-end="url(#ah)"/>
+<path d="M550 166 L550 305 L542 305" class="a" marker-end="url(#ah)"/>
+<rect x="140" y="290" width="400" height="56" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="340.0" y="309" class="t" fill="#712B13" text-anchor="middle" dominant-baseline="central">程序检查（Vivado / pyslang）</text>
+<text x="340.0" y="328" class="s" fill="#993C1D" text-anchor="middle" dominant-baseline="central">接口 → lint → 编译 → 自测仿真 → 综合</text>
+<line x1="170" y1="346" x2="170" y2="388" class="a" marker-end="url(#ah)"/>
+<rect x="40" y="390" width="160" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="120.0" y="409" class="t" fill="#085041" text-anchor="middle" dominant-baseline="central">全部通过</text>
+<text x="120.0" y="428" class="s" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">交卷</text>
+<line x1="120" y1="446" x2="120" y2="598" class="a" marker-end="url(#ah)"/>
+<rect x="40" y="600" width="160" height="56" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="120.0" y="619" class="t" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">solution.v</text>
+<text x="120.0" y="638" class="s" fill="#5F5E5A" text-anchor="middle" dominant-baseline="central">+ trace.jsonl</text>
+<rect x="220" y="380" width="420" height="406" rx="16" fill="none" stroke="#8B949E" stroke-width="0.8" stroke-dasharray="6 4"/>
+<rect x="232" y="390" width="62" height="24" rx="12" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="263" y="402" class="t" fill="#3C3489" text-anchor="middle" dominant-baseline="central">修复环</text>
+<line x1="430" y1="346" x2="430" y2="412" class="a" marker-end="url(#ah)"/>
+<rect x="330" y="414" width="200" height="44" rx="8" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="430.0" y="436.0" class="t" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">按失败类型分流</text>
+<path d="M400 458 L400 470 L326 470 L326 480" class="a" marker-end="url(#ah)"/>
+<path d="M460 458 L460 470 L527 470 L527 480" class="a" marker-end="url(#ah)"/>
+<text x="250" y="464" class="s" fill="#8B949E" text-anchor="start" dominant-baseline="central">编译类错误</text>
+<text x="566" y="464" class="s" fill="#8B949E" text-anchor="start" dominant-baseline="central">自测失配</text>
+<rect x="236" y="482" width="180" height="56" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="326.0" y="501" class="t" fill="#085041" text-anchor="middle" dominant-baseline="central">8B 按编译器诊断修</text>
+<text x="326.0" y="520" class="s" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">编译 · 接口 · lint 错误</text>
+<rect x="432" y="482" width="190" height="44" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="527.0" y="504.0" class="t" fill="#085041" text-anchor="middle" dominant-baseline="central">① 8B 并行重抽 2 份</text>
+<line x1="527" y1="526" x2="527" y2="536" class="a" marker-end="url(#ah)"/>
+<rect x="432" y="538" width="190" height="44" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="527.0" y="560.0" class="t" fill="#3C3489" text-anchor="middle" dominant-baseline="central">② 27B 读首个反例诊断</text>
+<line x1="527" y1="582" x2="527" y2="592" class="a" marker-end="url(#ah)"/>
+<rect x="432" y="594" width="190" height="44" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="527.0" y="616.0" class="t" fill="#085041" text-anchor="middle" dominant-baseline="central">③ 8B 按诊断修复</text>
+<line x1="527" y1="638" x2="527" y2="648" class="a" marker-end="url(#ah)"/>
+<rect x="432" y="650" width="190" height="44" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="527.0" y="672.0" class="t" fill="#085041" text-anchor="middle" dominant-baseline="central">④ 8B 凭反例直修</text>
+<line x1="326" y1="538" x2="326" y2="712" class="a" marker-end="url(#ah)"/>
+<line x1="527" y1="694" x2="527" y2="712" class="a" marker-end="url(#ah)"/>
+<rect x="236" y="714" width="386" height="56" rx="8" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="429.0" y="733" class="t" fill="#712B13" text-anchor="middle" dominant-baseline="central">择优：相同激励下完整重放</text>
+<text x="429.0" y="752" class="s" fill="#993C1D" text-anchor="middle" dominant-baseline="central">任一观测点退步即拒绝 · 始终保留最好候选</text>
+<path d="M622 742 L656 742 L656 331 L542 331" class="a" marker-end="url(#ah)"/>
+<path d="M236 742 L120 742 L120 658" class="a" marker-end="url(#ah)"/>
+<text x="178" y="726" class="s" fill="#8B949E" text-anchor="middle" dominant-baseline="central">到时或次数用尽</text>
+<rect x="236" y="806" width="12" height="12" rx="2" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.8"/>
+<text x="254" y="812" class="s" fill="#8B949E" text-anchor="start" dominant-baseline="central">27B</text>
+<rect x="306" y="806" width="12" height="12" rx="2" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.8"/>
+<text x="324" y="812" class="s" fill="#8B949E" text-anchor="start" dominant-baseline="central">8B</text>
+<rect x="372" y="806" width="12" height="12" rx="2" fill="#FAECE7" stroke="#993C1D" stroke-width="0.8"/>
+<text x="390" y="812" class="s" fill="#8B949E" text-anchor="start" dominant-baseline="central">检查与择优</text>
+<rect x="490" y="806" width="12" height="12" rx="2" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.8"/>
+<text x="508" y="812" class="s" fill="#8B949E" text-anchor="start" dominant-baseline="central">程序 / CPU</text>
+</svg>

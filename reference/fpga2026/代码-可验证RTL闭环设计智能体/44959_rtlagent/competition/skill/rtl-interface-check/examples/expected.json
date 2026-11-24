@@ -1,0 +1,48 @@
+{
+  "status": "match",
+  "ports": [
+    {
+      "name": "payload",
+      "expected": {
+        "direction": "input",
+        "name": "payload",
+        "width": 5
+      },
+      "actual": {
+        "name": "payload",
+        "direction": "input",
+        "width": 5
+      },
+      "name_match": true,
+      "direction_match": true,
+      "width_match": true
+    },
+    {
+      "name": "result",
+      "expected": {
+        "direction": "output",
+        "name": "result",
+        "width": 5
+      },
+      "actual": {
+        "name": "result",
+        "direction": "output",
+        "width": 5
+      },
+      "name_match": true,
+      "direction_match": true,
+      "width_match": true
+    }
+  ],
+  "check": {
+    "rc": 0,
+    "authoritative": false,
+    "blocking": false,
+    "blockingDifferences": [],
+    "differences": [],
+    "unresolved": [],
+    "excerpt": "Module and ports match the declared interface",
+    "source": "prompt.txt",
+    "functional_verified": false
+  }
+}

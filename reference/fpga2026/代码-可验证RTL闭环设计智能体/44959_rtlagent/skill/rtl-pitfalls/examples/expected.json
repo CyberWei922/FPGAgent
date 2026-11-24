@@ -1,0 +1,39 @@
+{
+  "count": 1,
+  "pitfalls": [
+    {
+      "id": "unsigned-arithmetic-shift",
+      "category": "RTL data flow",
+      "symptom": "An intended sign-preserving shift fills high bits with zero.",
+      "cause": "The left operand of >>> is unsigned.",
+      "rule": "When the specification requires sign extension, use a signed operand. For zero fill, use >>.",
+      "detect_with": [
+        "rtl-lint-rules: -Wunsigned-arith-shift",
+        "spec-selftest: shift_register"
+      ],
+      "applies_to": [
+        "Arithmetic right shifts on unsigned packed values"
+      ],
+      "not_for": [
+        "Logical right shifts required by the specification"
+      ],
+      "evidence": [
+        {
+          "artifact": "docs/new-agent/evidence/rtl-lint-20261026/audit-archive.json",
+          "pointer": "/findings/7",
+          "artifact_sha256": "51583056a6df06b36d1ff5a64eba5bbc418fded2ad0be2b8af737b2d6fdc8849",
+          "run_dir": "/Users/wei/Documents/FPGA AMD/coordination/off-instance-final-20261023/contents/var/tmp/planner-phase1-20261022/v27/gatefix-smoke/rows/Prob115_shift18/baseline/output",
+          "task": "Prob115_shift18",
+          "commit": "2bd9203",
+          "commit_role": "audit",
+          "numbers": {
+            "source_findings_for_rule": 2,
+            "line": 17,
+            "column": 37
+          },
+          "source_file": "/Users/wei/Documents/FPGA AMD/coordination/off-instance-final-20261023/contents/var/tmp/planner-phase1-20261022/v27/gatefix-smoke/rows/Prob115_shift18/baseline/output/solution.v"
+        }
+      ]
+    }
+  ]
+}

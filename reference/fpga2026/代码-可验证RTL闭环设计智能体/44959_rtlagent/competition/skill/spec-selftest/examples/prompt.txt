@@ -1,0 +1,5 @@
+Build top-level module ParityPair.
+Return the bitwise XOR of left and right on value.
+- input left (2 bits)
+- input right (2 bits)
+- output value (2 bits)

@@ -1,0 +1,5 @@
+{
+  "status": "rejected",
+  "code": "TEST_PLAN_INVALID",
+  "message": "method logic; field sources: expected Use S1 or S1-S3 source addresses; actual [\"Invented behavior not present in the specification.\"]"
+}
