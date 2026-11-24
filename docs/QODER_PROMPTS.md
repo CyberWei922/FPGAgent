@@ -9,7 +9,7 @@
 > **使用时机**：M0 骨架在 `main` 验收后，从 `main` 切到 `feat/ui-core` 继续工作台开发。
 
 ```text
-请先阅读 docs/PROJECT_PLAN.md、docs/DATA_CONTRACTS.md、src/types/contracts.ts 和现有 src/App.tsx。项目为 2026 Qoder 高校创造力大赛 StudyHack 赛道的 VibeFPGA Lab。
+请先阅读 docs/PROJECT_PLAN.md、docs/DATA_CONTRACTS.md、src/types/contracts.ts 和现有 src/App.tsx。项目为 2026 Qoder 高校创造力大赛 StudyHack 赛道的 FPGAgent。
 
 我是队长，负责契约、前端和 Qoder Sites 云函数。基于现有 M0 项目推进 M1，按以下接口交接：
 

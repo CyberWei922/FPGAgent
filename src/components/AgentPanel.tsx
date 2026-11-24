@@ -8,111 +8,56 @@ interface Props {
   issues: LintIssue[];
   selfTest?: SelfTestResult;
   code: string;
+  canCompile: boolean;
   onCodeChange: (code: string) => void;
   onCompile: () => void;
 }
 
-type Tab = 'blueprint' | 'verify' | 'code';
-
-const TABS: [Tab, string][] = [
-  ['blueprint', '蓝图'],
-  ['verify', '自测与诊断'],
-  ['code', 'Verilog'],
-];
-
-function StatusIcon({ status }: { status: HarnessTraceEvent['status'] }) {
-  if (status === 'pass') return <CheckCircle2 size={14} className="text-emerald-400" />;
-  if (status === 'fail') return <XCircle size={14} className="text-rose-400" />;
-  return <CircleDashed size={14} className="animate-spin text-cyan-400" />;
-}
+const TABS = [['blueprint', '蓝图'], ['verify', '自测'], ['code', 'Verilog']] as const;
 
 export function AgentPanel(props: Props) {
-  const [tab, setTab] = useState<Tab>('blueprint');
+  const [tab, setTab] = useState<typeof TABS[number][0]>('blueprint');
+  const failure = props.selfTest?.firstFailure;
 
   return (
-    <section className="flex min-h-0 flex-col border-r border-slate-800">
-      <nav className="flex border-b border-slate-800 text-sm">
-        {TABS.map(([value, label]) => (
-          <button
-            key={value}
-            onClick={() => setTab(value)}
-            className={`flex-1 py-2 ${tab === value ? 'border-b-2 border-cyan-400 text-cyan-300' : 'text-slate-400'}`}
-          >
-            {label}
-          </button>
-        ))}
+    <section className="agent-panel">
+      <nav className="panel-tabs" aria-label="电路资料页签">
+        {TABS.map(([value, label]) => <button key={value} aria-pressed={tab === value} onClick={() => setTab(value)}>{label}</button>)}
       </nav>
-
-      <div className="min-h-0 flex-1 overflow-auto p-3 text-sm">
-        {tab === 'blueprint' &&
-          (props.blueprint ? (
-            <div className="space-y-3">
-              <h2 className="text-base font-semibold">{props.blueprint.title}</h2>
-              <p className="text-slate-300">{props.blueprint.summary}</p>
-              <ol className="list-decimal space-y-1 pl-5 text-slate-300">
-                {props.blueprint.behaviors.map((b) => (
-                  <li key={b}>{b}</li>
-                ))}
-              </ol>
-              <table className="w-full text-left text-xs">
-                <tbody>
-                  {props.blueprint.pinMappings.map((p) => (
-                    <tr key={p.port} className="border-t border-slate-800">
-                      <td className="py-1 font-mono text-cyan-300">{p.port}</td>
-                      <td className="py-1 text-slate-300">{p.role}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              <pre className="rounded bg-slate-900 p-2 text-xs text-slate-400">{props.blueprint.mermaidFsm}</pre>
-            </div>
-          ) : (
-            <p className="text-slate-500">选择预置案例或输入需求开始。</p>
-          ))}
-
+      <div className="panel-content">
+        {tab === 'blueprint' && (props.blueprint ? (
+          <div className="blueprint-content">
+            <h3>{props.blueprint.title}</h3>
+            <p>{props.blueprint.summary}</p>
+            <ol>{props.blueprint.behaviors.map((behavior, index) => <li key={index}>{behavior}</li>)}</ol>
+            <table><tbody>{props.blueprint.pinMappings.map((pin, index) => (
+              <tr key={index}><th scope="row">{pin.port}</th><td>{pin.role}</td></tr>
+            ))}</tbody></table>
+            {props.blueprint.mermaidFsm && <pre>{props.blueprint.mermaidFsm}</pre>}
+          </div>
+        ) : <p className="muted">规划完成后显示电路蓝图。</p>)}
         {tab === 'verify' && (
-          <div className="space-y-3">
-            <ul className="space-y-1">
-              {props.traces.map((t, i) => (
-                <li key={i} className="flex items-start gap-2">
-                  <StatusIcon status={t.status} />
-                  <div>
-                    <div>{t.title}</div>
-                    {t.detail && <div className="text-xs text-slate-500">{t.detail}</div>}
-                  </div>
-                </li>
-              ))}
-            </ul>
-            {props.selfTest && (
-              <div className={`rounded p-2 ${props.selfTest.passed ? 'bg-emerald-950 text-emerald-300' : 'bg-rose-950 text-rose-300'}`}>
-                自测 {props.selfTest.passedChecks}/{props.selfTest.totalChecks} 通过
-                {props.selfTest.firstFailure &&
-                  `：第 ${props.selfTest.firstFailure.cycle} 拍 ${props.selfTest.firstFailure.signal} 期望 ${props.selfTest.firstFailure.expected}，实际 ${props.selfTest.firstFailure.actual}`}
-              </div>
-            )}
-            {props.issues.map((issue, i) => (
-              <div key={i} className={`rounded border p-2 ${issue.severity === 'error' ? 'border-rose-800' : 'border-amber-800'}`}>
-                <div className="font-mono text-xs">
-                  {issue.code} · 第 {issue.line} 行
-                </div>
-                <div>{issue.message}</div>
-                <div className="text-xs text-slate-400">{issue.hint}</div>
-              </div>
-            ))}
+          <div className="verification-panel">
+            {props.selfTest && <div className={`test-result ${props.selfTest.passed ? 'passed' : 'failed'}`}>
+              自测 {props.selfTest.passedChecks}/{props.selfTest.totalChecks} 通过
+              {failure && <p>第 {failure.cycle} 拍，{failure.signal} 期望 {failure.expected}，实际 {failure.actual}。</p>}
+            </div>}
+            {props.issues.map((issue, index) => <div key={index} className="issue">
+              <strong>{issue.code} · 第 {issue.line} 行</strong><p>{issue.message}</p><p className="muted">{issue.hint}</p>
+            </div>)}
+            {props.traces.length > 0 && <ol className="trace-list">{props.traces.map((trace, index) => {
+              const Icon = trace.status === 'pass' ? CheckCircle2 : trace.status === 'fail' ? XCircle : CircleDashed;
+              return <li key={index} data-status={trace.status}>
+                <Icon size={15} /><div><strong>{trace.title}</strong>{trace.detail && <p>{trace.detail}</p>}</div>
+              </li>;
+            })}</ol>}
+            {!props.selfTest && !props.issues.length && !props.traces.length && <p className="muted">暂无自测记录。</p>}
           </div>
         )}
-
         {tab === 'code' && (
-          <div className="flex h-full flex-col gap-2">
-            <textarea
-              className="min-h-[24rem] flex-1 resize-none rounded bg-slate-900 p-2 font-mono text-xs leading-5 outline-none"
-              spellCheck={false}
-              value={props.code}
-              onChange={(e) => props.onCodeChange(e.target.value)}
-            />
-            <button onClick={props.onCompile} className="rounded bg-cyan-700 py-1.5">
-              编译并自测
-            </button>
+          <div className="code-editor">
+            <textarea aria-label="Verilog 源码" placeholder="暂无 Verilog 源码" value={props.code} readOnly={!props.canCompile} spellCheck={false} onChange={(event) => props.onCodeChange(event.target.value)} />
+            <button type="button" className="primary-button" disabled={!props.canCompile} onClick={props.onCompile}>编译并自测</button>
           </div>
         )}
       </div>

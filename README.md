@@ -1,4 +1,4 @@
-# VibeFPGA Lab · AI 驱动的可验证浏览器虚拟 FPGA 实验室
+# FPGAgent · AI 驱动的可验证浏览器虚拟 FPGA 实验室
 
 > **参赛项目**：2026 Qoder 高校创造力大赛 · `StudyHack 学习科研` 赛道  
 > **一句话定位**：不用买开发板、不用装 50GB Vivado，打开网页输入一句自然语言，AI 智能体自动规划蓝图、编写 Verilog、在浏览器里完成确定性自测与修复，并以**慢动作门级信号流动画**直观展示电流如何逐级穿过逻辑门、点亮虚拟 FPGA 开发板。
@@ -40,7 +40,9 @@ npm test
 npm run build
 ```
 
-M0 首页加载交通灯演示。板卡与 AI 生成流程使用 Mock，可离线预览。队友 1 运行 `npm run test:engine`，队友 2 运行 `npm run test:agent`。本地联调云函数时，可用 Deno 运行 `npm run dev:function`，前端通过 `/functions/v1/app/agent` 调用。
+FPGAgent 从对话首页开始。可以输入电路需求，也可以点击交通灯或四位密码锁演示。进入仿真后可继续提需求，点击左侧「蓝图」查看电路资料。
+
+当前演示使用 Mock；「API 设置」可以保存支持浏览器访问的 OpenAI 兼容服务地址、模型名和 Key。真实 Harness 接入后，注入的客户端会按已保存的设置调用。队友 1 运行 `npm run test:engine`，队友 2 运行 `npm run test:agent`。本地联调云函数时，可用 Deno 运行 `npm run dev:function`，前端通过 `/functions/v1/app/agent` 调用。
 
 ## 仓库目录规划
 

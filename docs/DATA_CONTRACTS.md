@@ -1,4 +1,4 @@
-# VibeFPGA Lab 统一数据契约
+# FPGAgent 统一数据契约
 
 冻结版以 [`src/types/contracts.ts`](../src/types/contracts.ts) 为准。三位成员直接从该文件导入类型。字段或语义有变动时，在群内同步后由队长统一修改。
 

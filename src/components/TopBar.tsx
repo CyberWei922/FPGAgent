@@ -1,107 +1,90 @@
-import { Pause, Play, SkipForward, Sparkles, Square } from 'lucide-react';
+import { ArrowUp, CircuitBoard, Pause, Play, Plus, Settings2, SkipForward, Square } from 'lucide-react';
 import { useState } from 'react';
-import type { PresetProject } from '../types/contracts';
 
 export type ClockSpeed = 'realtime' | 'slow' | 'step';
 
-export const SPEED_INTERVAL_MS: Record<Exclude<ClockSpeed, 'step'>, number> = {
-  realtime: 500,
-  slow: 2500,
-};
+export const SPEED_INTERVAL_MS: Record<Exclude<ClockSpeed, 'step'>, number> = { realtime: 500, slow: 2500 };
 
-interface Props {
-  presets: PresetProject[];
-  activePresetId?: string;
-  generating: boolean;
-  running: boolean;
-  speed: ClockSpeed;
-  remainingQuota?: number;
-  onGenerate: (prompt: string) => void;
-  onCancel: () => void;
-  onLoadPreset: (preset: PresetProject) => void;
-  onSpeedChange: (speed: ClockSpeed) => void;
-  onToggleRun: () => void;
-  onStep: () => void;
-}
-
-const SPEEDS: [ClockSpeed, string][] = [
-  ['realtime', '实时'],
-  ['slow', '0.2x'],
-  ['step', '单步'],
-];
-
-export function TopBar(props: Props) {
-  const [prompt, setPrompt] = useState('');
-  const canGenerate = prompt.trim().length > 0 && !props.generating;
-
+export function TopBar({ onSettings, onNewChat, hasCustomApi }: {
+  onSettings: () => void;
+  onNewChat?: () => void;
+  hasCustomApi: boolean;
+}) {
   return (
-    <header className="flex flex-col gap-2 border-b border-slate-800 bg-slate-950/80 px-4 py-3">
-      <form
-        className="flex items-center gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (canGenerate) props.onGenerate(prompt.trim());
-        }}
-      >
-        <span className="mr-2 font-semibold tracking-wide text-cyan-300">VibeFPGA Lab</span>
-        <input
-          className="flex-1 rounded-md border border-slate-700 bg-slate-900 px-3 py-2 text-sm outline-none focus:border-cyan-500"
-          placeholder="用一句话描述想做的硬件电路（如：带紧急制动按钮的交通灯）"
-          value={prompt}
-          maxLength={300}
-          onChange={(e) => setPrompt(e.target.value)}
-        />
-        {props.generating ? (
-          <button type="button" onClick={props.onCancel} className="flex items-center gap-1 rounded-md bg-rose-600 px-4 py-2 text-sm">
-            <Square size={14} /> 取消
-          </button>
-        ) : (
-          <button
-            type="submit"
-            disabled={!canGenerate}
-            className="flex items-center gap-1 rounded-md bg-cyan-600 px-4 py-2 text-sm disabled:opacity-40"
-          >
-            <Sparkles size={14} /> AI 生成
-          </button>
-        )}
-        {props.remainingQuota !== undefined && (
-          <span className="text-xs text-slate-400">今日剩余 {props.remainingQuota} 次</span>
-        )}
-      </form>
-
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <span className="text-slate-400">预置案例：</span>
-        {props.presets.map((p) => (
-          <button
-            key={p.id}
-            onClick={() => props.onLoadPreset(p)}
-            className={`rounded px-2 py-1 ${p.id === props.activePresetId ? 'bg-cyan-700' : 'bg-slate-800 hover:bg-slate-700'}`}
-          >
-            {p.name}
-          </button>
-        ))}
-
-        <span className="ml-auto text-slate-400">时钟：</span>
-        <div className="flex overflow-hidden rounded border border-slate-700">
-          {SPEEDS.map(([value, label]) => (
-            <button
-              key={value}
-              onClick={() => props.onSpeedChange(value)}
-              className={`px-2 py-1 ${props.speed === value ? 'bg-cyan-700' : 'bg-slate-900 hover:bg-slate-800'}`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {props.speed !== 'step' && (
-          <button onClick={props.onToggleRun} className="rounded bg-slate-800 p-1.5 hover:bg-slate-700" title={props.running ? '暂停' : '运行'}>
-            {props.running ? <Pause size={16} /> : <Play size={16} />}
-          </button>
-        )}
-        <button onClick={props.onStep} className="rounded bg-slate-800 p-1.5 hover:bg-slate-700" title="单步一个时钟">
-          <SkipForward size={16} />
+    <header className="app-bar">
+      <div className="brand"><span className="brand-icon"><CircuitBoard size={19} /></span>FPGAgent</div>
+      <div className="bar-actions">
+        {onNewChat && <button className="plain-button" onClick={onNewChat}><Plus size={16} /> 新对话</button>}
+        <button className="outline-button" onClick={onSettings}>
+          <Settings2 size={16} /> API 设置{hasCustomApi && <span className="configured-dot" title="自定义 API 已配置" />}
         </button>
       </div>
     </header>
+  );
+}
+
+export function PromptComposer({ onSend, onCancel, busy = false, compact = false }: {
+  onSend: (prompt: string) => void;
+  onCancel?: () => void;
+  busy?: boolean;
+  compact?: boolean;
+}) {
+  const [prompt, setPrompt] = useState('');
+  const placeholder = compact ? '继续修改当前电路…' : '描述你想做的电路…';
+
+  function submit() {
+    const text = prompt.trim();
+    if (busy || !text) return;
+    onSend(text);
+    setPrompt('');
+  }
+
+  return (
+    <form className={`composer${compact ? ' composer-compact' : ''}`} onSubmit={(event) => {
+      event.preventDefault();
+      submit();
+    }}>
+      <textarea
+        aria-label={compact ? '继续修改当前电路' : '电路需求'}
+        placeholder={placeholder}
+        rows={compact ? 1 : 2}
+        maxLength={2000}
+        value={prompt}
+        onChange={(event) => setPrompt(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
+            event.preventDefault();
+            submit();
+          }
+        }}
+      />
+      {busy ? (
+        <button className="send-button" type="button" aria-label="停止生成" title="停止生成" onClick={onCancel}><Square size={14} /></button>
+      ) : (
+        <button className="send-button" type="submit" aria-label="发送需求" title="发送需求" disabled={!prompt.trim()}><ArrowUp size={19} /></button>
+      )}
+    </form>
+  );
+}
+
+export function ClockControls({ speed, running, disabled, onSpeed, onToggle, onStep }: {
+  speed: ClockSpeed;
+  running: boolean;
+  disabled: boolean;
+  onSpeed: (speed: ClockSpeed) => void;
+  onToggle: () => void;
+  onStep: () => void;
+}) {
+  return (
+    <div className="clock-controls" role="group" aria-label="时钟控制">
+      <div className="clock-modes">
+        <button disabled={disabled} aria-pressed={speed === 'realtime'} onClick={() => onSpeed('realtime')}>实时</button>
+        <button disabled={disabled} aria-pressed={speed === 'slow'} onClick={() => onSpeed('slow')}>0.2×</button>
+      </div>
+      <button className="control-button" disabled={disabled} onClick={onStep}><SkipForward size={14} /> 单步</button>
+      <button className="control-button" disabled={disabled} onClick={onToggle}>
+        {running && speed !== 'step' ? <><Pause size={14} /> 暂停</> : <><Play size={14} /> 运行</>}
+      </button>
+    </div>
   );
 }

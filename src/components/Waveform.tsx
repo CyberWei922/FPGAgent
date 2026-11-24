@@ -1,102 +1,68 @@
 import type { SignalSample } from '../types/contracts';
 
-const CELL = 26;
+const LABEL = 43;
+const CELL = 20;
 const ROW = 24;
-const LABEL_W = 64;
 
-interface Row {
+interface Channel {
   label: string;
-  width: number;
-  read: (s: SignalSample) => number;
+  read: (sample: SignalSample) => number;
+  bus?: boolean;
+  clock?: boolean;
 }
 
-const ROWS: Row[] = [
-  { label: 'rst_n', width: 1, read: (s) => s.inputs.rst_n },
-  { label: 'key0', width: 1, read: (s) => s.inputs.key & 1 },
-  { label: 'red', width: 1, read: (s) => (s.outputs.traffic >> 2) & 1 },
-  { label: 'yellow', width: 1, read: (s) => (s.outputs.traffic >> 1) & 1 },
-  { label: 'green', width: 1, read: (s) => s.outputs.traffic & 1 },
-  { label: 'seg', width: 16, read: (s) => s.outputs.seg },
-  { label: 'led', width: 8, read: (s) => s.outputs.led },
-];
-
-interface Props {
+export function Waveform({ title, samples, failureCycle, ledFocus = false }: {
   title: string;
   samples: SignalSample[];
   failureCycle?: number;
-}
-
-export function Waveform({ title, samples, failureCycle }: Props) {
-  const width = LABEL_W + samples.length * CELL;
-  const height = ROWS.length * ROW + 16;
-  const failureIndex = samples.findIndex((s) => s.cycle === failureCycle);
-
+  ledFocus?: boolean;
+}) {
+  const channels: Channel[] = [
+    { label: 'CLK', read: () => 1, clock: true },
+    { label: 'KEY0', read: (sample) => sample.inputs.key & 1 },
+    { label: ledFocus ? 'LED0' : 'RED', read: (sample) => ledFocus ? sample.outputs.led & 1 : (sample.outputs.traffic >> 2) & 1 },
+    { label: 'SEG', read: (sample) => sample.outputs.seg, bus: true },
+  ];
+  const width = LABEL + Math.max(10, samples.length) * CELL + 10;
+  const height = channels.length * ROW + 25;
+  const failureIndex = samples.findIndex((sample) => sample.cycle === failureCycle);
   return (
-    <div className="p-3 text-xs">
-      <div className="mb-1 text-slate-400">{title}</div>
-      {samples.length === 0 ? (
-        <div className="text-slate-600">暂无波形</div>
-      ) : (
-        <div className="overflow-x-auto">
-          <svg width={width} height={height} fontFamily="monospace" fontSize={10}>
-            {ROWS.map((row, r) => {
-              const y0 = r * ROW + 4;
-              const hi = y0 + 4;
-              const lo = y0 + ROW - 6;
-              let d = '';
-              if (row.width === 1) {
-                samples.forEach((s, i) => {
-                  const y = row.read(s) ? hi : lo;
-                  const x = LABEL_W + i * CELL;
-                  d += `${i ? 'L' : 'M'}${x},${y} L${x + CELL},${y} `;
-                });
-              }
-              return (
-                <g key={row.label}>
-                  <text x={0} y={y0 + 13} fill="#94a3b8">
-                    {row.label}
-                  </text>
-                  {row.width === 1 ? (
-                    <path d={d} fill="none" stroke="#22d3ee" strokeWidth={1.5} />
-                  ) : (
-                    samples.map((s, i) => {
-                      const x = LABEL_W + i * CELL;
-                      const v = row.read(s);
-                      const changed = i === 0 || row.read(samples[i - 1]) !== v;
-                      return (
-                        <g key={i}>
-                          <rect x={x} y={hi} width={CELL} height={lo - hi} fill="none" stroke="#475569" />
-                          {changed && (
-                            <text x={x + 2} y={y0 + 14} fill="#e2e8f0">
-                              {v.toString(16).toUpperCase()}
-                            </text>
-                          )}
-                        </g>
-                      );
-                    })
-                  )}
-                </g>
-              );
+    <section className="instrument-section waveform-section">
+      <div className="section-heading"><h2>{title}</h2>{samples.length > 0 && <span className="instrument-meta">周期 {samples.at(-1)?.cycle}</span>}</div>
+      <div className="waveform-frame" tabIndex={samples.length > 10 ? 0 : undefined}>
+        {samples.length === 0 ? <p className="instrument-empty">等待仿真采样</p> : (
+          <svg style={{ minWidth: `${width}px` }} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title}，${samples.length} 个采样周期`}>
+            {Array.from({ length: Math.max(10, samples.length) + 1 }, (_, index) => <line className="wave-grid" key={index} x1={LABEL + index * CELL} x2={LABEL + index * CELL} y1="9" y2={height - 17} />)}
+            {channels.map((channel, row) => {
+              const high = row * ROW + 11;
+              const low = high + 12;
+              return <g key={channel.label}>
+                <text x="7" y={high + 9}>{channel.label}</text>
+                <line className="wave-grid" x1={LABEL} x2={width - 10} y1={low + 3} y2={low + 3} />
+                {channel.bus ? samples.map((sample, index) => {
+                  const x = LABEL + index * CELL;
+                  const value = channel.read(sample);
+                  return <g key={sample.cycle}>
+                    <rect className="wave-bus" x={x} y={high} width={CELL} height={12} />
+                    {(index === 0 || channel.read(samples[index - 1]) !== value) && (
+                      <text x={x + CELL / 2} y={high + 9} textAnchor="middle">{value.toString(16).toUpperCase()}</text>
+                    )}
+                  </g>;
+                }) : <path className="wave-trace" d={samples.map((sample, index) => {
+                  const x = LABEL + index * CELL;
+                  if (channel.clock) return `${index ? 'L' : 'M'} ${x} ${low} h ${CELL / 2} V ${high} h ${CELL / 2} V ${low}`;
+                  const y = channel.read(sample) ? high : low;
+                  return `${index ? `H ${x} V ${y}` : `M ${x} ${y}`} H ${x + CELL}`;
+                }).join(' ')} />}
+              </g>;
             })}
-            {samples.map((s, i) => (
-              <text key={s.cycle} x={LABEL_W + i * CELL + 2} y={height - 2} fill="#475569">
-                {s.cycle}
-              </text>
+            {samples.map((sample, index) => (index === 0 || index % 2 === 0 || index === failureIndex) && (
+              <text key={sample.cycle} className={index === failureIndex ? 'wave-failed-label' : undefined} x={LABEL + index * CELL + 2} y={height - 4}>{sample.cycle}</text>
             ))}
-            {failureIndex >= 0 && (
-              <rect
-                x={LABEL_W + failureIndex * CELL}
-                y={0}
-                width={CELL}
-                height={height - 12}
-                fill="rgba(244,63,94,0.15)"
-                stroke="#f43f5e"
-                strokeWidth={2}
-              />
-            )}
+            {failureIndex >= 0 && <rect className="wave-failure" x={LABEL + failureIndex * CELL} y="3" width={CELL} height={height - 15} />}
           </svg>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </section>
   );
 }
