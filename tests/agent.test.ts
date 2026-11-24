@@ -395,6 +395,20 @@ describe('Harness 闭环', () => {
     expect(previousValues[2]).toEqual([0]);
   });
 
+  it('修复额度耗尽时保留候选和反例供用户检查', async () => {
+    const { llm } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+      repair: () => { throw new LLMError('QUOTA_EXCEEDED', '今日免费额度已用完'); },
+    });
+    const events: HarnessTraceEvent[] = [];
+    const engine = createStubEngine({ selfTest: () => failingSelfTest(1, [0]) });
+    const result = await createAgentRuntime({ llm, engine }).runHarness('做个测试电路', { onTrace: (event) => events.push(event) });
+
+    expect(result).toMatchObject({ ok: false, verilogCode: CODE_A, selfTest: { firstFailure: { cycle: 1 } } });
+    expect(events).toContainEqual(expect.objectContaining({ stage: 'repairing', status: 'fail', detail: '今日免费额度已用完' }));
+  });
+
   it('开始前已取消：抛出 ABORTED 且不调用模型', async () => {
     const { llm, calls } = createStubLLM({});
     const controller = new AbortController();

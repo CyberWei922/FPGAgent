@@ -42,7 +42,15 @@ npm run build
 
 FPGAgent 从对话首页开始。可以输入电路需求，也可以点击交通灯或四位密码锁演示。进入仿真后可继续提需求，点击左侧「蓝图」查看电路资料。
 
-当前演示使用 Mock；「API 设置」可以保存支持浏览器访问的 OpenAI 兼容服务地址、模型名和 Key。真实 Harness 接入后，注入的客户端会按已保存的设置调用。队友 1 运行 `npm run test:engine`，队友 2 运行 `npm run test:agent`。本地联调云函数时，可用 Deno 运行 `npm run dev:function`，前端通过 `/functions/v1/app/agent` 调用。
+首页的两条预设提示词演示生成流程，并使用真实 RTL 引擎编译、验算与运行对应电路，无需 API Key。自由输入和继续修改走真实 Harness。要调用模型，可在「API 设置」保存支持浏览器跨域请求及 `json_object` 响应格式的 OpenAI 兼容服务地址、模型名和 Key。
+
+本地使用「站点默认」模式时，保持 Vite 运行，并在另一终端启动 Deno 代理。先按 `.env.example` 准备 `.env.local`，再运行：
+
+```sh
+deno run --env-file=.env.local --allow-net --allow-env=LLM_API_KEY,LLM_BASE_URL,LLM_MODEL,ALLOWED_ORIGINS,DAILY_LIMIT_PER_IP dev/function-local.ts
+```
+
+前端通过 `/functions/v1/app/agent` 请求代理。队友 1 可以运行 `npm run test:engine`，队友 2 可以运行 `npm run test:agent`。
 
 ## 仓库目录规划
 

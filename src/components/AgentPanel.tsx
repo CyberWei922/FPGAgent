@@ -40,6 +40,7 @@ export function AgentPanel(props: Props) {
           <div className="verification-panel">
             {props.selfTest && <div className={`test-result ${props.selfTest.passed ? 'passed' : 'failed'}`}>
               自测 {props.selfTest.passedChecks}/{props.selfTest.totalChecks} 通过
+              {props.selfTest.firstUnstableCycle !== undefined && <p>第 {props.selfTest.firstUnstableCycle} 拍组合逻辑未收敛。</p>}
               {failure && <p>第 {failure.cycle} 拍，{failure.signal} 期望 {failure.expected}，实际 {failure.actual}。</p>}
             </div>}
             {props.issues.map((issue, index) => <div key={index} className="issue">

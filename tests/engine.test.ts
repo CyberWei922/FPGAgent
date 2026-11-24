@@ -9,6 +9,7 @@ import {
   SimulationSession,
 } from '../src/engine/index';
 import { MOCK_PRESETS } from '../src/agent/mockPresets';
+import { PRESETS } from '../src/agent/presets';
 import type { BoardInputs, TestVectorStep } from '../src/types/contracts';
 
 const DEFAULT_IN: BoardInputs = { rst_n: 1, key: 0, sw: 0 };
@@ -327,6 +328,27 @@ describe('2. 组合逻辑求值与收敛 (simulator.ts)', () => {
     const sim = buildSession(code);
     const out = sim.step(DEFAULT_IN);
     expect(out.combLoopDetected).toBe(true);
+    const result = createRtlEngine().runSelfTest(code, [{ cycle: 0, inputs: DEFAULT_IN, expect: out.sample.outputs }], [0]);
+    expect(result).toMatchObject({ passed: false, passedChecks: 0, passedCycles: [], regressedCycles: [0], firstUnstableCycle: 0 });
+  });
+
+  it('组合块先赋默认值再覆盖时可正常收敛', () => {
+    const sim = buildSession(`
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(*) begin
+          led = 8'd0;
+          if (key[0]) led = sw;
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `);
+    const result = sim.step({ rst_n: 1, key: 1, sw: 7 });
+    expect(result.combLoopDetected).toBe(false);
+    expect(result.sample.outputs.led).toBe(7);
   });
 
   it('除数为 0 时安全返回 0 而不产生 NaN', () => {
@@ -1118,6 +1140,13 @@ describe('6. 六类静态 Lint 体检 (linter.ts)', () => {
 });
 
 describe('7. 确定性自测、首个反例定位与无回退检测 (selftest.ts)', () => {
+  it.each(PRESETS)('真实引擎通过 $name 的全部预置断言', (preset) => {
+    const engine = createRtlEngine();
+    expect(engine.compile(preset.verilogCode).ok).toBe(true);
+    const result = engine.runSelfTest(preset.verilogCode, preset.testVectors);
+    expect(result.totalChecks).toBeGreaterThan(0);
+    expect(result.passed).toBe(true);
+  });
   const goodCounter = `
     module top(
       input clk, input rst_n, input [3:0] key, input [7:0] sw,

@@ -623,7 +623,7 @@ export class SimulationSession {
     if (assigns.length === 0 && wireInits.length === 0 && combBlocks.length === 0) return false;
 
     for (let iter = 0; iter < MAX_COMB_ITERATIONS; iter++) {
-      let changed = false;
+      const before = new Map(this.values);
 
       for (const wi of wireInits) {
         const rhs = evalExpr(
@@ -634,9 +634,7 @@ export class SimulationSession {
         );
         const meta = this.elaborated.signals.get(wi.name);
         const next = meta ? maskWidth(rhs.value, meta.width) : rhs.value >>> 0;
-        const prev = this.values.get(wi.name) ?? 0;
         this.values.set(wi.name, next);
-        if (next !== prev) changed = true;
       }
 
       for (const a of assigns) {
@@ -646,43 +644,26 @@ export class SimulationSession {
           this.elaborated.signals,
           this.elaborated.params
         );
-        if (
-          writeLValue(
-            a.target,
-            rhs.value,
-            this.values,
-            this.elaborated.signals,
-            this.elaborated.params
-          )
-        ) {
-          changed = true;
-        }
+        writeLValue(a.target, rhs.value, this.values, this.elaborated.signals, this.elaborated.params);
       }
 
-      for (const block of combBlocks) {
-        if (this.execCombStmt(block.body)) {
-          changed = true;
-        }
-      }
+      for (const block of combBlocks) this.execCombStmt(block.body);
 
-      if (!changed) return false;
+      // A block may override its own default write before the iteration settles.
+      if ([...this.values].every(([name, value]) => before.get(name) === value)) return false;
     }
 
     return true;
   }
 
-  private execCombStmt(stmt: Stmt): boolean {
+  private execCombStmt(stmt: Stmt): void {
     switch (stmt.type) {
       case 'empty':
-        return false;
+        return;
 
-      case 'block': {
-        let changed = false;
-        for (const s of stmt.statements) {
-          if (this.execCombStmt(s)) changed = true;
-        }
-        return changed;
-      }
+      case 'block':
+        for (const child of stmt.statements) this.execCombStmt(child);
+        return;
 
       case 'assign': {
         const rhs = evalExpr(
@@ -691,13 +672,8 @@ export class SimulationSession {
           this.elaborated.signals,
           this.elaborated.params
         );
-        return writeLValue(
-          stmt.target,
-          rhs.value,
-          this.values,
-          this.elaborated.signals,
-          this.elaborated.params
-        );
+        writeLValue(stmt.target, rhs.value, this.values, this.elaborated.signals, this.elaborated.params);
+        return;
       }
 
       case 'if': {
@@ -707,13 +683,9 @@ export class SimulationSession {
           this.elaborated.signals,
           this.elaborated.params
         );
-        if (cond.value !== 0) {
-          return this.execCombStmt(stmt.thenBranch);
-        }
-        if (stmt.elseBranch) {
-          return this.execCombStmt(stmt.elseBranch);
-        }
-        return false;
+        if (cond.value !== 0) this.execCombStmt(stmt.thenBranch);
+        else if (stmt.elseBranch) this.execCombStmt(stmt.elseBranch);
+        return;
       }
 
       case 'case': {
@@ -732,14 +704,13 @@ export class SimulationSession {
               this.elaborated.params
             );
             if (target.value === patEv.value) {
-              return this.execCombStmt(item.body);
+              this.execCombStmt(item.body);
+              return;
             }
           }
         }
-        if (stmt.defaultBranch) {
-          return this.execCombStmt(stmt.defaultBranch);
-        }
-        return false;
+        if (stmt.defaultBranch) this.execCombStmt(stmt.defaultBranch);
+        return;
       }
     }
   }

@@ -45,17 +45,21 @@ export function runDeterministicSelfTest(
   let totalChecks = 0;
   let passedChecks = 0;
   let firstFailure: SelfTestFailure | undefined;
+  let firstUnstableCycle: number | undefined;
   const passedCycles: number[] = [];
   const failedCycles = new Set<number>();
 
   for (const vec of vectors) {
-    const { sample } = session.step(vec.inputs);
+    const { sample, combLoopDetected } = session.step(vec.inputs);
     waveform.push(sample);
-
+    if (combLoopDetected) {
+      firstUnstableCycle ??= vec.cycle;
+      failedCycles.add(vec.cycle);
+    }
     if (!vec.expect) continue;
 
     let hasExpectKey = false;
-    let cycleAllPassed = true;
+    let cycleAllPassed = !combLoopDetected;
 
     for (const signal of OUTPUT_KEYS) {
       const expected = vec.expect[signal];
@@ -64,11 +68,11 @@ export function runDeterministicSelfTest(
       totalChecks += 1;
       const actual = sample.outputs[signal];
       if (actual === expected) {
-        passedChecks += 1;
+        if (!combLoopDetected) passedChecks += 1;
       } else {
         cycleAllPassed = false;
         failedCycles.add(vec.cycle);
-        if (!firstFailure) {
+        if (!combLoopDetected && !firstFailure) {
           firstFailure = {
             cycle: vec.cycle,
             signal,
@@ -88,10 +92,11 @@ export function runDeterministicSelfTest(
   const regressedCycles = (previousPassedCycles ?? []).filter((c) => failedCycles.has(c));
 
   return {
-    passed: firstFailure === undefined && passedChecks === totalChecks,
+    passed: firstUnstableCycle === undefined && passedChecks === totalChecks,
     totalChecks,
     passedChecks,
     firstFailure,
+    ...(firstUnstableCycle !== undefined && { firstUnstableCycle }),
     passedCycles,
     regressedCycles,
     waveform,

@@ -110,7 +110,8 @@ export interface SelfTestResult {
   passed: boolean;
   totalChecks: number;
   passedChecks: number;
-  firstFailure?: SelfTestFailure;     // 首个反例（用于波形红框标出 + 喂给 AI 诊断）
+  firstFailure?: SelfTestFailure;     // 首个输出失配
+  firstUnstableCycle?: number;        // 首个未收敛周期，即使输出碰巧符合断言
   passedCycles: number[];             // 本次带 expect 且全部通过的周期（作为下一轮的 previousPassedCycles）
   regressedCycles: number[];          // 上一版通过、本版失败的周期（无回退警报）
   waveform: SignalSample[];           // 本次自测完整波形

@@ -50,6 +50,7 @@ function sliceWaveform(waveform: SignalSample[], cycle: number): SignalSample[] 
 }
 
 function describeSelfTest(result: SelfTestResult): string {
+  if (result.firstUnstableCycle !== undefined) return `第 ${result.firstUnstableCycle} 拍组合逻辑未收敛`;
   const failure = result.firstFailure;
   if (!failure) return `${result.passedChecks}/${result.totalChecks} 项断言通过`;
   return `${result.passedChecks}/${result.totalChecks} 项通过；首个失败在第 ${failure.cycle} 拍：${failure.signal} 期望 ${failure.expected}，实际 ${failure.actual}`;
@@ -142,38 +143,45 @@ export function createHarnessAgentRuntime({ llm, engine }: AgentRuntimeDeps): Ag
         if (passed || round >= MAX_REPAIR_ROUNDS) break;
 
         repairRounds = round + 1;
-        const failure = selfTest?.firstFailure;
-        const waveformSlice = selfTest && failure ? sliceWaveform(selfTest.waveform, failure.cycle) : undefined;
+        const failureCycle = selfTest?.firstUnstableCycle ?? selfTest?.firstFailure?.cycle;
+        const waveformSlice = selfTest && failureCycle !== undefined ? sliceWaveform(selfTest.waveform, failureCycle) : undefined;
         emit(
           'repairing',
           'running',
           `第 ${repairRounds} 轮自动修复`,
-          compiled.ok
-            ? `按首个反例（第 ${failure?.cycle ?? '?'} 拍 ${failure?.signal ?? '?'}）修复`
+          selfTest
+            ? `按自测结果修复：${describeSelfTest(selfTest)}`
             : `按 ${errorCount} 条 Lint error 修复`,
         );
-        const repairResponse = await llm.chat({
-          action: 'repair',
-          messages: buildRepairMessages({
-            code: currentCode,
-            issues: compiled.issues,
-            selfTest,
-            blueprint: plan.blueprint,
-            testVectors: plan.testVectors,
-            waveformSlice,
-          }),
-          jsonMode: true,
-          signal,
-        });
-        ensureNotAborted(signal);
-        const repaired = parseCodeResponse(repairResponse.text);
-        currentCode = repaired.code;
-        emit(
-          'repairing',
-          'pass',
-          `第 ${repairRounds} 轮修复`,
-          `候选代码 ${countLines(currentCode)} 行${repaired.explanation ? `：${repaired.explanation}` : ''}`,
-        );
+        try {
+          const repairResponse = await llm.chat({
+            action: 'repair',
+            messages: buildRepairMessages({
+              code: currentCode,
+              issues: compiled.issues,
+              selfTest,
+              blueprint: plan.blueprint,
+              testVectors: plan.testVectors,
+              waveformSlice,
+            }),
+            jsonMode: true,
+            signal,
+          });
+          ensureNotAborted(signal);
+          const repaired = parseCodeResponse(repairResponse.text);
+          currentCode = repaired.code;
+          emit(
+            'repairing',
+            'pass',
+            `第 ${repairRounds} 轮修复`,
+            `候选代码 ${countLines(currentCode)} 行${repaired.explanation ? `：${repaired.explanation}` : ''}`,
+          );
+        } catch (error) {
+          ensureNotAborted(signal);
+          if (!(error instanceof LLMError) || error.code === 'ABORTED') throw error;
+          emit('repairing', 'fail', `第 ${repairRounds} 轮修复中断`, error.message);
+          break;
+        }
       }
 
       if (!best) throw new LLMError('BAD_RESPONSE', '闭环没有产生任何候选代码');

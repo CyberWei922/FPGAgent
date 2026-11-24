@@ -208,6 +208,7 @@ export function buildRepairMessages(ctx: RepairContext): ChatMessage[] {
           passedChecks: selfTest.passedChecks,
           totalChecks: selfTest.totalChecks,
           firstFailure: selfTest.firstFailure,
+          firstUnstableCycle: selfTest.firstUnstableCycle,
           passedCycles: selfTest.passedCycles,
           regressedCycles: selfTest.regressedCycles,
         }

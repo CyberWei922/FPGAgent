@@ -4,7 +4,6 @@ import { createAgentRuntime } from './agent';
 import { AgentPanel } from './components/AgentPanel';
 import { ApiSettings } from './components/ApiSettings';
 import { GateCanvas } from './components/GateCanvas';
-import { LOCK_BLUEPRINT, QUICK_PROMPTS, stepLockPreview } from './components/presetPreview';
 import { ClockControls, PromptComposer, SPEED_INTERVAL_MS, TopBar, type ClockSpeed } from './components/TopBar';
 import { VirtualBoard } from './components/VirtualBoard';
 import { Waveform } from './components/Waveform';
@@ -17,6 +16,7 @@ import {
   type HarnessTraceEvent,
   type LintIssue,
   type NetlistGraph,
+  type PresetProject,
   type RtlEngine,
   type SelfTestResult,
   type SignalSample,
@@ -36,11 +36,14 @@ const LLM_ERROR_TEXT = {
   ABORTED: '已停止生成。',
 };
 
-type DemoKind = typeof QUICK_PROMPTS[number]['kind'];
+const QUICK_PROMPTS = [
+  { id: 'traffic-light', prompt: '做一个智能交通灯', Icon: Radio },
+  { id: 'password-lock', prompt: '做一个四位密码锁', Icon: LockKeyhole },
+];
+
 type Outcome = 'busy' | 'ready' | 'cancelled' | 'failed';
 
 export default function App() {
-  const boardEngine = useMemo(() => createRtlEngine(), []);
   const runtime = useMemo(() => createAgentRuntime({ llm: createBrowserLLMClient(), engine: createRtlEngine() }), []);
   const [api, setApi] = useState(loadByokConfig);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -48,7 +51,7 @@ export default function App() {
   const [outcome, setOutcome] = useState<Outcome>('ready');
   const [statusText, setStatusText] = useState('');
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [demo, setDemo] = useState<DemoKind>();
+  const [activePresetId, setActivePresetId] = useState<string>();
   const [rehearsal, setRehearsal] = useState(false);
   const [blueprint, setBlueprint] = useState<AgentBlueprint>();
   const [code, setCode] = useState('');
@@ -65,21 +68,34 @@ export default function App() {
 
   const simulation = useRef<RtlEngine['step'] | null>(null);
   const inputsRef = useRef(IDLE_INPUTS);
-  const pendingPresses = useRef({ keys: 0, reset: false });
+  const pendingKeys = useRef<{ pressed: number; inputs: BoardInputs }[]>([]);
+  const pendingReset = useRef(false);
+  const sampledKeys = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  const appliedCode = useRef('');
+  const applied = useRef<{ source: string; title?: string } | undefined>(undefined);
 
   function changeInputs(next: BoardInputs) {
-    // Retain momentary pulses between sampled clock edges.
-    pendingPresses.current.keys |= next.key & ~inputsRef.current.key;
-    pendingPresses.current.reset ||= next.rst_n === 0;
+    if (next.rst_n === 0 && inputsRef.current.rst_n === 1) {
+      pendingKeys.current = [];
+      pendingReset.current = true;
+    }
+    const pressed = next.key & ~inputsRef.current.key;
+    if (pressed) pendingKeys.current.push({ pressed, inputs: next });
     inputsRef.current = next;
     setInputs(next);
   }
 
+  function resetInputs() {
+    pendingKeys.current = [];
+    pendingReset.current = false;
+    sampledKeys.current = 0;
+    inputsRef.current = IDLE_INPUTS;
+    setInputs(IDLE_INPUTS);
+  }
+
   function clearCircuit() {
     simulation.current = null;
-    appliedCode.current = '';
+    applied.current = undefined;
     setCompiled(false);
     setBlueprint(undefined);
     setCode('');
@@ -88,46 +104,48 @@ export default function App() {
     setSelfTest(undefined);
     setNetlist(undefined);
     setHistory([]);
-    changeInputs(IDLE_INPUTS);
-    pendingPresses.current = { keys: 0, reset: false };
+    resetInputs();
   }
 
-  function startSimulation(step: RtlEngine['step']) {
-    const initial = step({ ...IDLE_INPUTS, rst_n: 0 });
-    simulation.current = step;
-    pendingPresses.current = { keys: 0, reset: false };
-    inputsRef.current = IDLE_INPUTS;
-    setInputs(IDLE_INPUTS);
+  function loadCircuit(source: string, checks: TestVectorStep[], title?: string, presetId?: string, verified?: SelfTestResult) {
+    const engine = createRtlEngine();
+    const result = engine.compile(source);
+    setIssues(result.issues);
+    const verification = result.ok && checks.length ? verified ?? engine.runSelfTest(source, checks) : undefined;
+    setSelfTest(verification);
+    if (!result.ok || verification?.passed === false) return false;
+
+    engine.reset();
+    const initial = engine.step({ ...IDLE_INPUTS, rst_n: 0 });
+    simulation.current = (current) => engine.step(current);
+    applied.current = { source, title };
+    setActivePresetId(presetId);
+    resetInputs();
     setHistory([initial.sample]);
     setNetlist(initial.netlist);
     setCompiled(true);
-  }
-
-  function loadCircuit(source: string, checks: TestVectorStep[]) {
-    const result = boardEngine.compile(source);
-    setIssues(result.issues);
-    if (result.ok) {
-      boardEngine.reset();
-      startSimulation((current) => boardEngine.step(current));
-      setSelfTest(checks.length ? boardEngine.runSelfTest(source, checks) : undefined);
-      appliedCode.current = source;
-    } else {
-      simulation.current = null;
-      setCompiled(false);
-      setHistory([]);
-      setNetlist(result.netlist);
-      setSelfTest(undefined);
-      appliedCode.current = '';
-    }
-    return result.ok;
+    return true;
   }
 
   const tick = useCallback(() => {
     if (!simulation.current) return;
     const current = inputsRef.current;
-    const pending = pendingPresses.current;
-    pendingPresses.current = { keys: 0, reset: false };
-    const next = simulation.current({ ...current, key: current.key | pending.keys, rst_n: pending.reset ? 0 : current.rst_n });
+    const pending = pendingKeys.current[0];
+    let sampled = current;
+    if (pendingReset.current || current.rst_n === 0) {
+      sampled = { ...current, key: 0, rst_n: 0 };
+      pendingReset.current = false;
+    } else if (pending) {
+      // Repeated clicks need a sampled release so sequential circuits can detect each rising edge.
+      if (sampledKeys.current & pending.pressed) {
+        sampled = { ...pending.inputs, key: pending.inputs.key & ~pending.pressed, rst_n: 1 };
+      } else {
+        sampled = { ...pending.inputs, rst_n: 1 };
+        pendingKeys.current.shift();
+      }
+    }
+    sampledKeys.current = sampled.key;
+    const next = simulation.current(sampled);
     setNetlist(next.netlist);
     setHistory((samples) => [...samples.slice(-(HISTORY_LIMIT - 1)), next.sample]);
   }, []);
@@ -147,7 +165,7 @@ export default function App() {
     setOutcome('ready');
     setStatusText('');
     setTraces([]);
-    setDemo(undefined);
+    setActivePresetId(undefined);
     setRehearsal(false);
     setDetailsOpen(false);
     setSpeed('realtime');
@@ -155,26 +173,32 @@ export default function App() {
     clearCircuit();
   }
 
-  async function run(prompt: string, preset?: DemoKind) {
+  function reportVerificationFailure() {
+    setOutcome('failed');
+    setStatusText(applied.current ? '验证未通过，板卡仍运行上一个电路。' : '验证未通过，可在蓝图侧栏查看详情。');
+    setDetailsOpen(true);
+  }
+
+  function compileEditedCode() {
+    if (loadCircuit(code, vectors, blueprint?.title, activePresetId)) setOutcome('ready');
+    else reportVerificationFailure();
+  }
+
+  async function run(prompt: string, preset?: PresetProject) {
     const controller = new AbortController();
     abortRef.current?.abort();
     abortRef.current = controller;
-    const priorCode = appliedCode.current;
-    const priorTitle = blueprint?.title;
+    const previous = applied.current;
     setRequest(prompt);
     setOutcome('busy');
     setStatusText('正在规划电路');
     setTraces([]);
     setDetailsOpen(false);
-    let isRehearsal = Boolean(preset);
-    setRehearsal(isRehearsal);
-    if (preset) setDemo(preset);
+    setRehearsal(Boolean(preset));
     const active = () => abortRef.current === controller && !controller.signal.aborted;
 
     function trace(event: HarnessTraceEvent) {
       if (!active()) return;
-      isRehearsal ||= event.detail.startsWith('Mock：');
-      if (isRehearsal) setRehearsal(true);
       setStatusText(event.title);
       setTraces((events) => [...events, event]);
     }
@@ -186,48 +210,36 @@ export default function App() {
           await new Promise<void>((resolve) => window.setTimeout(resolve, 320));
           if (!active()) return;
         }
-        const match = runtime.presets.find((item) => preset === 'traffic'
-          ? /traffic|交通灯/i.test(`${item.id} ${item.name}`)
-          : /lock|密码锁/i.test(`${item.id} ${item.name}`));
-        if (match) {
-          setBlueprint(match.blueprint);
-          setCode(match.verilogCode);
-          setVectors(match.testVectors);
-          if (!loadCircuit(match.verilogCode, match.testVectors)) throw new Error('preset compilation failed');
-        } else if (preset === 'lock') {
-          let previous: SignalSample | undefined;
-          clearCircuit();
-          setBlueprint(LOCK_BLUEPRINT);
-          startSimulation((current) => {
-            const result = stepLockPreview(current, previous);
-            previous = result.sample;
-            return result;
-          });
-        } else {
-          throw new Error('traffic preset unavailable');
+        setBlueprint(preset.blueprint);
+        setCode(preset.verilogCode);
+        setVectors(preset.testVectors);
+        if (!loadCircuit(preset.verilogCode, preset.testVectors, preset.blueprint.title, preset.id)) {
+          reportVerificationFailure();
+          return;
         }
         trace({ stage: 'done', status: 'pass', title: '演示电路已就绪', detail: '可操作板卡并查看波形。', timestamp: Date.now() });
       } else {
-        const context = priorCode
-          ? `请基于当前电路完成这次修改。当前电路：${priorTitle ?? '未命名'}\n\`\`\`verilog\n${priorCode}\n\`\`\`\n修改需求：\n${prompt}`
-          : priorTitle ? `请基于当前演示电路「${priorTitle}」完成修改：\n${prompt}` : prompt;
+        const context = previous
+          ? `请基于当前电路完成这次修改。当前电路：${previous.title ?? '未命名'}\n\`\`\`verilog\n${previous.source}\n\`\`\`\n修改需求：\n${prompt}`
+          : prompt;
         const result = await runtime.runHarness(context, { signal: controller.signal, onTrace: trace });
         if (!active()) return;
-        setDemo(undefined);
         setBlueprint(result.blueprint);
         setCode(result.verilogCode);
         setVectors(result.testVectors);
-        const ok = loadCircuit(result.verilogCode, result.testVectors);
-        if (result.issues.length) setIssues(result.issues);
-        if (result.selfTest) setSelfTest(result.selfTest);
-        if (!result.ok || !ok) {
-          setOutcome('failed');
-          setStatusText('验证未通过，可在蓝图侧栏查看详情。');
+        if (!result.ok) {
+          setIssues(result.issues);
+          setSelfTest(result.selfTest);
+          reportVerificationFailure();
+          return;
+        }
+        if (!loadCircuit(result.verilogCode, result.testVectors, result.blueprint.title, undefined, result.selfTest)) {
+          reportVerificationFailure();
           return;
         }
       }
       setOutcome('ready');
-      setStatusText(isRehearsal ? '演示已就绪' : '电路已就绪');
+      setStatusText(preset ? '演示已就绪' : '电路已就绪');
     } catch (error) {
       if (!active()) return;
       const detail = isLLMError(error) ? LLM_ERROR_TEXT[error.code] : '生成未完成，请重试。';
@@ -263,7 +275,7 @@ export default function App() {
 
   const busy = outcome === 'busy';
   const latest = history.at(-1);
-  const lockPreview = demo === 'lock' && !code;
+  const lockActive = activePresetId === 'password-lock';
   const status = busy || outcome !== 'ready' ? statusText : compiled && !running ? '仿真已暂停' : compiled ? '仿真运行中' : statusText;
 
   return (
@@ -278,12 +290,12 @@ export default function App() {
             <section className="quick-prompts" aria-labelledby="quick-prompts-label">
               <h2 id="quick-prompts-label">试试预设演示</h2>
               <div className="quick-grid">
-                {QUICK_PROMPTS.map(({ kind, prompt }) => (
-                  <button key={kind} onClick={() => void run(prompt, kind)}>
-                    {kind === 'traffic' ? <Radio size={17} /> : <LockKeyhole size={17} />}
-                    <span>{prompt}</span><ChevronRight size={15} />
-                  </button>
-                ))}
+                {QUICK_PROMPTS.map(({ id, prompt, Icon }) => {
+                  const preset = runtime.presets.find((item) => item.id === id);
+                  return <button key={id} disabled={!preset} onClick={() => void run(prompt, preset)}>
+                    <Icon size={17} /><span>{prompt}</span><ChevronRight size={15} />
+                  </button>;
+                })}
               </div>
             </section>
           </div>
@@ -291,7 +303,7 @@ export default function App() {
       ) : (
         <main className="workbench">
           <div className="request-bar">
-            <div className="request-copy"><span>当前需求</span><strong title={request}>{request}</strong>{rehearsal && <span className="demo-label">{demo ? '预设演示' : '模拟生成'}</span>}</div>
+            <div className="request-copy"><span>当前需求</span><strong title={request}>{request}</strong>{rehearsal && <span className="demo-label">预设演示</span>}</div>
             <p className={`run-status run-${outcome}`} role="status">{status}</p>
           </div>
           <div className="experiment" data-details={detailsOpen}>
@@ -303,7 +315,7 @@ export default function App() {
             {detailsOpen && <aside className="details-pane" id="circuit-details">
               <div className="section-heading"><h2>电路资料</h2><button className="icon-button" aria-label="关闭蓝图" onClick={() => setDetailsOpen(false)}><X size={17} /></button></div>
               <AgentPanel blueprint={blueprint} traces={traces} issues={issues} selfTest={selfTest} code={code} onCodeChange={setCode}
-                onCompile={() => loadCircuit(code, vectors)} canCompile={!busy && !lockPreview} />
+                onCompile={compileEditedCode} canCompile={!busy} />
             </aside>}
             <section className="canvas-pane" aria-label="门级仿真">
               <div className="section-heading canvas-heading">
@@ -314,13 +326,14 @@ export default function App() {
               <div className="followup"><PromptComposer compact busy={busy} onCancel={cancel} onSend={(prompt) => void run(prompt)} /></div>
             </section>
             <aside className="instruments" aria-label="波形和虚拟板卡">
-              <Waveform title="实时波形" samples={history.slice(-10)} ledFocus={demo === 'lock'} />
+              <Waveform title="实时波形" samples={history.slice(-10)} ledFocus={lockActive} />
               <section className="instrument-section">
                 <div className="section-heading"><h2>虚拟板卡</h2>{latest && <span className="instrument-meta">CLK ↑ {latest.cycle}</span>}</div>
-                <VirtualBoard inputs={inputs} outputs={latest?.outputs} onInputsChange={changeInputs} disabled={!compiled} lockDemo={demo === 'lock'} />
+                {lockActive && <p className="field-help mb-2">用 SW3–SW0 依次输入 1、2、3、4，每位按 KEY0 提交。KEY1 重新上锁。</p>}
+                <VirtualBoard inputs={inputs} outputs={latest?.outputs} onInputsChange={changeInputs} disabled={!compiled} lockDemo={lockActive} />
               </section>
               {selfTest && <details className="self-test-wave"><summary>自测波形 <span>{selfTest.passedChecks}/{selfTest.totalChecks}</span></summary>
-                <Waveform title="自测采样" samples={selfTest.waveform} failureCycle={selfTest.firstFailure?.cycle} ledFocus={demo === 'lock'} />
+                <Waveform title="自测采样" samples={selfTest.waveform} failureCycle={selfTest.firstUnstableCycle ?? selfTest.firstFailure?.cycle} ledFocus={selfTest.firstFailure?.signal === 'led' || lockActive} />
               </details>}
             </aside>
           </div>
