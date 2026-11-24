@@ -8,30 +8,38 @@
 
 三个人只修改自己负责的目录，**不跨界改动别人的业务代码**：
 
-| 成员 | 专属开发分支 | 只修改这些目录 |
-| --- | --- | --- |
-| **队长（全栈/前端/部署）** | `feat/ui-core` | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/` |
-| **队友 1（仿真与验证引擎）** | `feat/engine` | `src/engine/`、`tests/engine.test.ts` |
-| **队友 2（AI 闭环与案例库）** | `feat/agent` | `src/agent/`、`tests/agent.test.ts`、`docs/`（参赛文案素材） |
+| 成员 | 专属开发分支 | 负责范围 | 接口交付 |
+| --- | --- | --- | --- |
+| **队长（全栈/前端/部署）** | `feat/ui-core` | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/`、工程配置及平台测试 | 向 Agent 工厂注入 `LLMClient` 和独立的 `RtlEngine`，并在 UI 消费板卡采样、网表和 `HarnessTraceEvent`。 |
+| **队友 1（仿真与验证引擎）** | `feat/engine` | `src/engine/`、`tests/engine.test.ts` | 保留 `createRtlEngine(): RtlEngine` 导出，在工厂接入真实解析、仿真、网表、Lint 和自测。 |
+| **队友 2（AI 闭环与案例库）** | `feat/agent` | `src/agent/`、`tests/agent.test.ts`、参赛文案素材 | 保留 `createAgentRuntime({ llm, engine }): AgentRuntime` 导出，在工厂接入真实 Harness、预置案例和诊断。 |
 
-> 如果确实需要改动 `src/types/contracts.ts`，在群里说一声，由队长改完合入 `main`，大家再同步一次即可。
+接口以 [冻结契约](../src/types/contracts.ts) 为准，行为约定见 [数据契约说明](DATA_CONTRACTS.md)。涉及公共字段或跨目录调整时，由队长协调合入 `main`，两条开发分支再同步。当前引擎冒烟测试引用 `src/agent/mockPresets.ts` 的交通灯样例，队友 2 如需迁移该样例，先与队友 1 同步测试引用。
 
 ---
 
 ## 2. 首次克隆与切分支（两位队友照着敲即可）
 
 ```bash
-# 1. 克隆仓库
+# 首次克隆后进入仓库，安装依赖并验证 M0 基线
 git clone https://github.com/CyberWei922/qoderationability.git
 cd qoderationability
+npm ci
+npm test
+```
 
-# 2. 创建并切换到自己的专属开发分支
-# 队友 1 执行：
-git checkout -b feat/engine
-# 队友 2 执行：
-git checkout -b feat/agent
-# 队长执行：
-git checkout -b feat/ui-core
+已有本地仓库时，先在 `main` 执行 `git pull --ff-only`，再运行 `npm ci` 和 `npm test`。从更新后的 `main` 创建与自己分工对应的分支，只执行下表中的一条命令。
+
+| 成员 | 创建开发分支 | 模块验收 |
+| --- | --- | --- |
+| 队长 | `git switch -c feat/ui-core` | `npm run build`、`npm run test:platform` |
+| 队友 1 | `git switch -c feat/engine` | `npm run test:engine` |
+| 队友 2 | `git switch -c feat/agent` | `npm run test:agent` |
+
+```sh
+# 若本地已有开发分支，以队友 1 为例，切回分支并合入最新基线
+git switch feat/engine
+git merge main
 ```
 
 ---
@@ -44,14 +52,16 @@ git checkout -b feat/ui-core
 # 第 1 步：跑自己模块的测试（确保没报错再提交）
 # 队友 1：npm run test:engine
 # 队友 2：npm run test:agent
-# 队长：  npm run build
+# 队长：  npm run build && npm run test:platform
 
 # 第 2 步：拉取 main 最新进度（防止落后太多）
 git fetch origin
 git merge origin/main
 
-# 第 3 步：暂存并提交（写清楚改了什么）
-git add .
+# 第 3 步：暂存本次改动的明确文件，提交前检查暂存区（以队友 1 为例）
+git add src/engine/simulator.ts tests/engine.test.ts
+git diff --cached --check
+git diff --cached --stat
 git commit -m "feat(engine): 完成 always 块周期仿真与波形记录"
 
 # 第 4 步：推送到自己的远程分支

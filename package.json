@@ -1,0 +1,41 @@
+{
+  "name": "vibefpga-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:engine": "vitest run tests/engine.test.ts",
+    "test:agent": "vitest run tests/agent.test.ts",
+    "test:platform": "vitest run tests/llmClient.test.ts tests/function.test.ts",
+    "check:function": "deno check functions/index.ts",
+    "dev:function": "deno run --allow-net --allow-env=LLM_API_KEY,LLM_BASE_URL,LLM_MODEL,ALLOWED_ORIGINS,DAILY_LIMIT_PER_IP dev/function-local.ts"
+  },
+  "dependencies": {
+    "dagre": "^0.8.5",
+    "lucide-react": "^1.79.0",
+    "mermaid": "^12.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/dagre": "^0.7.54",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "tailwindcss": "^4.3.5",
+    "typescript": "5.9",
+    "vite": "^8.3.8",
+    "vitest": "^4.1.12"
+  }
+}

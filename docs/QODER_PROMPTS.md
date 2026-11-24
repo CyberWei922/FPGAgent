@@ -4,29 +4,19 @@
 
 ---
 
-## 一、队长（全栈统筹 + 前端 + 云函数）首轮提示词
+## 一、队长（全栈统筹 + 前端 + 云函数）开工提示词
 
-> **使用时机**：第 1 步（M0 阶段），在 `main` 或 `feat/ui-core` 分支上运行。
+> **使用时机**：M0 骨架在 `main` 验收后，从 `main` 切到 `feat/ui-core` 继续工作台开发。
 
 ```text
-请先阅读仓库里的 docs/PROJECT_PLAN.md 和 docs/DATA_CONTRACTS.md。
-我们要参加 2026 Qoder 高校创造力大赛（StudyHack 赛道），开发「VibeFPGA Lab：AI 驱动的可验证浏览器虚拟 FPGA 实验室」，最终部署到 Qoder Sites。
+请先阅读 docs/PROJECT_PLAN.md、docs/DATA_CONTRACTS.md、src/types/contracts.ts 和现有 src/App.tsx。项目为 2026 Qoder 高校创造力大赛 StudyHack 赛道的 VibeFPGA Lab。
 
-我是团队队长，负责项目初始化、数据契约冻结、全部前端界面与 Qoder Sites 云函数代理。请先帮我完成 M0 骨架搭建，严格遵守以下要求：
+我是队长，负责契约、前端和 Qoder Sites 云函数。基于现有 M0 项目推进 M1，按以下接口交接：
 
-1. 在仓库根目录初始化 React + TypeScript + Vite + Tailwind CSS + Vitest 工程（安装 dagre、@types/dagre、mermaid、lucide-react），保留现有的 docs/、reference/ 和 .gitignore。
-2. 根据 docs/DATA_CONTRACTS.md 创建冻结契约文件 src/types/contracts.ts。
-3. 在 package.json 中配置好给两位队友使用的独立测试脚本：
-   - "test:engine": "vitest run tests/engine.test.ts"
-   - "test:agent": "vitest run tests/agent.test.ts"
-4. 创建 src/services/llmClient.ts（支持 3 种模式：浏览器走 /functions/v1/agent、用户 BYOK 自填 Key、以及 Node 命令行读环境变量测试），以及 Qoder Sites 云函数骨架 functions/v1/agent.ts（从服务端环境变量读取 LLM_API_KEY，带单 IP 每日限流和 Referer 校验，绝不把密钥写到前端）。
-5. 为 src/engine/index.ts 和 src/agent/index.ts 先写一份可运行的 Mock 桩实现，让前端能立刻启动预览。
-6. 搭建高质感深色硬件实验室风格的三栏主工作台（TopBar、AgentPanel、GateCanvas、FpgaBoard、Waveform）：
-   - FpgaBoard：可点击 KEY[3:0]、可拨动 SW[7:0]、发光 LED[7:0]、红黄绿交通灯、4 位七段数码管、CLK 频率/单步控制；
-   - GateCanvas：基于 dagre 自动排版 SVG 门级电路图，支持“实时 / 0.2x 慢动作 / 单步传播”按 level 逐级发光脉冲动画，以及底部白话信号流播报条；
-   - Waveform：实时逻辑分析仪波形，支持对首个出错周期画红框高亮。
-
-请先给出实现计划，再分步创建文件并运行 npm run build 验证通过。
+1. 板卡与 Harness 分别使用 createRtlEngine() 的实例。工作台通过 createAgentRuntime({ llm: createBrowserLLMClient(), engine }) 获取案例和生成运行时，订阅 onTrace 展示步骤。
+2. 在现有 TopBar、AgentPanel、GateCanvas、VirtualBoard 和 Waveform 上继续实现逐层传播、板卡与反例交互。M1 继续使用 Mock 工厂，等队友实现后按同一入口联调。
+3. 维护 src/services/llmClient.ts 的三个调用模式与 LLMError。保留 functions/index.ts 作为 Qoder Sites Edge Function 入口，浏览器同源调用 /functions/v1/app/agent。服务端 Key 使用 LLM_API_KEY。
+4. 提交前运行 npm run build、npm run test:platform 和 npm test，并在浏览器验证交通灯、KEY0、拨码和单步操作。
 ```
 
 ---
@@ -40,7 +30,7 @@
 
 我是团队里负责硬件与仿真移植的成员，只负责 src/engine/ 和 tests/engine.test.ts，不需要修改任何 React 前端界面文件。
 
-请帮我用纯 TypeScript 从零实现以下模块，并严格满足 src/types/contracts.ts 中的 RtlEngine 接口：
+请用纯 TypeScript 实现以下模块。保留 src/engine/index.ts 的 createRtlEngine: RtlEngineFactory 导出，将工厂切换到真实 RtlEngine。队长和 Harness 依赖这个同名入口。
 
 1. src/engine/parser.ts：
    - 解析可综合 Verilog 教学子集（统一顶层端口 clk, rst_n, key[3:0], sw[7:0], led[7:0], traffic[2:0], seg[15:0]）；
@@ -48,14 +38,14 @@
    - 语法错误必须返回精确行号与中文解释。
 2. src/engine/simulator.ts：
    - 周期精确仿真内核：正确区分非阻塞 <=（上升沿统一提交）和阻塞 =（组合块迭代收敛，防组合环死循环）；
-   - 每拍输出 BoardOutputs 与 SignalSample 波形记录。
+   - 每次 step(inputs) 处理一个上升沿，返回 { sample: SignalSample, netlist: NetlistGraph }，从周期 0 起算。reset() 后重新计数。
 3. src/engine/netlist.ts：
    - 将 AST 映射为 20-40 个可读节点的教学级混合网表（INPUT/OUTPUT/AND/OR/NOT/XOR/MUX/CMP/ADD/DFF）；
    - 计算每个节点的拓扑层级 level（从 0 递增）和每拍 changed 跳变标志，并生成简明的中文白话信号流播报 narration。
 4. src/engine/linter.ts：
    - 实现 6 类静态 Lint 检查：端口匹配、时序块阻塞赋值、组合块非阻塞赋值、潜在 Latch（缺 else/default）、未驱动输出/未赋值状态变量、多驱动与无符号 >>> 算术右移。
 5. src/engine/selftest.ts：
-   - 根据 TestVectorStep[] 运行确定性自测，抓出首个出错周期 firstFailure，并支持传入上一版通过周期计算 regressedCycles（无回退检测）。
+   - 使用独立仿真状态按 TestVectorStep[] 执行自测。cycle 等于数组下标，时序用例显式驱动 rst_n=0。每拍仅比对 expect 提供的字段，输出 firstFailure、passedCycles，并用 previousPassedCycles 计算 regressedCycles。
 6. tests/engine.test.ts：
    - 编写至少 50 条 Vitest 单元测试，覆盖交通灯、密码锁、序列检测器、秒表、组合逻辑、6 类 Lint 报错、反例定位与无回退检测，并运行 npm run test:engine 确保全部通过。
 ```
@@ -71,7 +61,7 @@
 - reference/fpga2026/代码-可验证RTL闭环设计智能体/44959_rtlagent/REPORT.md（重点看第 2 节 Harness 闭环和第 4 节自我验证与修复策略）
 - reference/fpga2026/代码-可验证RTL闭环设计智能体/44959_rtlagent/skill/ 下的 6 个 sv-* 规范和 rtl-pitfalls/SKILL.md
 
-我是团队里负责 AI 智能体闭环、提示词与案例库的成员，只负责 src/agent/ 和 tests/agent.test.ts，不需要修改任何 React 前端界面和云函数部署文件。请直接调用队长封装好的 LLMClient 接口（src/types/contracts.ts）。
+我负责 AI 智能体闭环、提示词与案例库，代码范围为 src/agent/ 和 tests/agent.test.ts。保留 src/agent/index.ts 的 createAgentRuntime: AgentRuntimeFactory 导出，接收 { llm, engine } 注入，按 AgentRuntime 实现 runHarness、presets、diagnose 和 injectBug。测试注入按 action 返回数据的 Mock LLM 和满足 RtlEngine 的替身，便于和队友 1 并行。
 
 请帮我用纯 TypeScript 实现以下模块：
 
@@ -83,8 +73,9 @@
      d) inject_bug：基于经典 RTL 踩坑规则，向正常代码注入一个隐蔽可复现的硬件 Bug。
    - 做好 JSON 鲁棒解析（兼容偶尔带 Markdown 代码围栏的输出，避免解析崩溃）。
 2. src/agent/harness.ts：
-   - 实现前端可视化 Harness 状态机：规划 -> 生成 -> 调用 RtlEngine 做 Lint 与确定性自测 -> 若失败则分流触发最多 2 轮自动修复（做无回退校验，始终保留最佳候选）；
-   - 通过 onTrace(event: HarnessTraceEvent) 回调实时吐出每一步状态给前端展示。
+   - 使用 llm.chat({ action, messages, jsonMode, signal }) 调模型。保留 LLMError.code 供 UI 处理额度和取消，取消后停止后续步骤。
+   - 规划 -> 生成 -> 调用注入的 RtlEngine 编译与自测 -> 失败时最多 2 轮修复。沿用同一组测试向量，将最佳候选的 passedCycles 传给下一候选的 runSelfTest，用 regressedCycles 做无回退判断。
+   - 通过 onTrace(event: HarnessTraceEvent) 发送阶段进度，返回 HarnessResult，包含最佳候选、issues、适用时的 selfTest 和 repairRounds。
 3. src/agent/presets.ts 与 src/agent/bugClinic.ts：
    - 编写 5 个零 Token 预置经典硬件案例（智能十字路口交通灯、4 位数字密码锁、1011 序列检测器、数字秒表、四人抢答器），每个都包含完整的蓝图、Mermaid 状态图、可在本项目仿真子集下 100% 通过的 Verilog 代码、自测向量，以及至少 1-2 个「故障诊所」Bug 关卡（源自 rtl-pitfalls 真实踩坑）。
 4. tests/agent.test.ts：

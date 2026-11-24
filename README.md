@@ -19,15 +19,30 @@
 
 ## 三人团队分工速览
 
-| 角色 | 负责范围 | 核心目录 | 工作方式 |
+| 角色 | 负责范围 | 核心目录 | 接口与验收 |
 | --- | --- | --- | --- |
-| **队长（全栈统筹 + 前端 + 云端部署）** | 项目初始化、契约冻结、三栏交互界面、**动态门级信号流画布**、**虚拟 FPGA 板卡与示波器**、Qoder Sites 云函数代理与公网部署 | `src/types/`、`src/components/`、`src/App.tsx`、`functions/` | 全栈开发 + PR 审查合并 + 部署验收 |
-| **队友 1（硬件与仿真移植）** | 浏览器纯 TS Verilog 子集解析与周期仿真、AST 转教学门级网表与拓扑分层、6 条前端静态 Lint、确定性自测/首个反例/无回退校验、50+ 条单测 | `src/engine/`、`tests/engine.test.ts` | **零 Web 门槛**：纯 TS 算法，本地运行 `npm run test:engine` 验收 |
-| **队友 2（AI 智能体与内容）** | 提炼 `skill/` 规范为 System Prompt & 严格 JSON Schema、前端 Harness 闭环状态机、4–5 个零 Token 预置案例、基于 `rtl-pitfalls` 的「故障诊所」Bug 库与参赛文案 | `src/agent/`、`tests/agent.test.ts` | **零 Web 门槛**：调用队长封装的 `callLLM()`，本地运行 `npm run test:agent` 调优 |
+| **队长（全栈统筹 + 前端 + 云端部署）** | 维护冻结契约、门级信号图、虚拟板卡、波形、模型代理与 Qoder Sites 部署 | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/` | 提供 `LLMClient`，在工作台接入 `RtlEngine` 与 `AgentRuntime`。运行 `npm run build`、`npm run test:platform`。 |
+| **队友 1（硬件与仿真移植）** | 纯 TS Verilog 解析、周期仿真、教学网表、Lint、自测与回退定位 | `src/engine/`、`tests/engine.test.ts` | 通过 `createRtlEngine()` 交付真实引擎。运行 `npm run test:engine`，目标至少 50 条回归测试。 |
+| **队友 2（AI 智能体与内容）** | Prompt 与 JSON Schema、Harness 闭环、4–5 个离线案例、故障诊所和参赛文案 | `src/agent/`、`tests/agent.test.ts` | 通过 `createAgentRuntime({ llm, engine })` 交付智能体，调用注入的 `llm.chat()` 与引擎。运行 `npm run test:agent`。 |
+
+两位队友可以从 M0 的 `main` 切出各自分支。公共入口和自测语义见 [冻结契约](src/types/contracts.ts) 与 [协作流程](docs/GIT_WORKFLOW.md)。
 
 ---
 
-## 仓库目录规划（Qoder 初始化后）
+## 本地启动
+
+使用 Node.js 22.13 或更新版本。仓库的 `.npmrc` 将 npm 下载源设为华为云镜像。在仓库根目录运行：
+
+```sh
+npm ci
+npm run dev
+npm test
+npm run build
+```
+
+M0 首页加载交通灯演示。板卡与 AI 生成流程使用 Mock，可离线预览。队友 1 运行 `npm run test:engine`，队友 2 运行 `npm run test:agent`。本地联调云函数时，可用 Deno 运行 `npm run dev:function`，前端通过 `/functions/v1/app/agent` 调用。
+
+## 仓库目录规划
 
 ```text
 qoderationability/
@@ -37,11 +52,11 @@ qoderationability/
 │   ├── types/              # 【队长冻结】contracts.ts 统一数据接口
 │   ├── engine/             # 【队友 1】Verilog 解析、周期仿真、门级网表、Lint、确定性自测
 │   ├── agent/              # 【队友 2】Harness 闭环、Prompt/Schema、预置案例、故障诊所
-│   ├── services/           # 【队长】极简 callLLM() 客户端与 BYOK 配置封装
-│   ├── components/         # 【队长】TopBar、AgentPanel、GateCanvas、FpgaBoard、Waveform
+│   ├── services/           # 【队长】LLMClient 实现与 BYOK 配置
+│   ├── components/         # 【队长】TopBar、AgentPanel、GateCanvas、VirtualBoard、Waveform
 │   └── App.tsx             # 【队长】三栏工作台主入口
 ├── functions/
-│   └── v1/agent.ts         # 【队长】Qoder Sites Server Function（藏 Key + IP 限流代理）
+│   └── index.ts            # 【队长】Qoder Sites Edge Function 入口
 └── tests/
     ├── engine.test.ts      # 【队友 1】50+ 条引擎与 Lint 回归测试
     └── agent.test.ts       # 【队友 2】Prompt JSON 稳定性与闭环验收测试
