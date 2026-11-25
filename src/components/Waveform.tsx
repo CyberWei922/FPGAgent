@@ -1,8 +1,10 @@
+import { useEffect, useRef } from 'react';
 import type { SignalSample } from '../types/contracts';
 
 const LABEL = 43;
 const CELL = 20;
 const ROW = 24;
+const FOLLOW_EDGE_THRESHOLD = 24;
 
 interface Channel {
   label: string;
@@ -11,12 +13,17 @@ interface Channel {
   clock?: boolean;
 }
 
-export function Waveform({ title, samples, failureCycle, ledFocus = false }: {
+export function Waveform({ title, samples, failureCycle, ledFocus = false, autoFollow = false }: {
   title: string;
   samples: SignalSample[];
   failureCycle?: number;
   ledFocus?: boolean;
+  autoFollow?: boolean;
 }) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  const stickToEndRef = useRef(true);
+  const prevCycleRef = useRef<number | undefined>(undefined);
+
   const channels: Channel[] = [
     { label: 'CLK', read: () => 1, clock: true },
     { label: 'KEY0', read: (sample) => sample.inputs.key & 1 },
@@ -26,10 +33,40 @@ export function Waveform({ title, samples, failureCycle, ledFocus = false }: {
   const width = LABEL + Math.max(10, samples.length) * CELL + 10;
   const height = channels.length * ROW + 25;
   const failureIndex = samples.findIndex((sample) => sample.cycle === failureCycle);
+  const latestCycle = samples.at(-1)?.cycle;
+
+  useEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    if (latestCycle === undefined || (prevCycleRef.current !== undefined && latestCycle < prevCycleRef.current)) {
+      stickToEndRef.current = true;
+    }
+    prevCycleRef.current = latestCycle;
+
+    if (autoFollow && stickToEndRef.current) {
+      el.scrollLeft = Math.max(0, el.scrollWidth - el.clientWidth);
+    } else if (!autoFollow && failureIndex >= 0) {
+      const targetX = LABEL + failureIndex * CELL - el.clientWidth / 2 + CELL / 2;
+      el.scrollLeft = Math.max(0, targetX);
+    }
+  }, [autoFollow, failureIndex, latestCycle, samples.length]);
+
+  function handleScroll() {
+    const el = frameRef.current;
+    if (!el || !autoFollow) return;
+    const distanceToEnd = el.scrollWidth - el.clientWidth - el.scrollLeft;
+    stickToEndRef.current = distanceToEnd <= FOLLOW_EDGE_THRESHOLD;
+  }
+
   return (
     <section className="instrument-section waveform-section">
       <div className="section-heading"><h2>{title}</h2>{samples.length > 0 && <span className="instrument-meta">周期 {samples.at(-1)?.cycle}</span>}</div>
-      <div className="waveform-frame" tabIndex={samples.length > 10 ? 0 : undefined}>
+      <div
+        ref={frameRef}
+        className="waveform-frame"
+        tabIndex={samples.length > 10 ? 0 : undefined}
+        onScroll={handleScroll}
+      >
         {samples.length === 0 ? <p className="instrument-empty">等待仿真采样</p> : (
           <svg style={{ minWidth: `${width}px` }} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title}，${samples.length} 个采样周期`}>
             {Array.from({ length: Math.max(10, samples.length) + 1 }, (_, index) => <line className="wave-grid" key={index} x1={LABEL + index * CELL} x2={LABEL + index * CELL} y1="9" y2={height - 17} />)}

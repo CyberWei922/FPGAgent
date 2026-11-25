@@ -338,6 +338,9 @@ export default function App() {
   const pendingKeys = useRef<{ pressed: number; inputs: BoardInputs }[]>([]);
   const pendingReset = useRef(false);
   const sampledKeys = useRef(0);
+  const clockTimerRef = useRef<number | null>(null);
+  const clockStateRef = useRef({ compiled: false, running: true, speed: 'realtime' as ClockSpeed });
+  clockStateRef.current = { compiled, running, speed };
   const abortRef = useRef<AbortController | null>(null);
   const applied = useRef<{ source: string; title?: string; version: number } | undefined>(undefined);
 
@@ -480,9 +483,42 @@ export default function App() {
     saveAppPreferences(next);
   }
 
+  const tick = useCallback(() => {
+    if (!simulation.current) return;
+    const current = inputsRef.current;
+    const pending = pendingKeys.current[0];
+    let sampled = current;
+    if (pendingReset.current || current.rst_n === 0) {
+      sampled = { ...current, key: 0, rst_n: 0 };
+      pendingReset.current = false;
+    } else if (pending) {
+      if (sampledKeys.current & pending.pressed) {
+        sampled = { ...pending.inputs, key: pending.inputs.key & ~pending.pressed, rst_n: 1 };
+      } else {
+        sampled = { ...pending.inputs, rst_n: 1 };
+        pendingKeys.current.shift();
+      }
+    }
+    sampledKeys.current = sampled.key;
+    const next = simulation.current(sampled);
+    setNetlist(next.netlist);
+    setHistory((samples) => [...samples.slice(-(HISTORY_LIMIT - 1)), next.sample]);
+  }, []);
+
+  const restartClockTimer = useCallback(() => {
+    if (clockTimerRef.current !== null) {
+      window.clearInterval(clockTimerRef.current);
+      clockTimerRef.current = null;
+    }
+    const { compiled: isCompiled, running: isRunning, speed: currentSpeed } = clockStateRef.current;
+    if (!isCompiled || !isRunning || currentSpeed === 'step') return;
+    clockTimerRef.current = window.setInterval(tick, SPEED_INTERVAL_MS[currentSpeed]);
+  }, [tick]);
+
   // Board inputs & simulation loop
   function changeInputs(next: BoardInputs) {
-    if (next.rst_n === 0 && inputsRef.current.rst_n === 1) {
+    const resetPressed = next.rst_n === 0 && inputsRef.current.rst_n === 1;
+    if (resetPressed) {
       pendingKeys.current = [];
       pendingReset.current = true;
     }
@@ -490,6 +526,15 @@ export default function App() {
     if (pressed) pendingKeys.current.push({ pressed, inputs: next });
     inputsRef.current = next;
     setInputs(next);
+
+    const { compiled: isCompiled, running: isRunning, speed: currentSpeed } = clockStateRef.current;
+    if (isCompiled && isRunning && currentSpeed !== 'step' && (resetPressed || pressed !== 0)) {
+      if (pressed !== 0 && (sampledKeys.current & pressed)) {
+        tick();
+      }
+      tick();
+      restartClockTimer();
+    }
   }
 
   function resetInputs() {
@@ -550,33 +595,15 @@ export default function App() {
     return { ok: true, verification };
   }
 
-  const tick = useCallback(() => {
-    if (!simulation.current) return;
-    const current = inputsRef.current;
-    const pending = pendingKeys.current[0];
-    let sampled = current;
-    if (pendingReset.current || current.rst_n === 0) {
-      sampled = { ...current, key: 0, rst_n: 0 };
-      pendingReset.current = false;
-    } else if (pending) {
-      if (sampledKeys.current & pending.pressed) {
-        sampled = { ...pending.inputs, key: pending.inputs.key & ~pending.pressed, rst_n: 1 };
-      } else {
-        sampled = { ...pending.inputs, rst_n: 1 };
-        pendingKeys.current.shift();
-      }
-    }
-    sampledKeys.current = sampled.key;
-    const next = simulation.current(sampled);
-    setNetlist(next.netlist);
-    setHistory((samples) => [...samples.slice(-(HISTORY_LIMIT - 1)), next.sample]);
-  }, []);
-
   useEffect(() => {
-    if (!compiled || !running || speed === 'step') return;
-    const id = window.setInterval(tick, SPEED_INTERVAL_MS[speed]);
-    return () => window.clearInterval(id);
-  }, [compiled, running, speed, tick]);
+    restartClockTimer();
+    return () => {
+      if (clockTimerRef.current !== null) {
+        window.clearInterval(clockTimerRef.current);
+        clockTimerRef.current = null;
+      }
+    };
+  }, [compiled, running, speed, restartClockTimer]);
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
@@ -1499,7 +1526,7 @@ export default function App() {
                 </section>
 
                 <aside className="instruments-column" aria-label="实时波形与虚拟板卡">
-                  <Waveform title="实时波形" samples={history.slice(-10)} ledFocus={lockActive} />
+                  <Waveform title="实时波形" samples={history} ledFocus={lockActive} autoFollow />
 
                   <section className="instrument-section">
                     <div className="section-heading">
