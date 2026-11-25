@@ -19,6 +19,7 @@ import type {
   WebReference,
 } from '../types/contracts';
 import { LLMError } from '../types/contracts';
+import { extractPartialJsonStringField } from '../engine/streamTokenizer';
 import { requestInjectedBug } from './bugClinic';
 import { PRESETS } from './presets';
 import {
@@ -158,7 +159,17 @@ function chunkText(text: string, size = 24): string[] {
 
 export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntimeDeps): AgentRuntime {
   async function runHarness(prompt: string, options: HarnessRunOptions): Promise<HarnessResult> {
-    const { onTrace, onAssistantDelta, signal, model, previousContext, enableWebResearch } = options;
+    const {
+      onTrace,
+      onAssistantDelta,
+      onBlueprint,
+      onCodeDelta,
+      onReasoningDelta,
+      signal,
+      model,
+      previousContext,
+      enableWebResearch,
+    } = options;
     const researchEnabled = Boolean(research) && enableWebResearch === true;
 
     let activeModel = model;
@@ -188,7 +199,21 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
       onTrace(event);
     };
 
-    const callModel = async (action: 'plan' | 'generate' | 'repair', messages: ChatMessage[], temperature: number) => {
+    const callModel = async (
+      action: 'plan' | 'generate' | 'repair',
+      messages: ChatMessage[],
+      temperature: number,
+      streamOpts?: {
+        stage: HarnessStage;
+        round?: number;
+        streamCode?: boolean;
+      },
+    ) => {
+      let rawStream = '';
+      let reasoningStream = '';
+      let lastEmittedCodeLen = 0;
+
+      const wantsStream = Boolean(streamOpts && (onCodeDelta || onReasoningDelta));
       const response = await llm.chat({
         action,
         messages,
@@ -196,10 +221,32 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
         jsonMode: true,
         model: activeModel,
         signal,
+        ...(wantsStream
+          ? {
+              onReasoningDelta: (chunk: string) => {
+                reasoningStream += chunk;
+                if (streamOpts) onReasoningDelta?.(streamOpts.stage, reasoningStream, streamOpts.round);
+              },
+              onDelta: (chunk: string) => {
+                rawStream += chunk;
+                if (streamOpts?.streamCode && onCodeDelta) {
+                  const extracted = extractPartialJsonStringField(rawStream, 'code');
+                  if (extracted && extracted.value.length > lastEmittedCodeLen) {
+                    lastEmittedCodeLen = extracted.value.length;
+                    onCodeDelta(extracted.value, {
+                      stage: streamOpts.stage === 'repairing' ? 'repairing' : 'coding',
+                      round: streamOpts.round,
+                      final: extracted.complete,
+                    });
+                  }
+                }
+              },
+            }
+          : {}),
       });
       if (response.model) activeModel = response.model;
       if (response.remainingQuota !== undefined) remainingQuota = response.remainingQuota;
-      return response;
+      return { ...response, reasoning: reasoningStream || undefined };
     };
 
     const runResearch = async (query: string, reason: string): Promise<void> => {
@@ -255,22 +302,32 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
         ensureNotAborted(signal);
       }
 
-      emit('planning', 'running', '拆解需求', `收到需求「${prompt}」`);
+      emit('planning', 'running', '规划电路蓝图', `分析需求「${prompt}」并拆解端口、状态机与自测向量`);
       const planResponse = await callModel(
         'plan',
         buildPlanMessages(prompt, { previousContext, researchNotes }),
         TEMPERATURE.plan,
+        { stage: 'planning' },
       );
       ensureNotAborted(signal);
       const plan = parsePlanResponse(planResponse.text);
+      onBlueprint?.(plan.blueprint);
+      const planCheckpoints = [
+        ...plan.blueprint.behaviors.slice(0, 4).map((b, i) => `${i + 1}. ${b}`),
+        `端口映射：${plan.blueprint.pinMappings.map((p) => p.port).slice(0, 5).join(' / ')}`,
+      ];
       emit(
         'planning',
         'pass',
-        '蓝图完成',
-        `${plan.blueprint.behaviors.length} 条行为要点、${plan.blueprint.pinMappings.length} 个引脚映射、${plan.testVectors.length} 拍自测向量`,
+        '规划电路蓝图',
+        `${plan.blueprint.behaviors.length} 条行为要点 · ${plan.blueprint.pinMappings.length} 个引脚映射 · ${plan.testVectors.length} 拍自测向量`,
+        {
+          checkpoints: planCheckpoints,
+          ...(planResponse.reasoning ? { reasoning: planResponse.reasoning } : {}),
+        },
       );
 
-      emit('coding', 'running', '生成 Verilog', '按蓝图与自测向量生成 top 模块');
+      emit('coding', 'running', '编写 Verilog 源码', '按蓝图规格与端口约束生成可综合 top 模块');
       const generateResponse = await callModel(
         'generate',
         buildGenerateMessages(plan.blueprint, plan.testVectors, {
@@ -278,14 +335,22 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
           researchNotes,
         }),
         TEMPERATURE.generate,
+        { stage: 'coding', streamCode: true },
       );
       ensureNotAborted(signal);
       const generated = parseCodeResponse(generateResponse.text);
+      const generatedLines = countLines(generated.code);
+      onCodeDelta?.(generated.code, { stage: 'coding', final: true });
       emit(
         'coding',
         'pass',
-        '代码生成完成',
-        `${countLines(generated.code)} 行 Verilog${generated.explanation ? `：${generated.explanation}` : ''}`,
+        '编写 Verilog 源码',
+        `${generatedLines} 行可综合 Verilog${generated.explanation ? ` · ${generated.explanation}` : ''}`,
+        {
+          codeLines: generatedLines,
+          ...(generated.explanation ? { checkpoints: [generated.explanation] } : {}),
+          ...(generateResponse.reasoning ? { reasoning: generateResponse.reasoning } : {}),
+        },
       );
 
       const previousVectors = previousContext?.testVectors;
@@ -308,28 +373,46 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
 
       for (let round = 0; ; round += 1) {
         ensureNotAborted(signal);
-        emit('linting', 'running', 'Lint 体检', `第 ${round + 1} 版代码，${countLines(currentCode)} 行`, { round });
+        emit('linting', 'running', 'Lint 静态体检', `检查第 ${round + 1} 版代码（${countLines(currentCode)} 行）的语法与可综合规则`, { round });
         const compiled = engine.compile(currentCode);
         const errorCount = compiled.issues.filter((issue) => issue.severity === 'error').length;
+        const lintCheckpoints =
+          compiled.issues.length === 0
+            ? ['端口声明与位宽对齐通过', '0 阻塞/非阻塞混用错误 · 0 推断锁存器告警']
+            : compiled.issues.slice(0, 4).map((issue) => `第 ${issue.line} 行 [${issue.code}] ${issue.message}`);
         emit(
           'linting',
           compiled.ok ? 'pass' : 'fail',
-          'Lint 体检',
-          compiled.issues.length === 0 ? '未发现告警' : `${compiled.issues.length} 条告警（${errorCount} 条 error）`,
-          { round },
+          'Lint 静态体检',
+          compiled.issues.length === 0 ? '0 错误 · 0 告警' : `${compiled.issues.length} 条告警（${errorCount} 条 error）`,
+          {
+            round,
+            checkpoints: lintCheckpoints,
+            ...(compiled.issues[0]?.line ? { highlightLine: compiled.issues[0].line } : {}),
+          },
         );
 
         let selfTest: SelfTestResult | undefined;
         if (compiled.ok) {
-          emit('simulating', 'running', '确定性自测', `${plan.testVectors.length} 拍自测向量`, { round });
+          emit('simulating', 'running', '确定性仿真自测', `运行 ${plan.testVectors.length} 拍测试向量并校验板卡输出`, { round });
           selfTest = engine.runSelfTest(
             currentCode,
             plan.testVectors,
             best?.selfTest?.passedCycles ?? inheritedPassedCycles,
           );
-          emit('simulating', selfTest.passed ? 'pass' : 'fail', '确定性自测', describeSelfTest(selfTest), { round });
+          const simCheckpoints = plan.testVectors
+            .filter((v) => v.note)
+            .slice(0, 4)
+            .map((v) => {
+              const failedHere = selfTest?.firstFailure?.cycle === v.cycle || selfTest?.firstUnstableCycle === v.cycle;
+              return `${failedHere ? '✕' : '✓'} 第 ${v.cycle} 拍 · ${v.note}`;
+            });
+          emit('simulating', selfTest.passed ? 'pass' : 'fail', '确定性仿真自测', describeSelfTest(selfTest), {
+            round,
+            ...(simCheckpoints.length > 0 ? { checkpoints: simCheckpoints } : {}),
+          });
         } else {
-          emit('simulating', 'fail', '确定性自测', '编译未通过，跳过仿真，直接进入修复', { round });
+          emit('simulating', 'fail', '确定性仿真自测', '编译未通过，跳过仿真，直接进入修复', { round });
         }
 
         const candidate: Candidate = { code: currentCode, issues: compiled.issues, compiledOk: compiled.ok, selfTest };
@@ -348,14 +431,18 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
         }
         const failureCycle = selfTest?.firstUnstableCycle ?? selfTest?.firstFailure?.cycle;
         const waveformSlice = selfTest && failureCycle !== undefined ? sliceWaveform(selfTest.waveform, failureCycle) : undefined;
+        const firstIssueLine = compiled.issues[0]?.line;
         emit(
           'repairing',
           'running',
-          `第 ${repairRounds} 轮自动修复`,
+          `自动修复 #${repairRounds}`,
           selfTest
             ? `按自测结果修复：${describeSelfTest(selfTest)}`
             : `按 ${errorCount} 条 Lint error 修复`,
-          { round: repairRounds },
+          {
+            round: repairRounds,
+            ...(firstIssueLine ? { highlightLine: firstIssueLine } : {}),
+          },
         );
         try {
           const repairResponse = await callModel(
@@ -370,21 +457,29 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
               researchNotes,
             }),
             TEMPERATURE.repair,
+            { stage: 'repairing', round: repairRounds, streamCode: true },
           );
           ensureNotAborted(signal);
           const repaired = parseCodeResponse(repairResponse.text);
           currentCode = repaired.code;
+          const repairedLines = countLines(currentCode);
+          onCodeDelta?.(currentCode, { stage: 'repairing', round: repairRounds, final: true });
           emit(
             'repairing',
             'pass',
-            `第 ${repairRounds} 轮修复`,
-            `候选代码 ${countLines(currentCode)} 行${repaired.explanation ? `：${repaired.explanation}` : ''}`,
-            { round: repairRounds },
+            `自动修复 #${repairRounds}`,
+            `候选代码 ${repairedLines} 行${repaired.explanation ? ` · ${repaired.explanation}` : ''}`,
+            {
+              round: repairRounds,
+              codeLines: repairedLines,
+              ...(repaired.explanation ? { checkpoints: [repaired.explanation] } : {}),
+              ...(repairResponse.reasoning ? { reasoning: repairResponse.reasoning } : {}),
+            },
           );
         } catch (error) {
           ensureNotAborted(signal);
           if (!(error instanceof LLMError) || error.code === 'ABORTED') throw error;
-          emit('repairing', 'fail', `第 ${repairRounds} 轮修复中断`, error.message, { round: repairRounds });
+          emit('repairing', 'fail', `自动修复 #${repairRounds} 中断`, error.message, { round: repairRounds });
           break;
         }
       }

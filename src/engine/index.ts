@@ -281,4 +281,10 @@ export {
   type HighlightToken,
   type HighlightTokenKind,
 } from './highlight';
+export {
+  collectVerilogTokenBoundaries,
+  extractPartialJsonStringField,
+  extractSafeVerilogPrefix,
+  type PartialJsonStringResult,
+} from './streamTokenizer';
 export type * from './ast';

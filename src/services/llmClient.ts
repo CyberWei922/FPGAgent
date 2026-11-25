@@ -347,6 +347,7 @@ function createDirectClient(cfg: ByokConfig, fetchImpl?: FetchImpl): LLMClient {
         throw new LLMError('NOT_CONFIGURED', '未配置大模型 API Key');
       }
       const resolvedModel = options.model?.trim() || cfg.model;
+      const wantsStream = Boolean(options.onDelta || options.onReasoningDelta);
       try {
         const text = await callOpenAICompatible({
           baseUrl: normalizedBaseUrl,
@@ -355,6 +356,9 @@ function createDirectClient(cfg: ByokConfig, fetchImpl?: FetchImpl): LLMClient {
           messages: options.messages,
           temperature: options.temperature,
           jsonMode: options.jsonMode,
+          stream: wantsStream,
+          onDelta: options.onDelta,
+          onReasoningDelta: options.onReasoningDelta,
           signal: options.signal,
           fetchImpl: directFetch,
         });
@@ -412,6 +416,7 @@ function createDirectClient(cfg: ByokConfig, fetchImpl?: FetchImpl): LLMClient {
 function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMClient {
   return {
     async chat(options: LLMCallOptions) {
+      const wantsStream = Boolean(options.onDelta || options.onReasoningDelta);
       let res: Response;
       try {
         const payloadBody: Record<string, unknown> = {
@@ -421,16 +426,97 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
           jsonMode: options.jsonMode,
         };
         if (options.model?.trim()) payloadBody.model = options.model.trim();
+        if (wantsStream) payloadBody.stream = true;
         res = await fetchImpl(endpoint, {
           method: 'POST',
           credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(wantsStream ? { Accept: 'text/event-stream, application/json' } : {}),
+          },
           body: JSON.stringify(payloadBody),
           signal: options.signal,
         });
       } catch (error) {
         if (options.signal?.aborted) throw new LLMError('ABORTED', '请求已取消');
         throw toLLMError(error);
+      }
+
+      const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
+      if (res.ok && wantsStream && contentType.includes('text/event-stream') && res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let accumulated = '';
+        let finalText: string | undefined;
+        let remainingQuota: number | undefined;
+        let model: string | undefined;
+        let streamError: LLMError | null = null;
+
+        const handleLine = (rawLine: string) => {
+          const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+          if (!line.startsWith('data:')) return;
+          const payload = line.slice(5).trim();
+          if (!payload || payload === '[DONE]') return;
+          let evt: {
+            type?: unknown;
+            delta?: unknown;
+            text?: unknown;
+            error?: unknown;
+            remainingQuota?: unknown;
+            model?: unknown;
+          };
+          try {
+            evt = JSON.parse(payload);
+          } catch {
+            return;
+          }
+          if (typeof evt.remainingQuota === 'number') remainingQuota = evt.remainingQuota;
+          if (typeof evt.model === 'string') model = evt.model;
+          if (evt.type === 'delta' && typeof evt.delta === 'string') {
+            accumulated += evt.delta;
+            options.onDelta?.(evt.delta);
+          } else if (evt.type === 'reasoning' && typeof evt.delta === 'string') {
+            options.onReasoningDelta?.(evt.delta);
+          } else if (evt.type === 'done' && typeof evt.text === 'string') {
+            finalText = evt.text;
+          } else if (evt.type === 'error') {
+            const code = (typeof evt.error === 'string' && SERVER_ERROR_MAP[evt.error]) || 'UPSTREAM';
+            streamError = new LLMError(code, `云函数流式调用失败：${String(evt.error ?? 'upstream_error')}`, 502);
+          }
+        };
+
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let nl = buffer.indexOf('\n');
+            while (nl !== -1) {
+              handleLine(buffer.slice(0, nl));
+              buffer = buffer.slice(nl + 1);
+              nl = buffer.indexOf('\n');
+            }
+          }
+          buffer += decoder.decode();
+          if (buffer.trim()) handleLine(buffer);
+        } catch (error) {
+          if (options.signal?.aborted) throw new LLMError('ABORTED', '请求已取消');
+          throw toLLMError(error);
+        } finally {
+          reader.releaseLock();
+        }
+
+        if (streamError) throw streamError;
+        const text = finalText ?? accumulated;
+        if (!text) {
+          throw new LLMError('BAD_RESPONSE', '云函数流式响应缺少文本内容', res.status);
+        }
+        return {
+          text,
+          remainingQuota,
+          ...(model ? { model } : {}),
+        };
       }
 
       let data: { ok?: boolean; text?: unknown; error?: unknown; remainingQuota?: unknown; model?: unknown };
@@ -455,6 +541,7 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
       if (typeof data.text !== 'string') {
         throw new LLMError('BAD_RESPONSE', '云函数返回缺少 text 字段', res.status);
       }
+      if (data.text) options.onDelta?.(data.text);
       return {
         text: data.text,
         remainingQuota: typeof data.remainingQuota === 'number' ? data.remainingQuota : undefined,

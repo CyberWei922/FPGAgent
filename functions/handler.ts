@@ -58,11 +58,12 @@ interface AgentRequest {
   messages: CompatMessage[];
   temperature?: number;
   jsonMode?: boolean;
+  stream?: boolean;
 }
 
 function parseAgentRequest(raw: unknown): AgentRequest | null {
   if (!raw || typeof raw !== 'object') return null;
-  const { action, messages, temperature, jsonMode } = raw as Record<string, unknown>;
+  const { action, messages, temperature, jsonMode, stream } = raw as Record<string, unknown>;
   if (typeof action !== 'string' || !ACTIONS.has(action)) return null;
   if (!Array.isArray(messages) || messages.length === 0 || messages.length > MAX_MESSAGES) return null;
 
@@ -81,7 +82,8 @@ function parseAgentRequest(raw: unknown): AgentRequest | null {
     return null;
   }
   if (jsonMode !== undefined && typeof jsonMode !== 'boolean') return null;
-  return { messages: clean, temperature, jsonMode };
+  if (stream !== undefined && typeof stream !== 'boolean') return null;
+  return { messages: clean, temperature, jsonMode, stream };
 }
 
 export function createHandler(deps: HandlerDeps): (request: Request) => Promise<Response> {
@@ -127,11 +129,70 @@ export function createHandler(deps: HandlerDeps): (request: Request) => Promise<
     const quota = limiter.take(clientIp(request), now());
     if (!quota.allowed) return fail('quota_exceeded', 429, { remainingQuota: 0 });
 
+    const resolvedBaseUrl = deps.getEnv('LLM_BASE_URL') || DEFAULT_BASE_URL;
+    const resolvedModel = deps.getEnv('LLM_MODEL') || DEFAULT_MODEL;
+
+    if (parsed.stream) {
+      const encoder = new TextEncoder();
+      const body = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const sendEvent = (payload: Record<string, unknown>) => {
+            try {
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+            } catch {
+              // Ignore writes after stream closed by client disconnect.
+            }
+          };
+
+          sendEvent({ type: 'meta', remainingQuota: quota.remaining, model: resolvedModel });
+          try {
+            const content = await callOpenAICompatible({
+              baseUrl: resolvedBaseUrl,
+              apiKey,
+              model: resolvedModel,
+              messages: parsed.messages,
+              temperature: parsed.temperature,
+              jsonMode: parsed.jsonMode,
+              stream: true,
+              onDelta: (delta) => sendEvent({ type: 'delta', delta }),
+              onReasoningDelta: (delta) => sendEvent({ type: 'reasoning', delta }),
+              signal: request.signal,
+              fetchImpl: deps.fetchImpl,
+            });
+            sendEvent({ type: 'done', text: content, remainingQuota: quota.remaining, model: resolvedModel });
+          } catch (error) {
+            if (!request.signal.aborted) {
+              const timeout = error instanceof UpstreamError && error.kind === 'timeout';
+              sendEvent({
+                type: 'error',
+                error: timeout ? 'upstream_timeout' : 'upstream_error',
+                remainingQuota: quota.remaining,
+              });
+            }
+          } finally {
+            try {
+              controller.close();
+            } catch {
+              // Ignore already-closed controller.
+            }
+          }
+        },
+      });
+      return new Response(body, {
+        status: 200,
+        headers: {
+          ...NO_STORE,
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          Connection: 'keep-alive',
+        },
+      });
+    }
+
     try {
       const content = await callOpenAICompatible({
-        baseUrl: deps.getEnv('LLM_BASE_URL') || DEFAULT_BASE_URL,
+        baseUrl: resolvedBaseUrl,
         apiKey,
-        model: deps.getEnv('LLM_MODEL') || DEFAULT_MODEL,
+        model: resolvedModel,
         messages: parsed.messages,
         temperature: parsed.temperature,
         jsonMode: parsed.jsonMode,

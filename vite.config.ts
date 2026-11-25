@@ -70,11 +70,29 @@ function handleLocalGatewayProxy(req: IncomingMessage, res: ServerResponse): voi
         signal: AbortSignal.timeout(120_000),
       });
 
-      const responseBuffer = Buffer.from(await upstream.arrayBuffer());
       res.statusCode = upstream.status;
       const contentType = upstream.headers.get('content-type');
       if (contentType) res.setHeader('Content-Type', contentType);
-      res.end(responseBuffer);
+      if (contentType?.toLowerCase().includes('text/event-stream')) {
+        res.setHeader('Cache-Control', 'no-store');
+      }
+
+      if (upstream.body) {
+        const reader = upstream.body.getReader();
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (value) res.write(Buffer.from(value));
+          }
+        } finally {
+          reader.releaseLock();
+        }
+        res.end();
+      } else {
+        const responseBuffer = Buffer.from(await upstream.arrayBuffer());
+        res.end(responseBuffer);
+      }
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知连接异常';
       writeJson(res, 502, { error: { message: `无法连接本地/内网网关 (${parsed.origin})：${detail}` } });

@@ -10,7 +10,7 @@ import {
   Play,
   XCircle,
 } from 'lucide-react';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { tokenizeVerilogForHighlight } from '../engine';
 import type {
   AgentBlueprint,
@@ -21,7 +21,55 @@ import type {
 import { FsmDiagram } from './FsmDiagram';
 import { Waveform } from './Waveform';
 
-export function BlueprintView({ blueprint }: { blueprint?: AgentBlueprint }) {
+export interface CodeStreamState {
+  active: boolean;
+  stage: 'coding' | 'linting' | 'simulating' | 'repairing' | 'verified';
+  statusText: string;
+}
+
+export function BlueprintView({
+  blueprint,
+  planning = false,
+}: {
+  blueprint?: AgentBlueprint;
+  planning?: boolean;
+}) {
+  if (planning && !blueprint) {
+    return (
+      <div className="wb-doc-scroll">
+        <div className="blueprint-doc blueprint-planning">
+          <div className="planning-banner">
+            <span className="pulse-dot" />
+            <div>
+              <strong>正在规划电路架构蓝图…</strong>
+              <p>拆解端口约束、时序行为、有限状态机转移与自测向量</p>
+            </div>
+          </div>
+          <div className="blueprint-grid">
+            <section className="doc-card skeleton-card" aria-hidden="true">
+              <div className="skeleton-line w-40" />
+              <div className="skeleton-line w-90" />
+              <div className="skeleton-line w-80" />
+              <div className="skeleton-line w-85" />
+              <div className="skeleton-line w-65" />
+            </section>
+            <section className="doc-card skeleton-card" aria-hidden="true">
+              <div className="skeleton-line w-45" />
+              <div className="skeleton-line w-95" />
+              <div className="skeleton-line w-85" />
+              <div className="skeleton-line w-90" />
+              <div className="skeleton-line w-70" />
+            </section>
+          </div>
+          <section className="doc-card skeleton-card skeleton-fsm" aria-hidden="true">
+            <div className="skeleton-line w-35" />
+            <div className="skeleton-block" />
+          </section>
+        </div>
+      </div>
+    );
+  }
+
   if (!blueprint) {
     return (
       <div className="wb-empty-view">
@@ -32,7 +80,13 @@ export function BlueprintView({ blueprint }: { blueprint?: AgentBlueprint }) {
 
   return (
     <div className="wb-doc-scroll">
-      <div className="blueprint-doc">
+      <div className="blueprint-doc blueprint-reveal">
+        {planning && (
+          <div className="planning-banner compact">
+            <span className="pulse-dot" />
+            <span>正在更新电路架构蓝图与自测向量…</span>
+          </div>
+        )}
         <header className="blueprint-doc-head">
           <h2>{blueprint.title}</h2>
           <p>{blueprint.summary}</p>
@@ -81,6 +135,7 @@ export function VerilogView({
   canCompile,
   highlightLine,
   issues,
+  streamState,
   onCodeChange,
   onCompile,
   onExportVerilog,
@@ -91,6 +146,7 @@ export function VerilogView({
   canCompile: boolean;
   highlightLine?: number;
   issues: LintIssue[];
+  streamState?: CodeStreamState;
   onCodeChange: (next: string) => void;
   onCompile: () => void;
   onExportVerilog: () => void;
@@ -99,10 +155,24 @@ export function VerilogView({
   const [copied, setCopied] = useState(false);
   const gutterRef = useRef<HTMLDivElement>(null);
   const preRef = useRef<HTMLPreElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const autoFollowRef = useRef(true);
+  const wasCodeStreamingRef = useRef(false);
   const highlightedLines = useMemo(() => tokenizeVerilogForHighlight(code), [code]);
   const lineCount = Math.max(1, highlightedLines.length);
 
-  function syncScroll(target: HTMLTextAreaElement) {
+  const isCodeStreaming = Boolean(
+    streamState?.active && (streamState.stage === 'coding' || streamState.stage === 'repairing'),
+  );
+
+  useEffect(() => {
+    if (isCodeStreaming && !wasCodeStreamingRef.current) {
+      autoFollowRef.current = true;
+    }
+    wasCodeStreamingRef.current = isCodeStreaming;
+  }, [isCodeStreaming]);
+
+  function syncScroll(target: HTMLTextAreaElement, userDriven = false) {
     if (preRef.current) {
       preRef.current.scrollTop = target.scrollTop;
       preRef.current.scrollLeft = target.scrollLeft;
@@ -110,7 +180,20 @@ export function VerilogView({
     if (gutterRef.current) {
       gutterRef.current.scrollTop = target.scrollTop;
     }
+    if (userDriven && isCodeStreaming) {
+      const distanceFromBottom = target.scrollHeight - target.scrollTop - target.clientHeight;
+      if (distanceFromBottom > 42) autoFollowRef.current = false;
+      else if (distanceFromBottom < 20) autoFollowRef.current = true;
+    }
   }
+
+  useEffect(() => {
+    if (!isCodeStreaming || !autoFollowRef.current) return;
+    const el = textareaRef.current;
+    if (!el) return;
+    el.scrollTop = el.scrollHeight;
+    syncScroll(el, false);
+  }, [code, isCodeStreaming]);
 
   async function copySource() {
     try {
@@ -122,8 +205,10 @@ export function VerilogView({
     }
   }
 
+  const readOnly = !canCompile || Boolean(streamState?.active);
+
   return (
-    <div className="code-studio">
+    <div className={`code-studio${streamState?.active ? ' streaming' : ''}`}>
       <div className="code-studio-bar">
         <div className="code-studio-meta">
           <FileCode2 size={15} />
@@ -138,19 +223,33 @@ export function VerilogView({
             {copied ? <Check size={13} /> : <Copy size={13} />}
             {copied ? '已复制' : '复制'}
           </button>
-          <button type="button" className="outline-button compact-btn" disabled={!code} onClick={onExportVerilog}>
+          <button type="button" className="outline-button compact-btn" disabled={!code || Boolean(streamState?.active)} onClick={onExportVerilog}>
             <Download size={13} /> 导出 .v
           </button>
-          <button type="button" className="outline-button compact-btn" disabled={!code} onClick={onExportTestbench}>
+          <button type="button" className="outline-button compact-btn" disabled={!code || Boolean(streamState?.active)} onClick={onExportTestbench}>
             <Download size={13} /> tb_top.v
           </button>
-          <button type="button" className="primary-button compact-btn" disabled={!canCompile || !code.trim()} onClick={onCompile}>
+          <button type="button" className="primary-button compact-btn" disabled={readOnly || !code.trim()} onClick={onCompile}>
             <Play size={13} /> 编译并自测
           </button>
         </div>
       </div>
 
-      {issues.length > 0 && (
+      {streamState?.active && (
+        <div className={`code-live-banner stage-${streamState.stage}`} role="status" aria-live="polite">
+          {streamState.stage === 'verified' ? (
+            <CheckCircle2 size={14} className="live-ok-icon" />
+          ) : (
+            <span className={`pulse-dot${streamState.stage === 'repairing' ? ' warn' : ''}`} />
+          )}
+          <span className="code-live-text">{streamState.statusText}</span>
+          {isCodeStreaming && (
+            <span className="code-live-count mono">{lineCount} 行</span>
+          )}
+        </div>
+      )}
+
+      {issues.length > 0 && !isCodeStreaming && (
         <div className="code-issues-strip">
           {issues.slice(0, 3).map((issue, idx) => (
             <div key={idx} className={`issue-inline ${issue.severity}`}>
@@ -172,35 +271,52 @@ export function VerilogView({
         </div>
         <div className="code-editor-stage">
           <pre ref={preRef} className="code-highlight" aria-hidden="true">
-            {highlightedLines.map((row) => (
-              <span
-                key={row.line}
-                className={highlightLine === row.line ? 'code-line hl' : 'code-line'}
-              >
-                {row.tokens.length === 0 ? (
-                  '\u200b'
-                ) : (
-                  row.tokens.map((tok, idx) =>
-                    tok.kind === 'plain' ? (
-                      tok.value
-                    ) : (
-                      <span key={idx} className={`tok-${tok.kind}`}>
-                        {tok.value}
-                      </span>
-                    ),
-                  )
-                )}
-              </span>
-            ))}
+            {highlightedLines.map((row, rowIdx) => {
+              const isLastRow = rowIdx === highlightedLines.length - 1;
+              return (
+                <span
+                  key={row.line}
+                  className={highlightLine === row.line ? 'code-line hl' : 'code-line'}
+                >
+                  {row.tokens.length === 0 ? (
+                    isCodeStreaming && isLastRow ? null : '\u200b'
+                  ) : (
+                    row.tokens.map((tok, idx) =>
+                      tok.kind === 'plain' ? (
+                        <span
+                          key={`L${row.line}-T${idx}`}
+                          className={isCodeStreaming ? 'tok-stream-in' : undefined}
+                        >
+                          {tok.value}
+                        </span>
+                      ) : (
+                        <span
+                          key={`L${row.line}-T${idx}`}
+                          className={`tok-${tok.kind}${isCodeStreaming ? ' tok-stream-in' : ''}`}
+                        >
+                          {tok.value}
+                        </span>
+                      ),
+                    )
+                  )}
+                  {isCodeStreaming && isLastRow && <span className="code-stream-caret" aria-hidden="true" />}
+                </span>
+              );
+            })}
           </pre>
           <textarea
+            ref={textareaRef}
             aria-label="Verilog 源码编辑器"
             className="code-textarea"
             value={code}
-            readOnly={!canCompile}
+            readOnly={readOnly}
             spellCheck={false}
-            placeholder="暂无 Verilog 源码，先在左侧输入电路需求或选择一个预置案例。"
-            onScroll={(event) => syncScroll(event.currentTarget)}
+            placeholder={
+              isCodeStreaming
+                ? '正在编写可综合 Verilog 源码…'
+                : '暂无 Verilog 源码，先在左侧输入电路需求或选择一个快捷示例。'
+            }
+            onScroll={(event) => syncScroll(event.currentTarget, true)}
             onChange={(event) => onCodeChange(event.target.value)}
           />
         </div>

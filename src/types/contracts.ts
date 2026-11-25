@@ -204,6 +204,10 @@ export interface HarnessTraceMeta {
   model?: string;
   checkpoints?: string[];
   sources?: WebReference[];
+  reasoning?: string;
+  codeLines?: number;
+  durationMs?: number;
+  highlightLine?: number;
 }
 
 export interface HarnessTraceEvent {
@@ -290,6 +294,7 @@ export interface LLMCallOptions {
   signal?: AbortSignal;       // 用户取消或超时中断
   model?: string;             // 可选：单次请求覆盖当前模型（供对话内实时切换）
   onDelta?: (chunk: string) => void; // 可选：流式文本增量回调
+  onReasoningDelta?: (chunk: string) => void; // 可选：推理模型思考过程流式回调
 }
 
 export interface LLMClient {
@@ -373,6 +378,9 @@ export interface HarnessPreviousContext {
 export interface HarnessRunOptions {
   onTrace: (event: HarnessTraceEvent) => void;
   onAssistantDelta?: (chunk: string) => void;
+  onBlueprint?: (blueprint: AgentBlueprint) => void;
+  onCodeDelta?: (code: string, meta?: { stage: 'coding' | 'repairing'; round?: number; final?: boolean }) => void;
+  onReasoningDelta?: (stage: HarnessStage, reasoning: string, round?: number) => void;
   signal?: AbortSignal;
   model?: string;                  // 用户在对话中选中的模型
   previousContext?: HarnessPreviousContext; // 多轮增量修改上下文

@@ -9,7 +9,7 @@ import {
   Sparkles,
   Square,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 import type { LLMModelOption } from '../types/contracts';
 import { CustomModelSelect } from './CustomSelect';
 
@@ -34,6 +34,10 @@ export function PromptComposer({
   onToggleWebResearch,
   onInjectBug,
   liveHint,
+  draftValue,
+  onDraftChange,
+  autoSubmitting = false,
+  viewTransitionName,
 }: {
   onSend: (prompt: string) => void;
   onCancel?: () => void;
@@ -48,33 +52,47 @@ export function PromptComposer({
   onToggleWebResearch: () => void;
   onInjectBug?: () => void;
   liveHint?: string;
+  draftValue?: string;
+  onDraftChange?: (value: string) => void;
+  autoSubmitting?: boolean;
+  viewTransitionName?: string;
 }) {
-  const [prompt, setPrompt] = useState('');
+  const [internalPrompt, setInternalPrompt] = useState('');
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const controlled = draftValue !== undefined;
+  const prompt = controlled ? draftValue : internalPrompt;
+  const setPrompt = (next: string) => {
+    if (controlled) onDraftChange?.(next);
+    else setInternalPrompt(next);
+  };
   const placeholder = compact
     ? '继续描述修改需求，例如"把红灯延长到 8 拍"…'
     : '描述你想做的数字电路，例如"做一个带急停按键的十字路口交通灯"…';
 
   function submit() {
     const text = prompt.trim();
-    if (busy || !text) return;
+    if (busy || autoSubmitting || !text) return;
     onSend(text);
     setPrompt('');
   }
 
   return (
     <form
-      className={`composer${compact ? ' composer-compact' : ''}`}
+      className={`composer${compact ? ' composer-compact' : ''}${autoSubmitting ? ' composer-prefilling' : ''}`}
+      style={viewTransitionName ? ({ viewTransitionName } as CSSProperties) : undefined}
       onSubmit={(event) => {
         event.preventDefault();
         submit();
       }}
     >
       <textarea
+        ref={textareaRef}
         aria-label={compact ? '继续修改当前电路' : '电路需求'}
         placeholder={placeholder}
         rows={compact ? 2 : 3}
         maxLength={2000}
         value={prompt}
+        readOnly={autoSubmitting}
         onChange={(event) => setPrompt(event.target.value)}
         onKeyDown={(event) => {
           if (
@@ -155,11 +173,11 @@ export function PromptComposer({
             </button>
           ) : (
             <button
-              className="send-button"
+              className={`send-button${autoSubmitting ? ' sending' : ''}`}
               type="submit"
               aria-label="发送需求"
               title="发送需求 (Enter)"
-              disabled={!prompt.trim()}
+              disabled={!prompt.trim() && !autoSubmitting}
             >
               <ArrowUp size={17} />
             </button>
