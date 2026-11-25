@@ -1,6 +1,6 @@
 // 队友 2：故障诊所题库（源自 rtl-pitfalls 的真实硬件踩坑）与 LLM 故障注入。
 // 每个预置案例挂 1-2 个故障关卡：symptom 可在板卡/波形上观察，三档苏格拉底提示 + 标准修复代码。
-import type { BugClinicCase, LLMClient } from '../types/contracts';
+import type { AgentActionOptions, BugClinicCase, LLMClient } from '../types/contracts';
 import { buildInjectBugMessages, parseBugCaseResponse } from './prompts';
 
 function replaceOnce(code: string, from: string, to: string, label: string): string {
@@ -136,11 +136,18 @@ export function makeBuzzerBugs(fixedCode: string): BugClinicCase[] {
 }
 
 /** 运行时故障注入：交给大模型生成一个隐蔽 Bug（inject_bug 动作）。 */
-export async function requestInjectedBug(llm: LLMClient, code: string): Promise<BugClinicCase> {
+export async function requestInjectedBug(
+  llm: LLMClient,
+  code: string,
+  options: AgentActionOptions = {},
+): Promise<BugClinicCase> {
   const response = await llm.chat({
     action: 'inject_bug',
     messages: buildInjectBugMessages(code),
+    temperature: 0.5,
     jsonMode: true,
+    model: options.model,
+    signal: options.signal,
   });
   return parseBugCaseResponse(response.text, code);
 }

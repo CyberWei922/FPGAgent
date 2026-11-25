@@ -1,6 +1,7 @@
 // 队友 2：AgentRuntime 单元测试。全部使用 Mock LLM 与 RtlEngine 替身，不依赖队友 1 的真实引擎。
 import { describe, expect, it } from 'vitest';
 import { createAgentRuntime } from '../src/agent';
+import { createRtlEngine } from '../src/engine';
 import {
   ACTION_SYSTEM_PROMPTS,
   buildGenerateMessages,
@@ -20,6 +21,9 @@ import type {
   SelfTestResult,
   SignalSample,
   TestVectorStep,
+  WebPageContent,
+  WebReference,
+  WebResearchClient,
 } from '../src/types/contracts';
 
 // ============================================================
@@ -28,17 +32,45 @@ import type {
 
 type Action = LLMCallOptions['action'];
 
-function createStubLLM(handlers: Partial<Record<Action, (options: LLMCallOptions) => string | Promise<string>>>) {
+type LLMReply = string | { text: string; model?: string; remainingQuota?: number };
+
+function createStubLLM(handlers: Partial<Record<Action, (options: LLMCallOptions) => LLMReply | Promise<LLMReply>>>) {
   const calls: LLMCallOptions[] = [];
   const llm: LLMClient = {
     async chat(options: LLMCallOptions) {
       calls.push(options);
       const handler = handlers[options.action];
       if (!handler) throw new Error(`测试未提供 ${options.action} 的响应`);
-      return { text: await handler(options) };
+      const reply = await handler(options);
+      return typeof reply === 'string' ? { text: reply } : reply;
     },
   };
   return { llm, calls };
+}
+
+function createStubResearch(config: {
+  results?: WebReference[];
+  page?: WebPageContent;
+  searchError?: Error;
+  fetchError?: Error;
+} = {}) {
+  const searchCalls: Array<{ query: string; limit?: number }> = [];
+  const fetchCalls: string[] = [];
+  const research: WebResearchClient = {
+    async search(query, options) {
+      searchCalls.push({ query, limit: options?.limit });
+      if (config.searchError) throw config.searchError;
+      return config.results ?? [];
+    },
+  };
+  if (config.page || config.fetchError) {
+    research.fetchPage = async (url) => {
+      fetchCalls.push(url);
+      if (config.fetchError) throw config.fetchError;
+      return config.page as WebPageContent;
+    };
+  }
+  return { research, searchCalls, fetchCalls };
 }
 
 interface EngineScript {
@@ -70,6 +102,7 @@ function createStubEngine(script: EngineScript): RtlEngine {
         totalChecks: partial.totalChecks ?? expectCount,
         passedChecks: partial.passedChecks ?? (partial.passed ? expectCount : 0),
         firstFailure: partial.firstFailure,
+        firstUnstableCycle: partial.firstUnstableCycle,
         passedCycles,
         regressedCycles: partial.regressedCycles ?? [],
         waveform: partial.waveform ?? [],
@@ -255,6 +288,21 @@ describe('提示词与 JSON 解析', () => {
     expect(parsed.testVectors[1].expect?.traffic).toBe(7);
   });
 
+  it('首拍强制复位，非数字 expect 被忽略而不是折算成 0', () => {
+    const parsed = parsePlanResponse(
+      JSON.stringify({
+        blueprint: BLUEPRINT,
+        testVectors: [
+          { inputs: { rst_n: 1, key: 0, sw: 0 }, expect: { led: '1', traffic: 3 } },
+          { inputs: { rst_n: 1 }, expect: { seg: 'abc' } },
+        ],
+      }),
+    );
+    expect(parsed.testVectors[0].inputs.rst_n).toBe(0);
+    expect(parsed.testVectors[0].expect).toEqual({ traffic: 3 });
+    expect(parsed.testVectors[1].expect).toBeUndefined();
+  });
+
   it('生成结果可解析 JSON、围栏与纯 Verilog 文本', () => {
     expect(parseCodeResponse(JSON.stringify({ code: CODE_A })).code).toBe(CODE_A);
     expect(parseCodeResponse(`\`\`\`verilog\n${CODE_B}\n\`\`\``).code).toBe(CODE_B);
@@ -284,6 +332,17 @@ describe('提示词与 JSON 解析', () => {
     expect(messages[1].content).toContain('"firstFailure"');
     expect(messages[1].content).toContain('"cycle": 1');
     expect(messages[1].content).toContain('candidate A');
+  });
+
+  it('repair 提示词携带组合逻辑未收敛周期', () => {
+    const messages = buildRepairMessages({
+      code: CODE_A,
+      issues: [],
+      selfTest: { ...failingSelfTest(1, [0]), firstUnstableCycle: 2 },
+      blueprint: BLUEPRINT,
+      testVectors: VECTORS,
+    });
+    expect(messages[1].content).toContain('"firstUnstableCycle": 2');
   });
 });
 
@@ -342,6 +401,7 @@ describe('Harness 闭环', () => {
     expect(result.repairRounds).toBe(1);
     expect(result.verilogCode).toBe(CODE_A);
     expect(calls.map((call) => call.action)).toEqual(['plan', 'generate', 'repair']);
+    expect(calls[2].temperature).toBe(0.2);
     expect(events.some((event) => event.stage === 'repairing' && event.status === 'pass')).toBe(true);
   });
 
@@ -393,6 +453,62 @@ describe('Harness 闭环', () => {
     expect(previousValues[0]).toBeUndefined();
     expect(previousValues[1]).toEqual([0]);
     expect(previousValues[2]).toEqual([0]);
+  });
+
+  it('组合逻辑未收敛时按未收敛周期触发修复', async () => {
+    const { llm, calls } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+      repair: () => JSON.stringify({ code: CODE_B }),
+    });
+    const engine = createStubEngine({
+      selfTest: (code) =>
+        code.includes('candidate A')
+          ? { passed: false, firstUnstableCycle: 2, waveform: Array.from({ length: 6 }, (_, index) => sample(index)) }
+          : { passed: true },
+    });
+    const events: HarnessTraceEvent[] = [];
+
+    const result = await createAgentRuntime({ llm, engine }).runHarness('做个测试电路', {
+      onTrace: (event) => events.push(event),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.verilogCode).toBe(CODE_B);
+    expect(calls.map((call) => call.action)).toEqual(['plan', 'generate', 'repair']);
+    expect(calls[2].messages[1].content).toContain('"firstUnstableCycle": 2');
+    expect(events).toContainEqual(
+      expect.objectContaining({ stage: 'repairing', status: 'running', detail: expect.stringContaining('未收敛') }),
+    );
+  });
+
+  it('代码类动作使用低温，诊断类允许较高温度', async () => {
+    const { llm, calls } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+      diagnose: () =>
+        JSON.stringify({ level1Hint: '先看复位拍', level2Cause: '寄存器未复位', level3PatchCode: CODE_A }),
+      inject_bug: () =>
+        JSON.stringify({
+          title: '隐蔽故障：测试',
+          pitfallTag: 'test-pitfall',
+          symptom: '输出异常',
+          buggyCode: CODE_BAD_1,
+          diagnosis: { level1Hint: '看这里', level2Cause: '因为这里', level3PatchCode: CODE_A },
+        }),
+    });
+    const runtime = createAgentRuntime({ llm, engine: createStubEngine({}) });
+
+    await runtime.runHarness('做个测试电路', { onTrace: () => {} });
+    await runtime.diagnose({
+      code: CODE_A,
+      issues: [],
+      failure: { cycle: 1, signal: 'led', expected: 1, actual: 0 },
+    });
+    await runtime.injectBug(CODE_A);
+
+    const temps = Object.fromEntries(calls.map((call) => [call.action, call.temperature]));
+    expect(temps).toMatchObject({ plan: 0.3, generate: 0.2, diagnose: 0.5, inject_bug: 0.5 });
   });
 
   it('修复额度耗尽时保留候选和反例供用户检查', async () => {
@@ -481,7 +597,12 @@ describe('诊断与故障注入', () => {
           pitfallTag: 'blocking-in-sequential',
           symptom: '倒计时偶发错拍',
           buggyCode: CODE_BAD_2,
-          diagnosis: { level1Hint: '时序块里的赋值符号对吗？', level2Cause: '误用 = 破坏了并发语义。' },
+          diagnosis: {
+            level1Hint: '时序块里的赋值符号对吗？',
+            level2Cause: '误用 = 破坏了并发语义。',
+            highlightLine: 33,
+            highlightCycle: 3,
+          },
         }),
     });
 
@@ -490,6 +611,240 @@ describe('诊断与故障注入', () => {
     expect(bug.id).toMatch(/^bug-/);
     expect(bug.buggyCode).toBe(CODE_BAD_2);
     expect(bug.diagnosis.level3PatchCode).toBe(CODE_A);
+    expect(bug.diagnosis.highlightLine).toBe(33);
+    expect(bug.diagnosis.highlightCycle).toBe(3);
     expect(calls.map((call) => call.action)).toEqual(['inject_bug']);
+  });
+});
+
+// ============================================================
+// V2：多模型、多轮上下文与联网检索
+// ============================================================
+
+describe('V2 多模型与多轮上下文', () => {
+  it('把选中模型透传到每次调用，并回传实际模型和剩余额度', async () => {
+    const { llm, calls } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => ({ text: JSON.stringify({ code: CODE_BAD_1 }), model: 'qwen-plus', remainingQuota: 6 }),
+      repair: () => JSON.stringify({ code: CODE_A }),
+    });
+    const engine = createStubEngine({ compileOk: (code) => !badCode(code), issues: () => [LINT_ERROR] });
+    const events: HarnessTraceEvent[] = [];
+
+    const result = await createAgentRuntime({ llm, engine }).runHarness('做个测试电路', {
+      onTrace: (event) => events.push(event),
+      model: 'deepseek-chat',
+    });
+
+    expect(calls.map((call) => call.model)).toEqual(['deepseek-chat', 'deepseek-chat', 'qwen-plus']);
+    expect(result.modelUsed).toBe('qwen-plus');
+    expect(result.remainingQuota).toBe(6);
+    expect(events.some((event) => event.meta?.model === 'qwen-plus')).toBe(true);
+  });
+
+  it('剥离 think 思考段与围栏，规划、代码和诊断均可解析', () => {
+    const plan = `<think>先拆解需求。\n再输出 JSON。</think>\n\`\`\`json\n${PLAN_JSON}\n\`\`\``;
+    expect(parsePlanResponse(plan).blueprint.title).toBe('测试电路');
+
+    const code = `<think>先想代码。</think>{"code": ${JSON.stringify(CODE_B)}}`;
+    expect(parseCodeResponse(code).code).toBe(CODE_B);
+
+    const diagnosis = `<think>分析一下。</think>\`\`\`json\n${JSON.stringify({
+      level1Hint: '线索',
+      level2Cause: '原因',
+      level3PatchCode: CODE_A,
+    })}\n\`\`\``;
+    expect(parseDiagnosisResponse(diagnosis).level3PatchCode).toBe(CODE_A);
+  });
+
+  it('多轮上下文注入规划与生成提示词，并输出摘要、文件名和流式回调', async () => {
+    const { llm, calls } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+    });
+    const deltas: string[] = [];
+    const previousContext = {
+      blueprint: BLUEPRINT,
+      verilogCode: CODE_A,
+      testVectors: VECTORS,
+      history: [{ role: 'user' as const, content: '先做一个测试电路' }],
+    };
+
+    const result = await createAgentRuntime({ llm, engine: createStubEngine({ selfTest: () => ({ passed: true }) }) })
+      .runHarness('请加一个黄闪模式', {
+        onTrace: () => {},
+        previousContext,
+        onAssistantDelta: (chunk) => deltas.push(chunk),
+      });
+
+    expect(calls[0].messages[1].content).toContain('多轮修改上下文');
+    expect(calls[0].messages[1].content).toContain('candidate A');
+    expect(calls[1].messages[1].content).toContain('上一版可运行代码');
+    expect(result.assistantSummary).toContain('测试电路');
+    expect(result.suggestedFilename).toBe('circuit.v');
+    expect(deltas.join('')).toBe(result.assistantSummary);
+  });
+
+  it('5 个案例都带 category / difficulty / boardHint 分类元数据', () => {
+    const runtime = createAgentRuntime({ llm: createStubLLM({}).llm, engine: createStubEngine({}) });
+    const hints = new Set(['traffic', 'lock', 'counter', 'general']);
+    for (const preset of runtime.presets) {
+      expect(preset.category?.length ?? 0).toBeGreaterThan(0);
+      expect(['beginner', 'intermediate', 'advanced']).toContain(preset.difficulty);
+      expect(hints.has(preset.boardHint ?? '')).toBe(true);
+    }
+  });
+
+  it('diagnose / injectBug 透传模型与取消信号', async () => {
+    const { llm, calls } = createStubLLM({
+      diagnose: () => JSON.stringify({ level1Hint: '线索', level2Cause: '原因', level3PatchCode: CODE_A }),
+      inject_bug: () =>
+        JSON.stringify({
+          title: '故障',
+          pitfallTag: 'tag',
+          symptom: '现象',
+          buggyCode: CODE_B,
+          diagnosis: { level1Hint: '线索', level2Cause: '原因', level3PatchCode: CODE_A },
+        }),
+    });
+    const runtime = createAgentRuntime({ llm, engine: createStubEngine({}) });
+    const controller = new AbortController();
+
+    await runtime.diagnose({ code: CODE_A, issues: [] }, { model: 'glm-4', signal: controller.signal });
+    await runtime.injectBug(CODE_A, { model: 'kimi-k2', signal: controller.signal });
+
+    expect(calls.map((call) => call.model)).toEqual(['glm-4', 'kimi-k2']);
+    expect(calls.every((call) => call.signal === controller.signal)).toBe(true);
+  });
+});
+
+describe('预置案例 × 真实引擎', () => {
+  it('5 个案例自测通过，全部故障可观察且修复代码回到通过', () => {
+    const runtime = createAgentRuntime({ llm: createStubLLM({}).llm, engine: createRtlEngine() });
+
+    for (const preset of runtime.presets) {
+      const baseEngine = createRtlEngine();
+      expect(baseEngine.compile(preset.verilogCode).ok, `${preset.id} 编译`).toBe(true);
+      expect(baseEngine.runSelfTest(preset.verilogCode, preset.testVectors).passed, `${preset.id} 自测`).toBe(true);
+
+      for (const bug of preset.bugs) {
+        const bugEngine = createRtlEngine();
+        const bugCompiled = bugEngine.compile(bug.buggyCode);
+        const observable = !bugCompiled.ok || !bugEngine.runSelfTest(bug.buggyCode, preset.testVectors).passed;
+        expect(observable, `${preset.id}/${bug.id} 故障可观察`).toBe(true);
+
+        const fixEngine = createRtlEngine();
+        expect(fixEngine.compile(bug.diagnosis.level3PatchCode).ok, `${bug.id} 修复编译`).toBe(true);
+        expect(
+          fixEngine.runSelfTest(bug.diagnosis.level3PatchCode, preset.testVectors).passed,
+          `${bug.id} 修复自测`,
+        ).toBe(true);
+      }
+    }
+  });
+});
+
+describe('V2 联网检索', () => {
+  it('开启联网时按需检索、读取网页，并把引用注入规划提示词', async () => {
+    const stub = createStubResearch({
+      results: [
+        { title: 'Verilog 规范', url: 'https://example.com/verilog', snippet: '组合 always 块应完整赋值', source: 'example' },
+      ],
+      page: { url: 'https://example.com/verilog', title: 'Verilog 规范', excerpt: '时序块使用非阻塞赋值。' },
+    });
+    const { llm, calls } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+    });
+    const events: HarnessTraceEvent[] = [];
+
+    const result = await createAgentRuntime({
+      llm,
+      engine: createStubEngine({ selfTest: () => ({ passed: true }) }),
+      research: stub.research,
+    }).runHarness('请查一下 AXI 协议的 Verilog 规范实现', {
+      onTrace: (event) => events.push(event),
+      enableWebResearch: true,
+    });
+
+    expect(stub.searchCalls).toHaveLength(1);
+    expect(stub.searchCalls[0].query).toContain('AXI');
+    expect(stub.fetchCalls).toEqual(['https://example.com/verilog']);
+    expect(result.references?.map((reference) => reference.url)).toEqual(['https://example.com/verilog']);
+    expect(calls[0].messages[1].content).toContain('联网检索参考');
+    expect(
+      events.some((event) => event.stage === 'researching' && event.status === 'pass' && event.meta?.sources?.length === 1),
+    ).toBe(true);
+  });
+
+  it('未显式开启联网时不触发检索', async () => {
+    const stub = createStubResearch({ results: [] });
+    const { llm } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+    });
+    const events: HarnessTraceEvent[] = [];
+
+    await createAgentRuntime({
+      llm,
+      engine: createStubEngine({ selfTest: () => ({ passed: true }) }),
+      research: stub.research,
+    }).runHarness('请查一下 SPI 协议规范', { onTrace: (event) => events.push(event) });
+
+    expect(stub.searchCalls).toHaveLength(0);
+    expect(events.some((event) => event.stage === 'researching')).toBe(false);
+  });
+
+  it('联网检索异常时优雅降级，主流程继续完成', async () => {
+    const stub = createStubResearch({ searchError: new Error('network down') });
+    const { llm } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+    });
+    const events: HarnessTraceEvent[] = [];
+
+    const result = await createAgentRuntime({
+      llm,
+      engine: createStubEngine({ selfTest: () => ({ passed: true }) }),
+      research: stub.research,
+    }).runHarness('请查阅 UART 协议规范', {
+      onTrace: (event) => events.push(event),
+      enableWebResearch: true,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.references).toBeUndefined();
+    expect(
+      events.some(
+        (event) => event.stage === 'researching' && event.status === 'fail' && event.detail.includes('降级'),
+      ),
+    ).toBe(true);
+  });
+
+  it('首轮修复受阻后自动联网，引用进入第二轮修复提示词', async () => {
+    const stub = createStubResearch({
+      results: [{ title: '复位规范', url: 'https://example.com/reset', snippet: '异步复位应覆盖全部寄存器', source: 'example' }],
+    });
+    const repairs = [CODE_BAD_2, CODE_A];
+    const { llm, calls } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_BAD_1 }),
+      repair: () => JSON.stringify({ code: repairs.shift() ?? CODE_A }),
+    });
+    const engine = createStubEngine({ compileOk: (code) => !badCode(code), issues: () => [LINT_ERROR] });
+    const events: HarnessTraceEvent[] = [];
+
+    const result = await createAgentRuntime({ llm, engine, research: stub.research }).runHarness('做个测试电路', {
+      onTrace: (event) => events.push(event),
+      enableWebResearch: true,
+    });
+
+    const repairCalls = calls.filter((call) => call.action === 'repair');
+    expect(result.ok).toBe(true);
+    expect(stub.searchCalls).toHaveLength(1);
+    expect(repairCalls).toHaveLength(2);
+    expect(repairCalls[0].messages[1].content).not.toContain('联网检索参考');
+    expect(repairCalls[1].messages[1].content).toContain('联网检索参考');
+    expect(events.some((event) => event.stage === 'researching' && event.status === 'pass')).toBe(true);
   });
 });

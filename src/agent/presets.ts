@@ -409,7 +409,12 @@ const BUZZER_BLUEPRINT: PresetProject['blueprint'] = {
 // ============================================================
 
 export const PRESETS: PresetProject[] = [
-  MOCK_PRESETS[0],
+  {
+    ...MOCK_PRESETS[0],
+    category: '状态机与定时',
+    difficulty: 'beginner',
+    boardHint: 'traffic',
+  },
   {
     id: 'password-lock',
     name: '4 位数字密码锁',
@@ -418,6 +423,9 @@ export const PRESETS: PresetProject[] = [
     verilogCode: PASSWORD_LOCK_CODE,
     testVectors: PASSWORD_LOCK_VECTORS,
     bugs: makePasswordLockBugs(PASSWORD_LOCK_CODE),
+    category: '状态机与安全',
+    difficulty: 'intermediate',
+    boardHint: 'lock',
   },
   {
     id: 'sequence-detector',
@@ -427,6 +435,9 @@ export const PRESETS: PresetProject[] = [
     verilogCode: SEQUENCE_DETECTOR_CODE,
     testVectors: SEQUENCE_DETECTOR_VECTORS,
     bugs: makeSequenceDetectorBugs(SEQUENCE_DETECTOR_CODE),
+    category: '序列检测',
+    difficulty: 'beginner',
+    boardHint: 'general',
   },
   {
     id: 'stopwatch',
@@ -436,6 +447,9 @@ export const PRESETS: PresetProject[] = [
     verilogCode: STOPWATCH_CODE,
     testVectors: STOPWATCH_VECTORS,
     bugs: makeStopwatchBugs(STOPWATCH_CODE),
+    category: '计数器',
+    difficulty: 'intermediate',
+    boardHint: 'counter',
   },
   {
     id: 'buzzer',
@@ -445,5 +459,8 @@ export const PRESETS: PresetProject[] = [
     verilogCode: BUZZER_CODE,
     testVectors: BUZZER_VECTORS,
     bugs: makeBuzzerBugs(BUZZER_CODE),
+    category: '状态机与仲裁',
+    difficulty: 'intermediate',
+    boardHint: 'general',
   },
 ];
