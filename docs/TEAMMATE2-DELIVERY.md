@@ -2,26 +2,32 @@
 
 > 分支：`feat/agent`（只推分支，不建 PR）
 > 依赖契约：[src/types/contracts.ts](../src/types/contracts.ts)
-> 模块验收：`npm run test:agent`（25 个用例，全部使用替身 LLM / 引擎，不消耗 Token）
+> 模块验收：`npm run test:agent`（35 个用例，全部使用替身 LLM / 引擎，不消耗 Token）
+> 真实模型评测：见 [REAL_MODEL_EVAL.md](REAL_MODEL_EVAL.md)（需要 `.env.local` 测试 Key）
 
 ## 1. 交付物清单
 
 | 文件 | 作用 | 验收证据 |
 | --- | --- | --- |
 | [src/agent/prompts.ts](../src/agent/prompts.ts) | 五个动作的 System Prompt（规划/生成/修复/诊断/故障注入）、板卡接口、可综合 Verilog 子集、严格 JSON Schema 与鲁棒解析 | 围栏/夹带文字/纯文本三种输出均可解析；非法字段抛 `BAD_RESPONSE` |
-| [src/agent/harness.ts](../src/agent/harness.ts) | 规划→生成→Lint→确定性自测→最多 2 轮修复→无回退择优；`onTrace` 进度、`AbortSignal` 取消、按动作设置 temperature | 25 个测试覆盖通过路径、Lint 失败修复、连续失败、未收敛修复、额度中断、取消 |
+| [src/agent/harness.ts](../src/agent/harness.ts) | 规划→（可选联网查阅）→生成→Lint→确定性自测→最多 2 轮修复→无回退择优；多模型透传、多轮上下文、`onTrace`/`onAssistantDelta`、取消与 temperature | 35 个测试覆盖通过路径、修复、未收敛、额度中断、取消、模型透传、think 容错、多轮、联网降级 |
 | [src/agent/presets.ts](../src/agent/presets.ts) | 5 个零 Token 预置案例：交通灯、四位密码锁、1011 序列检测器、数字秒表、四人抢答器 | 已用 `feat/engine` 真实引擎逐案验证：20/20、19/19、6/6、15/15、9/9 断言全部通过 |
 | [src/agent/bugClinic.ts](../src/agent/bugClinic.ts) | 7 个算法注入故障（漏复位、状态机转移、标志不清零、BCD 进位、锁存缺失、位宽截断、时序块阻塞赋值）+ LLM 故障注入入口 | 7 个故障均可被自测或 Lint 观测；修复代码全部编译并自测通过；`highlightLine` 已逐行核对 |
 | [src/agent/index.ts](../src/agent/index.ts) | 对前端暴露 `createAgentRuntime({ llm, engine })`，不引用任何具体模型/引擎实现 | 前端零改动接入（[src/App.tsx](../src/App.tsx)） |
-| [tests/agent.test.ts](../tests/agent.test.ts) | 25 个单元测试 | `npm run test:agent` 25/25 |
+| [tests/agent.test.ts](../tests/agent.test.ts) | 35 个单元测试（零 Token，替身 LLM/引擎） | `npm run test:agent` 35/35 |
+| [tests/realModel.eval.test.ts](../tests/realModel.eval.test.ts) | 3 个新电路 + 追改的真实模型评测用例，`EVAL_REAL=1` 才执行 | 无 Key 时整组跳过；执行方式见 [REAL_MODEL_EVAL.md](REAL_MODEL_EVAL.md) |
 | 本文档 | 故障诊所交互规范 + 参赛文案草稿 + 交接事项 | — |
 
-## 2. 本轮打磨内容（feat/agent 最新提交）
+## 2. 本轮打磨内容（feat/agent `5134c0f`，V2）
 
-- **Schema 归一化加固**：`testVectors` 首拍强制 `rst_n=0`；非数字的 `expect` 字段直接忽略，不再静默折算成 `0` 造成假断言；`inject_bug` 补充解析 `highlightCycle`。
-- **按动作设置 temperature**：plan 0.3、generate 0.2、repair 0.2、diagnose / inject_bug 0.5，降低代码类动作的随机性。
-- **组合逻辑未收敛路径**：`firstUnstableCycle` 已贯通解析、修复载荷、trace 文案与测试。
-- **测试扩充**：25 个用例覆盖首拍复位、非法 expect、未收敛修复、温度配置、故障高亮行/周期。
+- **多模型透传**：`runHarness` / `diagnose` / `injectBug` 接受 `model` 与 `signal`；结果回传 `modelUsed`、`remainingQuota`，trace `meta` 携带模型与联网来源。
+- **推理模型容错**：新增 `stripReasoning` 剥离 `think` 思考段，围栏 JSON 与夹带说明文字均可解析。
+- **多轮增量修改**：消费 `previousContext`（蓝图 / 代码 / 自测向量 / 历史），生成 `assistantSummary`、`suggestedFilename` 与分片 `onAssistantDelta`。
+- **联网查阅闭环**：命中规范类需求或修复受阻时进入 `researching` 阶段，引用写入 `references` 与 `meta.sources`；检索失败自动降级为纯模型闭环。
+- **预置案例元数据**：5 个案例补齐 `category / difficulty / boardHint`；交通灯故障替换为真实引擎可复现的「黄灯多一拍」（第 9 拍 `seg` 期望 1 实际 2）。
+- **测试扩充**：25 → 35 个用例，覆盖模型透传、think 容错、多轮提示词注入、查阅触发与降级、预置案例真实引擎回归。
+
+上一轮已有的 Schema 归一化（首拍强制 `rst_n=0`、非法 `expect` 忽略）、按动作 temperature（0.2 / 0.3 / 0.5）、组合逻辑未收敛路径继续保留。
 
 ## 3. 故障诊所交互规范（交给队长的最小 UI 方案）
 
@@ -72,16 +78,27 @@
 
 | 事项 | 负责方 | 状态 |
 | --- | --- | --- |
+| 真实模型评测（3 个新电路 + 追改） | 队友 2 | 用例与清单已就绪；阻塞于 `.env.local` 测试 Key 与云端 Secret |
 | 故障诊所 UI 入口（按第 3 节规范） | 队长 | 待接入 |
-| 云函数部署、Secret、ALLOWED_ORIGINS、公网链接 | 队长 | 待部署；之后才能做真实模型调优 |
-| 额度显示 / 重复失败 trace / `repairRounds` 展示 / Mermaid 渲染 | 队长 | 建议项，不影响验收 |
-| `mockPresets.ts` 迁移（`tests/engine.test.ts` 仍直接引用） | 队友 2 + 队友 1 | 需先同步引用方式 |
+| 模型选择器 / 联网开关 / `modelUsed`、额度、trace 来源展示 / Mermaid 渲染 | 队长 | 待接入（V2 新增） |
+| `llmClient` 未把单次 `options.model` 透传给上游 | 队长 | 待修；否则 UI 模型切换不生效，评测暂用 `LLM_MODEL` 环境变量 |
+| 云函数部署、Secret、ALLOWED_ORIGINS、公网链接 | 队长 | 待部署 |
+| `mockPresets.ts` 迁移（`tests/engine.test.ts` 仍直接引用） | 队友 2 + 队友 1 | 待统一引用方式 |
+| 重复失败 trace / `repairRounds` 展示细节 | 队长 | 建议项，不影响验收 |
 
-## 6. 本地复现
+## 6. 真实模型评测
+
+清单、命令与记录模板见 [REAL_MODEL_EVAL.md](REAL_MODEL_EVAL.md)。要点：
+
+- 3 个新电路（PWM 调光灯、长短按检测器、两位 BCD 加减计数器），每条再跟一次追改，验证多轮上下文
+- 用例在 [tests/realModel.eval.test.ts](../tests/realModel.eval.test.ts)，`EVAL_REAL=1` 且配置 `LLM_API_KEY` 才执行，普通 `npm test` 自动跳过
+- 通过后回填本文第 5 节状态，并保留 verbose 输出截图作为 M4 素材
+
+## 7. 本地复现
 
 ```bash
-npm run test:agent      # 25 个 Agent 单元测试
+npm run test:agent      # 35 个 Agent 单元测试
 npm run typecheck       # 严格类型检查
-npm test                # 全量 108+ 用例
+npm test                # 全量 122 通过（无 Key 时真实模型评测 3 例跳过）
 npm run build           # 生产构建
 ```
