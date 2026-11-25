@@ -172,6 +172,9 @@ function collectAllWrites(stmt: Stmt, out: Set<string>): void {
       for (const item of stmt.items) collectAllWrites(item.body, out);
       if (stmt.defaultBranch) collectAllWrites(stmt.defaultBranch, out);
       return;
+    case 'for':
+      collectAllWrites(stmt.body, out);
+      return;
   }
 }
 
@@ -276,6 +279,9 @@ function checkCombLatches(
       branchDefs.push(checkCombLatches(stmt.defaultBranch, alreadyAssigned, issues));
       return intersectSets(branchDefs);
     }
+
+    case 'for':
+      return new Set(alreadyAssigned);
   }
 }
 
@@ -437,6 +443,13 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
           walkStmt(item.body, sensitivity, blockIdx);
         }
         if (stmt.defaultBranch) walkStmt(stmt.defaultBranch, sensitivity, blockIdx);
+        return;
+      case 'for':
+        collectExprReads(stmt.init, allRead);
+        collectExprReads(stmt.condition, allRead);
+        checkUnsignedArithShift(stmt.init, elaborated, issues);
+        checkUnsignedArithShift(stmt.condition, elaborated, issues);
+        walkStmt(stmt.body, sensitivity, blockIdx);
         return;
     }
   };

@@ -1420,3 +1420,999 @@ describe('8. RtlEngine 对外契约全链路集成 (index.ts)', () => {
     expect(st.passed).toBe(true);
   });
 });
+
+describe('9. V2 Verilog 语法子集扩展 (parser.ts / simulator.ts)', () => {
+  it('支持单目归约运算符 ~& / ~| / ~^ / ^~', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        assign led[0] = ~&key;
+        assign led[1] = ~|key;
+        assign led[2] = ~^key;
+        assign led[3] = ^~key;
+        assign led[7:4] = 4'd0;
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    // key=4'b1111: ~&=0, ~|=0, ~^=1 (even 1s), ^~=1
+    expect(sim.step({ rst_n: 1, key: 0b1111, sw: 0 }).sample.outputs.led).toBe(0b1100);
+    // key=4'b0000: ~&=1, ~|=1, ~^=1 (0 ones -> even), ^~=1
+    expect(sim.step({ rst_n: 1, key: 0b0000, sw: 0 }).sample.outputs.led).toBe(0b1111);
+    // key=4'b0010: ~&=1, ~|=0, ~^=0 (1 one -> odd), ^~=0
+    expect(sim.step({ rst_n: 1, key: 0b0010, sw: 0 }).sample.outputs.led).toBe(0b0001);
+  });
+
+  it('支持双目同或 ~^ / ^~ 与全等比较 === / !==', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        assign led[3:0] = sw[3:0] ~^ key;
+        assign led[7:4] = sw[7:4] ^~ key;
+        assign traffic[0] = (sw[3:0] === key);
+        assign traffic[1] = (sw[3:0] !== key);
+        assign traffic[2] = 1'b0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    const out = sim.step({ rst_n: 1, key: 0b1010, sw: 0b1010_1010 }).sample.outputs;
+    expect(out.led).toBe(0xff);
+    expect(out.traffic).toBe(0b001);
+    const out2 = sim.step({ rst_n: 1, key: 0b1010, sw: 0b0101_0101 }).sample.outputs;
+    expect(out2.led).toBe(0x00);
+    expect(out2.traffic).toBe(0b010);
+  });
+
+  it('支持 casez 中的 ? 与 z 通配符匹配', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(*) begin
+          casez (key)
+            4'b1???: led = 8'd4;
+            4'b01zz: led = 8'd3;
+            4'b001?: led = 8'd2;
+            4'b0001: led = 8'd1;
+            default: led = 8'd0;
+          endcase
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 1, key: 0b1001, sw: 0 }).sample.outputs.led).toBe(4);
+    expect(sim.step({ rst_n: 1, key: 0b0111, sw: 0 }).sample.outputs.led).toBe(3);
+    expect(sim.step({ rst_n: 1, key: 0b0010, sw: 0 }).sample.outputs.led).toBe(2);
+    expect(sim.step({ rst_n: 1, key: 0b0001, sw: 0 }).sample.outputs.led).toBe(1);
+    expect(sim.step({ rst_n: 1, key: 0b0000, sw: 0 }).sample.outputs.led).toBe(0);
+  });
+
+  it('支持 casex 中的 x / z / ? 通配符匹配', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(*) begin
+          casex (key)
+            4'b1xxx: led = 8'hA0;
+            4'b01xz: led = 8'h50;
+            default: led = 8'h0F;
+          endcase
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 1, key: 0b1101, sw: 0 }).sample.outputs.led).toBe(0xa0);
+    expect(sim.step({ rst_n: 1, key: 0b0101, sw: 0 }).sample.outputs.led).toBe(0x50);
+    expect(sim.step({ rst_n: 1, key: 0b0011, sw: 0 }).sample.outputs.led).toBe(0x0f);
+  });
+
+  it('支持有界静态 for 循环展开（8 位位序反转）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        integer i;
+        always @(*) begin
+          for (i = 0; i < 8; i = i + 1) begin
+            led[i] = sw[7 - i];
+          end
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    const res = engine.compile(code);
+    expect(res.ok).toBe(true);
+    expect(engine.step({ rst_n: 1, key: 0, sw: 0b1011_0001 }).sample.outputs.led).toBe(0b1000_1101);
+  });
+
+  it('支持 for 循环内联 int 声明与 ++ / += / -- 步进语法', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(*) begin
+          led = 8'd0;
+          for (int i = 0; i < 8; i += 2) begin
+            led[i] = sw[i];
+          end
+          for (int j = 7; j >= 1; j -= 2) begin
+            led[j] = ~sw[j];
+          end
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    // sw=0x00 -> even bits 0, odd bits 1 -> 0b10101010 = 0xAA
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0x00 }).sample.outputs.led).toBe(0xaa);
+    // sw=0xFF -> even bits 1, odd bits 0 -> 0b01010101 = 0x55
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0xff }).sample.outputs.led).toBe(0x55);
+  });
+
+  it('支持 for 循环结合 localparam 在时序块内批量移位', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        localparam W = 8;
+        integer k;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            led <= 8'd0;
+          end else begin
+            led[0] <= sw[0];
+            for (k = 1; k < W; k = k + 1) begin
+              led[k] <= led[k - 1];
+            end
+          end
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 0 });
+    expect(sim.step({ rst_n: 1, key: 0, sw: 1 }).sample.outputs.led).toBe(0b0000_0001);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0 }).sample.outputs.led).toBe(0b0000_0010);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 1 }).sample.outputs.led).toBe(0b0000_0101);
+  });
+
+  it('支持 Verilog 综合属性 (* ... *) 且不干扰 always @(*)', () => {
+    const code = `
+      (* keep_hierarchy = "yes" *)
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        (* mark_debug = "true" *) wire [7:0] inv_sw = ~sw;
+        always @(*) begin
+          led = inv_sw;
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+    expect(engine.step({ rst_n: 1, key: 0, sw: 0x0f }).sample.outputs.led).toBe(0xf0);
+  });
+
+  it('安全忽略 assign #1 与非阻塞 <= #1 仿真延时语法', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) led <= #1 8'd0;
+          else led <= #1 sw;
+        end
+        assign #1 traffic = key[2:0];
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 0x33 });
+    const out = sim.step({ rst_n: 1, key: 0b101, sw: 0x77 }).sample.outputs;
+    expect(out.led).toBe(0x77);
+    expect(out.traffic).toBe(0b101);
+  });
+
+  it('支持 Verilog-1995 分离式端口方向与 reg 声明风格', () => {
+    const code = `
+      module top(clk, rst_n, key, sw, led, traffic, seg);
+        input clk, rst_n;
+        input [3:0] key;
+        input [7:0] sw;
+        output [7:0] led;
+        output [2:0] traffic;
+        output [15:0] seg;
+        reg [7:0] led;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) led <= 8'd0;
+          else led <= sw + {4'd0, key};
+        end
+        assign traffic = 3'b001;
+        assign seg = 16'h1234;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    const res = engine.compile(code);
+    expect(res.ok).toBe(true);
+    expect(res.issues).toEqual([]);
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    expect(engine.step({ rst_n: 1, key: 3, sw: 10 }).sample.outputs.led).toBe(13);
+  });
+
+  it('支持块注释 /* ... */ 穿插在模块头部与表达式中间', () => {
+    const code = `
+      module /* 顶层 */ top(
+        input clk, /* 时钟 */ input rst_n,
+        input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        assign led = (sw /* 输入 */ & 8'hF0) | {4'd0, key};
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 1, key: 0x5, sw: 0xa0 }).sample.outputs.led).toBe(0xa5);
+  });
+
+  it('支持有符号 $signed 比较与符号扩展截断', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        wire signed [3:0] a = $signed(sw[3:0]);
+        wire signed [3:0] b = $signed(sw[7:4]);
+        assign led[0] = (a < b);
+        assign led[1] = ($unsigned(a) < $unsigned(b));
+        assign led[7:2] = 6'd0;
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    // a = 4'hF (-1 signed, 15 unsigned), b = 4'h1 (+1 signed, 1 unsigned)
+    const out = sim.step({ rst_n: 1, key: 0, sw: 0x1f }).sample.outputs;
+    expect(out.led).toBe(0b01); // signed: -1 < 1 (true), unsigned: 15 < 1 (false)
+  });
+
+  it('支持嵌套 for 循环展开计算 4 位 popcount', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        integer i;
+        always @(*) begin
+          led = 8'd0;
+          for (i = 0; i < 8; i = i + 1) begin
+            led = led + {7'd0, sw[i]};
+          end
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0b1011_0110 }).sample.outputs.led).toBe(5);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0xff }).sample.outputs.led).toBe(8);
+  });
+
+  it('支持 genvar 声明与局部参数表达式计算位宽', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        localparam HALF = 4;
+        localparam FULL = HALF * 2;
+        genvar g;
+        wire [FULL-1:0] merged = {sw[HALF-1:0], key};
+        assign led = merged;
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 1, key: 0x3, sw: 0x0c }).sample.outputs.led).toBe(0xc3);
+  });
+});
+
+describe('10. V2 契约能力 (levelNarrations / metadata / exportTestbench / 5 预置案例)', () => {
+  it('NetlistGraph.levelNarrations 长度等于 maxLevel + 1 且逐层非空', () => {
+    const engine = createRtlEngine();
+    const res = engine.compile(preset.verilogCode);
+    expect(res.ok).toBe(true);
+    expect(res.netlist?.levelNarrations).toBeDefined();
+    expect(res.netlist!.levelNarrations!.length).toBe(res.netlist!.maxLevel + 1);
+    for (const line of res.netlist!.levelNarrations!) {
+      expect(line.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('交通灯按下 KEY0 后 levelNarrations 清晰呈现输入激励与红灯输出响应', () => {
+    const engine = createRtlEngine();
+    engine.compile(preset.verilogCode);
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    for (let i = 0; i < 6; i++) {
+      engine.step({ rst_n: 1, key: 0, sw: 0 });
+    }
+    const { netlist } = engine.step({ rst_n: 1, key: 1, sw: 0 });
+    expect(netlist.levelNarrations).toBeDefined();
+    expect(netlist.levelNarrations![0]).toContain('KEY[3:0]');
+    expect(netlist.levelNarrations!.some((s) => s.includes('红灯'))).toBe(true);
+  });
+
+  it('稳态无跳变周期的 levelNarrations 每层均给出稳态说明', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        assign led = sw;
+        assign traffic = 3'b001;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    engine.compile(code);
+    engine.step({ rst_n: 1, key: 0, sw: 0x12 });
+    const { netlist } = engine.step({ rst_n: 1, key: 0, sw: 0x12 });
+    expect(netlist.levelNarrations![0]).toContain('保持稳定');
+    expect(netlist.levelNarrations!.some((s) => s.includes('稳态'))).toBe(true);
+  });
+
+  it('CompileResult.metadata 准确提取 moduleName、usedInputs、usedOutputs 与 internalSignals', () => {
+    const code = `
+      module demo_counter(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [3:0] cnt;
+        reg flag;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            cnt <= 4'd0;
+            flag <= 1'b0;
+          end else if (key[0]) begin
+            cnt <= cnt + 4'd1;
+            flag <= ~flag;
+          end
+        end
+        assign led = {3'd0, flag, cnt};
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    const res = engine.compile(code);
+    expect(res.ok).toBe(true);
+    expect(res.metadata).toEqual({
+      moduleName: 'demo_counter',
+      usedInputs: ['rst_n', 'key'],
+      usedOutputs: ['led', 'traffic', 'seg'],
+      internalSignals: [
+        { name: 'cnt', width: 4 },
+        { name: 'flag', width: 1 },
+      ],
+    });
+  });
+
+  it('CompileResult.metadata 在端口不匹配时仍安全返回 ok: false 与 metadata', () => {
+    const bad = `
+      module partial_mod(input clk, output [7:0] led);
+        assign led = 8'h55;
+      endmodule
+    `;
+    const res = createRtlEngine().compile(bad);
+    expect(res.ok).toBe(false);
+    expect(res.metadata?.moduleName).toBe('partial_mod');
+    expect(res.metadata?.usedOutputs).toEqual(['led']);
+  });
+
+  it('exportTestbench 输出标准 tb_top.v（含 timescale、DUT 例化、波形 dump 与断言）', () => {
+    const engine = createRtlEngine();
+    const tb = engine.exportTestbench!(preset.verilogCode, preset.testVectors.slice(0, 3));
+    expect(tb).toContain('`timescale 1ns/1ps');
+    expect(tb).toContain('module tb_top;');
+    expect(tb).toContain('top dut (');
+    expect(tb).toContain('$dumpfile("tb_top.vcd");');
+    expect(tb).toContain('always #5 clk = ~clk;');
+    expect(tb).toContain('@(posedge clk); #1;');
+    expect(tb).toContain('ALL TESTS PASSED');
+    expect(tb).toContain('endmodule');
+  });
+
+  it('exportTestbench 准确序列化 led / traffic / seg 断言与周期注释', () => {
+    const vectors: TestVectorStep[] = [
+      { cycle: 0, inputs: { rst_n: 0, key: 0, sw: 0 }, expect: { led: 0, seg: 0 }, note: '复位' },
+      { cycle: 1, inputs: { rst_n: 1, key: 5, sw: 0xab }, expect: { led: 0xab, traffic: 0b100, seg: 0x1234 }, note: '检查输出' },
+    ];
+    const tb = createRtlEngine().exportTestbench!('module my_alu(input clk); endmodule', vectors);
+    expect(tb).toContain('my_alu dut (');
+    expect(tb).toContain('// Cycle 0: 复位');
+    expect(tb).toContain("key = 4'h5; sw = 8'hab;");
+    expect(tb).toContain("if (led !== 8'hab)");
+    expect(tb).toContain("if (traffic !== 3'b100)");
+    expect(tb).toContain("if (seg !== 16'h1234)");
+  });
+
+  it('exportTestbench 对语法残缺代码不抛异常并优雅回退到 top', () => {
+    const tb = createRtlEngine().exportTestbench!('not valid verilog @@@', [
+      { cycle: 0, inputs: DEFAULT_IN },
+    ]);
+    expect(tb).toContain('top dut (');
+    expect(tb).toContain('endmodule');
+  });
+
+  for (const p of PRESETS) {
+    it(`预置案例全量 V2 验收：${p.name} (${p.id})`, () => {
+      const engine = createRtlEngine();
+      const compiled = engine.compile(p.verilogCode);
+      expect(compiled.ok).toBe(true);
+      expect(compiled.metadata?.moduleName).toBeTruthy();
+      expect(compiled.metadata?.usedOutputs.length).toBeGreaterThan(0);
+      expect(compiled.netlist?.levelNarrations?.length).toBe((compiled.netlist?.maxLevel ?? 0) + 1);
+
+      const st = engine.runSelfTest(p.verilogCode, p.testVectors);
+      expect(st.passed).toBe(true);
+      expect(st.totalChecks).toBeGreaterThan(0);
+      expect(st.firstFailure).toBeUndefined();
+
+      const tb = engine.exportTestbench!(p.verilogCode, p.testVectors);
+      expect(tb).toContain('module tb_top;');
+      expect(tb).toContain('endmodule');
+    });
+  }
+});
+
+describe('11. 广范围 AI 常见全新电路回归库 (10+ 类经典数字电路)', () => {
+  it('电路 1：8 位双向流水灯（sw[0]=0 循环左移，sw[0]=1 循环右移）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) led <= 8'b0000_0001;
+          else if (sw[0]) led <= {led[0], led[7:1]};
+          else led <= {led[6:0], led[7]};
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 0, key: 0, sw: 0 }).sample.outputs.led).toBe(0b0000_0001);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0 }).sample.outputs.led).toBe(0b0000_0010);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0 }).sample.outputs.led).toBe(0b0000_0100);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 1 }).sample.outputs.led).toBe(0b0000_0010);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 1 }).sample.outputs.led).toBe(0b0000_0001);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 1 }).sample.outputs.led).toBe(0b1000_0000);
+  });
+
+  it('电路 2：参数化模 N 计数器（MOD=6，满值归零并产生进位脉冲）', () => {
+    const code = `
+      module top #(parameter MOD = 6)(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [3:0] cnt;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) cnt <= 4'd0;
+          else if (cnt == MOD - 1) cnt <= 4'd0;
+          else cnt <= cnt + 4'd1;
+        end
+        assign led = {3'd0, (cnt == MOD - 1), cnt};
+        assign traffic = 3'd0;
+        assign seg = {12'd0, cnt};
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 0 });
+    const seq: number[] = [];
+    for (let i = 0; i < 7; i++) {
+      seq.push(sim.step({ rst_n: 1, key: 0, sw: 0 }).sample.outputs.seg);
+    }
+    expect(seq).toEqual([1, 2, 3, 4, 5, 0, 1]);
+  });
+
+  it('电路 3：双位 BCD 计数器（00-99 十进制进位）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [3:0] ones, tens;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            ones <= 4'd0;
+            tens <= 4'd0;
+          end else if (ones == 4'd9) begin
+            ones <= 4'd0;
+            tens <= (tens == 4'd9) ? 4'd0 : (tens + 4'd1);
+          end else begin
+            ones <= ones + 4'd1;
+          end
+        end
+        assign led = {tens, ones};
+        assign traffic = 3'd0;
+        assign seg = {8'd0, tens, ones};
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 0 });
+    for (let i = 0; i < 11; i++) sim.step({ rst_n: 1, key: 0, sw: 0 });
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0 }).sample.outputs.seg).toBe(0x0012);
+  });
+
+  it('电路 4：4 位 PWM 发生器（占空比精确匹配 sw[3:0]/16）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [3:0] pwm_cnt;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) pwm_cnt <= 4'd0;
+          else pwm_cnt <= pwm_cnt + 4'd1;
+        end
+        assign led = {7'd0, (pwm_cnt < sw[3:0])};
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 5 });
+    let highCount = 0;
+    for (let i = 0; i < 16; i++) {
+      highCount += sim.step({ rst_n: 1, key: 0, sw: 5 }).sample.outputs.led & 1;
+    }
+    expect(highCount).toBe(5);
+  });
+
+  it('电路 5：4 分频时钟分频器（每 2 拍翻转一次输出）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [1:0] cnt;
+        reg clk_div;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            cnt <= 2'd0;
+            clk_div <= 1'b0;
+          end else if (cnt == 2'd1) begin
+            cnt <= 2'd0;
+            clk_div <= ~clk_div;
+          end else begin
+            cnt <= cnt + 2'd1;
+          end
+        end
+        assign led = {7'd0, clk_div};
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 0 });
+    const waves = Array.from({ length: 8 }, () => sim.step({ rst_n: 1, key: 0, sw: 0 }).sample.outputs.led);
+    expect(waves).toEqual([0, 1, 1, 0, 0, 1, 1, 0]);
+  });
+
+  it('电路 6：简易 4 位 ALU（支持 8 种算术与位运算）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        wire [3:0] a = sw[3:0];
+        wire [3:0] b = sw[7:4];
+        always @(*) begin
+          case (key[2:0])
+            3'd0: led = {4'd0, a} + {4'd0, b};
+            3'd1: led = {4'd0, a} - {4'd0, b};
+            3'd2: led = {4'd0, a & b};
+            3'd3: led = {4'd0, a | b};
+            3'd4: led = {4'd0, a ^ b};
+            3'd5: led = {4'd0, a ~^ b};
+            3'd6: led = {4'd0, a << 1};
+            default: led = {4'd0, a >> 1};
+          endcase
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    // a=6 (0110), b=3 (0011) -> sw=0x36
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0x36 }).sample.outputs.led).toBe(9);
+    expect(sim.step({ rst_n: 1, key: 1, sw: 0x36 }).sample.outputs.led).toBe(3);
+    expect(sim.step({ rst_n: 1, key: 2, sw: 0x36 }).sample.outputs.led).toBe(2);
+    expect(sim.step({ rst_n: 1, key: 3, sw: 0x36 }).sample.outputs.led).toBe(7);
+    expect(sim.step({ rst_n: 1, key: 4, sw: 0x36 }).sample.outputs.led).toBe(5);
+    expect(sim.step({ rst_n: 1, key: 5, sw: 0x36 }).sample.outputs.led).toBe(0xa);
+    expect(sim.step({ rst_n: 1, key: 6, sw: 0x36 }).sample.outputs.led).toBe(12);
+    expect(sim.step({ rst_n: 1, key: 7, sw: 0x36 }).sample.outputs.led).toBe(3);
+  });
+
+  it('电路 7：8 位串入并出移位寄存器（SIPO）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) led <= 8'd0;
+          else if (key[0]) led <= {led[6:0], sw[0]};
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 0 });
+    sim.step({ rst_n: 1, key: 1, sw: 1 });
+    sim.step({ rst_n: 1, key: 1, sw: 0 });
+    sim.step({ rst_n: 1, key: 1, sw: 1 });
+    // key[0]=0 保持不变
+    expect(sim.step({ rst_n: 1, key: 0, sw: 1 }).sample.outputs.led).toBe(0b0000_0101);
+  });
+
+  it('电路 8：自动售货机状态机（满 3 元出货并正确找零）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [1:0] credit;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            credit <= 2'd0;
+            led <= 8'd0;
+          end else begin
+            led <= 8'd0;
+            if (key[1]) begin
+              if (credit == 2'd0) credit <= 2'd2;
+              else if (credit == 2'd1) begin credit <= 2'd0; led <= 8'b0000_0001; end
+              else begin credit <= 2'd0; led <= 8'b0000_0011; end
+            end else if (key[0]) begin
+              if (credit == 2'd2) begin credit <= 2'd0; led <= 8'b0000_0001; end
+              else credit <= credit + 2'd1;
+            end
+          end
+        end
+        assign traffic = 3'd0;
+        assign seg = {14'd0, credit};
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 0 });
+    // 投 2 元 -> credit=2
+    expect(sim.step({ rst_n: 1, key: 0b0010, sw: 0 }).sample.outputs.seg).toBe(2);
+    // 再投 2 元 -> 满 4 元，出货(bit0) + 找零 1 元(bit1)，credit 归 0
+    const out = sim.step({ rst_n: 1, key: 0b0010, sw: 0 }).sample.outputs;
+    expect(out.led).toBe(0b11);
+    expect(out.seg).toBe(0);
+  });
+
+  it('电路 9：3 拍按键消抖器（过滤单拍毛刺，连续 3 拍确认）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [2:0] shift_key;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            shift_key <= 3'b000;
+            led <= 8'd0;
+          end else begin
+            shift_key <= {shift_key[1:0], key[0]};
+            if ({shift_key[1:0], key[0]} == 3'b111) led[0] <= 1'b1;
+            else if ({shift_key[1:0], key[0]} == 3'b000) led[0] <= 1'b0;
+          end
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    sim.step({ rst_n: 0, key: 0, sw: 0 });
+    // 毛刺：1 拍高后回低 -> led[0] 仍为 0
+    expect(sim.step({ rst_n: 1, key: 1, sw: 0 }).sample.outputs.led).toBe(0);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0 }).sample.outputs.led).toBe(0);
+    // 连续 3 拍高 -> 第 3 拍稳定拉高
+    expect(sim.step({ rst_n: 1, key: 1, sw: 0 }).sample.outputs.led).toBe(0);
+    expect(sim.step({ rst_n: 1, key: 1, sw: 0 }).sample.outputs.led).toBe(0);
+    expect(sim.step({ rst_n: 1, key: 1, sw: 0 }).sample.outputs.led).toBe(1);
+  });
+
+  it('电路 10：8 位奇偶校验器（同时输出奇校验与偶校验位）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        assign led[0] = ^sw;
+        assign led[1] = ~^sw;
+        assign led[7:2] = 6'd0;
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0b0000_0111 }).sample.outputs.led).toBe(0b01);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0b0000_1111 }).sample.outputs.led).toBe(0b10);
+  });
+
+  it('电路 11：4-2 优先编码器（基于 casez + valid 标志）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(*) begin
+          casez (key)
+            4'b1???: led = 8'b0000_0111; // valid=1, code=3
+            4'b01??: led = 8'b0000_0110; // valid=1, code=2
+            4'b001?: led = 8'b0000_0101; // valid=1, code=1
+            4'b0001: led = 8'b0000_0100; // valid=1, code=0
+            default: led = 8'b0000_0000; // valid=0
+          endcase
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 1, key: 0b1010, sw: 0 }).sample.outputs.led).toBe(0b111);
+    expect(sim.step({ rst_n: 1, key: 0b0101, sw: 0 }).sample.outputs.led).toBe(0b110);
+    expect(sim.step({ rst_n: 1, key: 0b0000, sw: 0 }).sample.outputs.led).toBe(0b000);
+  });
+
+  it('电路 12：3-8 译码器与 4 选 1 多路选择器组合', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        assign led = 8'b0000_0001 << key[2:0];
+        wire [1:0] mux_out = (key[1:0] == 2'd0) ? sw[1:0] :
+                             (key[1:0] == 2'd1) ? sw[3:2] :
+                             (key[1:0] == 2'd2) ? sw[5:4] : sw[7:6];
+        assign traffic = {1'b0, mux_out};
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    const out = sim.step({ rst_n: 1, key: 2, sw: 0b11_10_01_00 }).sample.outputs;
+    expect(out.led).toBe(0b0000_0100);
+    expect(out.traffic).toBe(0b010);
+  });
+});
+
+describe('12. 异常语法、模糊压测、边界位宽与长周期性能', () => {
+  it('超深括号嵌套不触发栈溢出，返回中文 PARSE_ERROR', () => {
+    const deep = '('.repeat(200) + 'sw' + ')'.repeat(200);
+    const code = `module top(input clk, input rst_n, input [3:0] key, input [7:0] sw, output [7:0] led, output [2:0] traffic, output [15:0] seg); assign led = ${deep}; assign traffic = 0; assign seg = 0; endmodule`;
+    const res = createRtlEngine().compile(code);
+    expect(res.ok).toBe(false);
+    expect(res.issues[0].code).toBe('PARSE_ERROR');
+    expect(res.issues[0].message).toContain('嵌套');
+  });
+
+  it('超深 if 嵌套不触发栈溢出，返回中文 PARSE_ERROR', () => {
+    const deepIf = 'if (key[0]) '.repeat(150) + 'led = 8\'d1;';
+    const code = `module top(input clk, input rst_n, input [3:0] key, input [7:0] sw, output reg [7:0] led, output [2:0] traffic, output [15:0] seg); always @(*) begin led = 0; ${deepIf} end assign traffic = 0; assign seg = 0; endmodule`;
+    const res = createRtlEngine().compile(code);
+    expect(res.ok).toBe(false);
+    expect(res.issues[0].code).toBe('PARSE_ERROR');
+  });
+
+  it('未闭合块注释 /* 返回精确行号 PARSE_ERROR', () => {
+    const code = `module top(input clk);\n/* unclosed comment\nassign led = 0;\nendmodule`;
+    const res = parseVerilog(code);
+    expect(res.errors[0].code).toBe('PARSE_ERROR');
+    expect(res.errors[0].line).toBe(2);
+    expect(res.errors[0].message).toContain('注释');
+  });
+
+  it('未闭合综合属性 (* 返回 PARSE_ERROR', () => {
+    const code = `(* keep = "true"\nmodule top(input clk); endmodule`;
+    const res = parseVerilog(code);
+    expect(res.errors[0].code).toBe('PARSE_ERROR');
+    expect(res.errors[0].line).toBe(1);
+    expect(res.errors[0].message).toContain('属性');
+  });
+
+  it('非法中文标点返回带行列号的 PARSE_ERROR', () => {
+    const code = `module top(input clk)；\nendmodule`;
+    const res = parseVerilog(code);
+    expect(res.errors[0].code).toBe('PARSE_ERROR');
+    expect(res.errors[0].line).toBe(1);
+    expect(res.errors[0].column).toBeGreaterThan(1);
+  });
+
+  it('非法位宽 0\'b0 与 64\'h1 返回 PARSE_ERROR', () => {
+    const r0 = parseVerilog(`module top(input clk); assign led = 0'b0; endmodule`);
+    const r64 = parseVerilog(`module top(input clk); assign led = 64'h1; endmodule`);
+    expect(r0.errors[0].code).toBe('PARSE_ERROR');
+    expect(r64.errors[0].code).toBe('PARSE_ERROR');
+  });
+
+  it('非法八进制字面量 4\'o89 与空数字 4\'b 返回 PARSE_ERROR', () => {
+    const rOct = parseVerilog(`module top(input clk); assign led = 4'o89; endmodule`);
+    const rEmpty = parseVerilog(`module top(input clk); assign led = 4'b; endmodule`);
+    expect(rOct.errors[0].code).toBe('PARSE_ERROR');
+    expect(rEmpty.errors[0].code).toBe('PARSE_ERROR');
+  });
+
+  it('缺少 end / endcase / endmodule 均返回准确中文提示', () => {
+    const rEnd = parseVerilog(`module top(input clk); always @(*) begin led = 0; endmodule`);
+    const rCase = parseVerilog(`module top(input clk); always @(*) case(key) 0: led = 0; endmodule`);
+    const rMod = parseVerilog(`module top(input clk); assign led = 0;`);
+    expect(rEnd.errors[0].message).toContain('end');
+    expect(rCase.errors[0].message).toContain('endcase');
+    expect(rMod.errors[0].message).toContain('endmodule');
+  });
+
+  it('畸形模糊输入集合对 compile 与 runSelfTest 均不抛未捕获异常', () => {
+    const fuzzInputs = [
+      '',
+      '   \n\t  ',
+      'module',
+      'module top(',
+      'module top(); always @(posedge) endmodule',
+      'module top(); assign = ; endmodule',
+      'module top(); for (i = 0; i < ; i++) led = 1; endmodule',
+      'module top(); assign led = {4{}}; endmodule',
+      'module top(); assign led = $unknown(1); endmodule',
+      'module top(); reg [7:0] a = 1 + * 2; endmodule',
+    ];
+    const engine = createRtlEngine();
+    for (const bad of fuzzInputs) {
+      expect(() => engine.compile(bad)).not.toThrow();
+      const c = engine.compile(bad);
+      expect(c.ok).toBe(false);
+      expect(c.issues.length).toBeGreaterThan(0);
+
+      expect(() => engine.runSelfTest(bad, [{ cycle: 0, inputs: DEFAULT_IN, expect: { led: 0 } }])).not.toThrow();
+      const st = engine.runSelfTest(bad, [{ cycle: 0, inputs: DEFAULT_IN, expect: { led: 0 } }]);
+      expect(st.passed).toBe(false);
+    }
+  });
+
+  it('32 位边界算术溢出回绕与有符号右移符号位保持', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        wire [31:0] max_u = 32'hFFFF_FFFF;
+        wire [31:0] wrapped = max_u + 32'd1;
+        wire signed [7:0] neg = -8'sd16;
+        wire signed [7:0] shifted = neg >>> 2;
+        assign led = shifted;
+        assign traffic = {2'd0, (wrapped == 32'd0)};
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    const out = sim.step(DEFAULT_IN).sample.outputs;
+    expect(out.traffic).toBe(1);
+    expect(out.led).toBe(0xfc); // -16 >>> 2 = -4 = 8'hFC
+  });
+
+  it('位索引越界写入安全忽略不崩溃', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        always @(*) begin
+          led = sw;
+          led[12] = 1'b1;
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const sim = buildSession(code);
+    expect(sim.step({ rst_n: 1, key: 0, sw: 0x3a }).sample.outputs.led).toBe(0x3a);
+  });
+
+  it('超长静态 for 循环在 MAX_FOR_ITERATIONS 上限处安全截断不卡死', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        integer i;
+        always @(*) begin
+          led = 8'd0;
+          for (i = 0; i < 1000; i = i + 1) begin
+            led = led + 8'd1;
+          end
+        end
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+    // 128 iterations capped -> 128
+    expect(engine.step(DEFAULT_IN).sample.outputs.led).toBe(128);
+  });
+
+  it('MULTI_DRIVER 阻断编译并返回 error 级别告警', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        assign led = sw;
+        assign led = ~sw;
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const res = createRtlEngine().compile(code);
+    expect(res.ok).toBe(false);
+    expect(res.issues.some((i) => i.code === 'MULTI_DRIVER' && i.severity === 'error')).toBe(true);
+  });
+
+  it('1000 拍长周期连续仿真性能与计数准确性验证', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [15:0] cnt;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) cnt <= 16'd0;
+          else cnt <= cnt + 16'd1;
+        end
+        assign led = cnt[7:0];
+        assign traffic = cnt[2:0];
+        assign seg = cnt;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+    const t0 = performance.now();
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    let lastSeg = 0;
+    for (let i = 0; i < 1000; i++) {
+      lastSeg = engine.step({ rst_n: 1, key: 0, sw: 0 }).sample.outputs.seg;
+    }
+    const elapsed = performance.now() - t0;
+    expect(lastSeg).toBe(1000);
+    expect(elapsed).toBeLessThan(1000);
+  });
+});

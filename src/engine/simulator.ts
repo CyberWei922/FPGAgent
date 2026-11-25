@@ -42,6 +42,249 @@ interface PendingWrite {
 }
 
 export const MAX_COMB_ITERATIONS = 16;
+export const MAX_FOR_ITERATIONS = 128;
+
+function isExprStatic(
+  expr: Expr,
+  params: Map<string, { value: number; width: number; signed: boolean }>,
+  constVars: ReadonlySet<string>
+): boolean {
+  switch (expr.type) {
+    case 'number':
+      return true;
+    case 'ident':
+      return params.has(expr.name) || constVars.has(expr.name);
+    case 'index':
+      return isExprStatic(expr.target, params, constVars) && isExprStatic(expr.index, params, constVars);
+    case 'slice':
+      return (
+        isExprStatic(expr.target, params, constVars) &&
+        isExprStatic(expr.msb, params, constVars) &&
+        isExprStatic(expr.lsb, params, constVars)
+      );
+    case 'concat':
+      return expr.items.every((it) => isExprStatic(it, params, constVars));
+    case 'repeat':
+      return isExprStatic(expr.count, params, constVars) && expr.items.every((it) => isExprStatic(it, params, constVars));
+    case 'unary':
+      return isExprStatic(expr.operand, params, constVars);
+    case 'binary':
+      return isExprStatic(expr.left, params, constVars) && isExprStatic(expr.right, params, constVars);
+    case 'ternary':
+      return (
+        isExprStatic(expr.condition, params, constVars) &&
+        isExprStatic(expr.thenExpr, params, constVars) &&
+        isExprStatic(expr.elseExpr, params, constVars)
+      );
+    case 'sysfn':
+      return isExprStatic(expr.arg, params, constVars);
+  }
+}
+
+function substituteExpr(expr: Expr, varName: string, value: number): Expr {
+  switch (expr.type) {
+    case 'number':
+      return expr;
+    case 'ident':
+      if (expr.name === varName) {
+        return {
+          type: 'number',
+          value: value >>> 0,
+          width: 32,
+          sized: false,
+          signed: true,
+          raw: String(value),
+          loc: expr.loc,
+        };
+      }
+      return expr;
+    case 'index':
+      return {
+        ...expr,
+        target: substituteExpr(expr.target, varName, value),
+        index: substituteExpr(expr.index, varName, value),
+      };
+    case 'slice':
+      return {
+        ...expr,
+        target: substituteExpr(expr.target, varName, value),
+        msb: substituteExpr(expr.msb, varName, value),
+        lsb: substituteExpr(expr.lsb, varName, value),
+      };
+    case 'concat':
+      return { ...expr, items: expr.items.map((it) => substituteExpr(it, varName, value)) };
+    case 'repeat':
+      return {
+        ...expr,
+        count: substituteExpr(expr.count, varName, value),
+        items: expr.items.map((it) => substituteExpr(it, varName, value)),
+      };
+    case 'unary':
+      return { ...expr, operand: substituteExpr(expr.operand, varName, value) };
+    case 'binary':
+      return {
+        ...expr,
+        left: substituteExpr(expr.left, varName, value),
+        right: substituteExpr(expr.right, varName, value),
+      };
+    case 'ternary':
+      return {
+        ...expr,
+        condition: substituteExpr(expr.condition, varName, value),
+        thenExpr: substituteExpr(expr.thenExpr, varName, value),
+        elseExpr: substituteExpr(expr.elseExpr, varName, value),
+      };
+    case 'sysfn':
+      return { ...expr, arg: substituteExpr(expr.arg, varName, value) };
+  }
+}
+
+function substituteLValue(lv: LValue, varName: string, value: number): LValue {
+  switch (lv.type) {
+    case 'ident':
+      return lv;
+    case 'index':
+      return { ...lv, index: substituteExpr(lv.index, varName, value) };
+    case 'slice':
+      return {
+        ...lv,
+        msb: substituteExpr(lv.msb, varName, value),
+        lsb: substituteExpr(lv.lsb, varName, value),
+      };
+    case 'concat':
+      return { ...lv, items: lv.items.map((it) => substituteLValue(it, varName, value)) };
+  }
+}
+
+function substituteStmt(stmt: Stmt, varName: string, value: number): Stmt {
+  switch (stmt.type) {
+    case 'empty':
+      return stmt;
+    case 'block':
+      return { ...stmt, statements: stmt.statements.map((s) => substituteStmt(s, varName, value)) };
+    case 'assign':
+      return {
+        ...stmt,
+        target: substituteLValue(stmt.target, varName, value),
+        value: substituteExpr(stmt.value, varName, value),
+      };
+    case 'if':
+      return {
+        ...stmt,
+        condition: substituteExpr(stmt.condition, varName, value),
+        thenBranch: substituteStmt(stmt.thenBranch, varName, value),
+        elseBranch: stmt.elseBranch ? substituteStmt(stmt.elseBranch, varName, value) : undefined,
+      };
+    case 'case':
+      return {
+        ...stmt,
+        expr: substituteExpr(stmt.expr, varName, value),
+        items: stmt.items.map((item) => ({
+          ...item,
+          patterns: item.patterns.map((p) => substituteExpr(p, varName, value)),
+          body: substituteStmt(item.body, varName, value),
+        })),
+        defaultBranch: stmt.defaultBranch ? substituteStmt(stmt.defaultBranch, varName, value) : undefined,
+      };
+    case 'for':
+      if (stmt.varName === varName) return stmt;
+      return {
+        ...stmt,
+        init: substituteExpr(stmt.init, varName, value),
+        condition: substituteExpr(stmt.condition, varName, value),
+        step: substituteStmt(stmt.step, varName, value),
+        body: substituteStmt(stmt.body, varName, value),
+      };
+  }
+}
+
+function unrollStmt(
+  stmt: Stmt,
+  params: Map<string, { value: number; width: number; signed: boolean }>
+): Stmt {
+  switch (stmt.type) {
+    case 'empty':
+    case 'assign':
+      return stmt;
+    case 'block':
+      return { ...stmt, statements: stmt.statements.map((s) => unrollStmt(s, params)) };
+    case 'if':
+      return {
+        ...stmt,
+        thenBranch: unrollStmt(stmt.thenBranch, params),
+        elseBranch: stmt.elseBranch ? unrollStmt(stmt.elseBranch, params) : undefined,
+      };
+    case 'case':
+      return {
+        ...stmt,
+        items: stmt.items.map((item) => ({ ...item, body: unrollStmt(item.body, params) })),
+        defaultBranch: stmt.defaultBranch ? unrollStmt(stmt.defaultBranch, params) : undefined,
+      };
+    case 'for': {
+      const varSet = new Set([stmt.varName]);
+      const stepExpr =
+        stmt.step.type === 'assign' &&
+        stmt.step.target.type === 'ident' &&
+        stmt.step.target.name === stmt.varName
+          ? stmt.step.value
+          : null;
+      if (
+        !stepExpr ||
+        !isExprStatic(stmt.init, params, new Set()) ||
+        !isExprStatic(stmt.condition, params, varSet) ||
+        !isExprStatic(stepExpr, params, varSet)
+      ) {
+        return { ...stmt, body: unrollStmt(stmt.body, params) };
+      }
+
+      const loopSignals = new Map<string, SignalMeta>([
+        [
+          stmt.varName,
+          {
+            name: stmt.varName,
+            width: 32,
+            msb: 31,
+            lsb: 0,
+            mask: 0xffffffff,
+            signed: true,
+            isPort: false,
+            kind: 'reg',
+          },
+        ],
+      ]);
+      const env = new Map<string, number>();
+      let cur = toSigned(evalConstExpr(stmt.init, params).value, 32);
+      const unrolled: Stmt[] = [];
+      for (let iter = 0; iter < MAX_FOR_ITERATIONS; iter++) {
+        env.set(stmt.varName, cur >>> 0);
+        const cond = evalExpr(stmt.condition, env, loopSignals, params);
+        if (cond.value === 0) break;
+        const clonedBody = substituteStmt(stmt.body, stmt.varName, cur);
+        unrolled.push(unrollStmt(clonedBody, params));
+        const nextVal = evalExpr(stepExpr, env, loopSignals, params);
+        cur = toSigned(nextVal.value, 32);
+      }
+      return { type: 'block', statements: unrolled, loc: stmt.loc };
+    }
+  }
+}
+
+function matchCasePattern(
+  kind: 'case' | 'casez' | 'casex',
+  targetVal: number,
+  patExpr: Expr,
+  patVal: number
+): boolean {
+  if (kind === 'case' || patExpr.type !== 'number') {
+    return targetVal === patVal;
+  }
+  const mask =
+    kind === 'casez'
+      ? (patExpr.wildcardMask ?? 0)
+      : (patExpr.wildcardMask ?? 0) | (patExpr.xMask ?? 0);
+  if (mask === 0) return targetVal === patVal;
+  return ((targetVal & ~mask) >>> 0) === ((patVal & ~mask) >>> 0);
+}
 
 export function maskWidth(value: number, width: number): number {
   if (width <= 0) return 0;
@@ -146,7 +389,15 @@ export function elaborate(ast: ModuleAst): ElaboratedModule {
     }
   }
 
-  return { ast, params, signals, wireInits, regInits };
+  const unrolledAst: ModuleAst = {
+    ...ast,
+    alwaysBlocks: ast.alwaysBlocks.map((block) => ({
+      ...block,
+      body: unrollStmt(block.body, params),
+    })),
+  };
+
+  return { ast: unrolledAst, params, signals, wireInits, regInits };
 }
 
 export function evalExpr(
@@ -273,15 +524,30 @@ export function evalExpr(
           const allOnes = maskWidth(0xffffffff, op.width);
           return { value: op.value === allOnes ? 1 : 0, width: 1, signed: false };
         }
+        case '~&': {
+          const allOnes = maskWidth(0xffffffff, op.width);
+          return { value: op.value === allOnes ? 0 : 1, width: 1, signed: false };
+        }
         case '|':
           return { value: op.value !== 0 ? 1 : 0, width: 1, signed: false };
+        case '~|':
+          return { value: op.value === 0 ? 1 : 0, width: 1, signed: false };
         case '^': {
-          let v = op.value;
+          const v = op.value;
           let parity = 0;
           for (let b = 0; b < op.width; b++) {
             parity ^= (v >>> b) & 1;
           }
           return { value: parity, width: 1, signed: false };
+        }
+        case '~^':
+        case '^~': {
+          const v = op.value;
+          let parity = 0;
+          for (let b = 0; b < op.width; b++) {
+            parity ^= (v >>> b) & 1;
+          }
+          return { value: parity ^ 1, width: 1, signed: false };
         }
       }
     }
@@ -327,17 +593,22 @@ export function evalExpr(
           return { value: maskWidth(l.value | r.value, maxW), width: maxW, signed: bothSigned };
         case '^':
           return { value: maskWidth(l.value ^ r.value, maxW), width: maxW, signed: bothSigned };
+        case '~^':
+        case '^~':
+          return { value: maskWidth(~(l.value ^ r.value), maxW), width: maxW, signed: bothSigned };
         case '&&':
           return { value: l.value !== 0 && r.value !== 0 ? 1 : 0, width: 1, signed: false };
         case '||':
           return { value: l.value !== 0 || r.value !== 0 ? 1 : 0, width: 1, signed: false };
-        case '==': {
+        case '==':
+        case '===': {
           const eq = bothSigned
             ? toSigned(l.value, l.width) === toSigned(r.value, r.width)
             : l.value === r.value;
           return { value: eq ? 1 : 0, width: 1, signed: false };
         }
-        case '!=': {
+        case '!=':
+        case '!==': {
           const neq = bothSigned
             ? toSigned(l.value, l.width) !== toSigned(r.value, r.width)
             : l.value !== r.value;
@@ -703,13 +974,41 @@ export class SimulationSession {
               this.elaborated.signals,
               this.elaborated.params
             );
-            if (target.value === patEv.value) {
+            if (matchCasePattern(stmt.kind, target.value, pat, patEv.value)) {
               this.execCombStmt(item.body);
               return;
             }
           }
         }
         if (stmt.defaultBranch) this.execCombStmt(stmt.defaultBranch);
+        return;
+      }
+
+      case 'for': {
+        const initEv = evalExpr(
+          stmt.init,
+          this.values,
+          this.elaborated.signals,
+          this.elaborated.params
+        );
+        writeLValue(
+          { type: 'ident', name: stmt.varName, loc: stmt.loc },
+          initEv.value,
+          this.values,
+          this.elaborated.signals,
+          this.elaborated.params
+        );
+        for (let iter = 0; iter < MAX_FOR_ITERATIONS; iter++) {
+          const cond = evalExpr(
+            stmt.condition,
+            this.values,
+            this.elaborated.signals,
+            this.elaborated.params
+          );
+          if (cond.value === 0) break;
+          this.execCombStmt(stmt.body);
+          this.execCombStmt(stmt.step);
+        }
         return;
       }
     }
@@ -793,7 +1092,7 @@ export class SimulationSession {
               this.elaborated.signals,
               this.elaborated.params
             );
-            if (target.value === patEv.value) {
+            if (matchCasePattern(stmt.kind, target.value, pat, patEv.value)) {
               this.execSeqStmt(item.body, localEnv, blockingCommits, nbaCommits);
               return;
             }
@@ -801,6 +1100,34 @@ export class SimulationSession {
         }
         if (stmt.defaultBranch) {
           this.execSeqStmt(stmt.defaultBranch, localEnv, blockingCommits, nbaCommits);
+        }
+        return;
+      }
+
+      case 'for': {
+        const initEv = evalExpr(
+          stmt.init,
+          localEnv,
+          this.elaborated.signals,
+          this.elaborated.params
+        );
+        writeLValue(
+          { type: 'ident', name: stmt.varName, loc: stmt.loc },
+          initEv.value,
+          localEnv,
+          this.elaborated.signals,
+          this.elaborated.params
+        );
+        for (let iter = 0; iter < MAX_FOR_ITERATIONS; iter++) {
+          const cond = evalExpr(
+            stmt.condition,
+            localEnv,
+            this.elaborated.signals,
+            this.elaborated.params
+          );
+          if (cond.value === 0) break;
+          this.execSeqStmt(stmt.body, localEnv, blockingCommits, nbaCommits);
+          this.execSeqStmt(stmt.step, localEnv, blockingCommits, nbaCommits);
         }
         return;
       }

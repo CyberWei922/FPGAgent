@@ -36,6 +36,8 @@ interface Token {
     width: number;
     sized: boolean;
     signed: boolean;
+    wildcardMask?: number;
+    xMask?: number;
   };
 }
 
@@ -48,6 +50,9 @@ const KEYWORDS = new Set([
   'wire',
   'reg',
   'logic',
+  'integer',
+  'int',
+  'genvar',
   'signed',
   'unsigned',
   'parameter',
@@ -65,9 +70,13 @@ const KEYWORDS = new Set([
   'else',
   'case',
   'casez',
+  'casex',
   'default',
   'endcase',
+  'for',
 ]);
+
+const MAX_PARSE_DEPTH = 128;
 
 class ParseError extends Error {
   readonly issue: LintIssue;
@@ -95,7 +104,7 @@ function parseBasedLiteral(
   baseSpec: string,
   digitsRaw: string,
   loc: SourceLoc
-): { value: number; width: number; sized: boolean; signed: boolean } {
+): { value: number; width: number; sized: boolean; signed: boolean; wildcardMask?: number; xMask?: number } {
   let signed = false;
   let baseChar = baseSpec.toLowerCase();
   if (baseChar.startsWith('s')) {
@@ -104,27 +113,32 @@ function parseBasedLiteral(
   }
 
   let radix: number;
+  let bitsPerDigit: number;
   let validRe: RegExp;
   let baseLabel: string;
   switch (baseChar) {
     case 'b':
       radix = 2;
-      validRe = /^[01_]+$/;
+      bitsPerDigit = 1;
+      validRe = /^[01xXzZ?_]+$/;
       baseLabel = '二进制';
       break;
     case 'o':
       radix = 8;
-      validRe = /^[0-7_]+$/;
+      bitsPerDigit = 3;
+      validRe = /^[0-7xXzZ?_]+$/;
       baseLabel = '八进制';
       break;
     case 'd':
       radix = 10;
+      bitsPerDigit = 0;
       validRe = /^[0-9_]+$/;
       baseLabel = '十进制';
       break;
     case 'h':
       radix = 16;
-      validRe = /^[0-9a-fA-F_]+$/;
+      bitsPerDigit = 4;
+      validRe = /^[0-9a-fA-FxXzZ?_]+$/;
       baseLabel = '十六进制';
       break;
     default:
@@ -140,16 +154,7 @@ function parseBasedLiteral(
     throw new ParseError(
       loc,
       `第 ${loc.line} 行${baseLabel}字面量 "${digitsRaw}" 包含非法数字字符`,
-      `当前仿真引擎仅支持二值逻辑（不支持 x/z），请检查${baseLabel}数字拼写。`
-    );
-  }
-
-  const parsed = Number.parseInt(cleaned, radix);
-  if (!Number.isFinite(parsed)) {
-    throw new ParseError(
-      loc,
-      `第 ${loc.line} 行数字字面量超出可表示范围`,
-      '请将字面量位宽控制在 32 位以内。'
+      `请检查${baseLabel}数字拼写是否合法。`
     );
   }
 
@@ -163,8 +168,48 @@ function parseBasedLiteral(
     );
   }
 
-  const masked = maskValue(parsed, width);
-  return { value: masked, width, sized, signed };
+  if (bitsPerDigit === 0) {
+    const parsed = Number.parseInt(cleaned, radix);
+    if (!Number.isFinite(parsed)) {
+      throw new ParseError(
+        loc,
+        `第 ${loc.line} 行数字字面量超出可表示范围`,
+        '请将字面量位宽控制在 32 位以内。'
+      );
+    }
+    return { value: maskValue(parsed, width), width, sized, signed };
+  }
+
+  let val = 0n;
+  let wMask = 0n;
+  let xM = 0n;
+  const digitAllOnes = (1n << BigInt(bitsPerDigit)) - 1n;
+  for (const ch of cleaned) {
+    val <<= BigInt(bitsPerDigit);
+    wMask <<= BigInt(bitsPerDigit);
+    xM <<= BigInt(bitsPerDigit);
+    if (ch === '?' || ch === 'z' || ch === 'Z') {
+      wMask |= digitAllOnes;
+    } else if (ch === 'x' || ch === 'X') {
+      xM |= digitAllOnes;
+    } else {
+      val |= BigInt(Number.parseInt(ch, radix));
+    }
+  }
+
+  const widthMask = width >= 32 ? 0xffffffffn : (1n << BigInt(width)) - 1n;
+  const masked = Number(val & widthMask) >>> 0;
+  const wildcardMask = Number(wMask & widthMask) >>> 0;
+  const xMask = Number(xM & widthMask) >>> 0;
+
+  return {
+    value: masked,
+    width,
+    sized,
+    signed,
+    ...(wildcardMask !== 0 && { wildcardMask }),
+    ...(xMask !== 0 && { xMask }),
+  };
 }
 
 function maskValue(value: number, width: number): number {
@@ -321,8 +366,35 @@ function tokenize(source: string): Token[] {
       }
     }
 
+    if (
+      ch === '(' &&
+      source[i + 1] === '*' &&
+      source[i + 2] !== ')' &&
+      tokens[tokens.length - 1]?.value !== '@'
+    ) {
+      const startLoc: SourceLoc = { line, column: col };
+      advance(2);
+      let closed = false;
+      while (i < len) {
+        if (source[i] === '*' && source[i + 1] === ')') {
+          advance(2);
+          closed = true;
+          break;
+        }
+        advance();
+      }
+      if (!closed) {
+        throw new ParseError(
+          startLoc,
+          `第 ${startLoc.line} 行综合属性 "(*" 未闭合`,
+          '请在属性结尾补上 "*)"。'
+        );
+      }
+      continue;
+    }
+
     const three = source.slice(i, i + 3);
-    if (three === '<<<' || three === '>>>') {
+    if (three === '<<<' || three === '>>>' || three === '===' || three === '!==') {
       advance(3);
       tokens.push({ kind: 'op', value: three, loc });
       continue;
@@ -337,7 +409,15 @@ function tokenize(source: string): Token[] {
       two === '&&' ||
       two === '||' ||
       two === '<<' ||
-      two === '>>'
+      two === '>>' ||
+      two === '~&' ||
+      two === '~|' ||
+      two === '~^' ||
+      two === '^~' ||
+      two === '+=' ||
+      two === '-=' ||
+      two === '++' ||
+      two === '--'
     ) {
       advance(2);
       tokens.push({ kind: 'op', value: two, loc });
@@ -370,9 +450,37 @@ function tokenize(source: string): Token[] {
 class Parser {
   private readonly tokens: Token[];
   private pos = 0;
+  private depth = 0;
 
   constructor(tokens: Token[]) {
     this.tokens = tokens;
+  }
+
+  private withDepth<T>(loc: SourceLoc, fn: () => T): T {
+    if (this.depth >= MAX_PARSE_DEPTH) {
+      throw new ParseError(
+        loc,
+        `第 ${loc.line} 行代码嵌套层级超过上限（${MAX_PARSE_DEPTH} 层）`,
+        '请简化深层嵌套的表达式或条件语句。'
+      );
+    }
+    this.depth++;
+    try {
+      return fn();
+    } finally {
+      this.depth--;
+    }
+  }
+
+  private skipOptionalDelay(): void {
+    if (this.match('punct', '#')) {
+      if (this.match('punct', '(')) {
+        this.parseExpr();
+        this.expect('punct', ')', '延时表达式 #(...) 缺少右括号 ")"。');
+      } else if (this.check('number') || this.check('ident')) {
+        this.next();
+      }
+    }
   }
 
   private peek(offset = 0): Token {
@@ -460,7 +568,10 @@ class Parser {
           tok.value === 'output' ||
           tok.value === 'wire' ||
           tok.value === 'reg' ||
-          tok.value === 'logic')
+          tok.value === 'logic' ||
+          tok.value === 'integer' ||
+          tok.value === 'int' ||
+          tok.value === 'genvar')
       ) {
         this.parseSignalDecls(signals);
       } else if (tok.kind === 'keyword' && tok.value === 'assign') {
@@ -591,20 +702,36 @@ class Parser {
     let direction: PortDirection | undefined;
     let kind: SignalKind = 'wire';
     let explicitKind = false;
+    let isIntType = false;
 
     if (this.check('keyword', 'input') || this.check('keyword', 'output')) {
       direction = this.next().value as PortDirection;
     }
 
-    if (this.check('keyword', 'wire') || this.check('keyword', 'reg') || this.check('keyword', 'logic')) {
+    if (
+      this.check('keyword', 'wire') ||
+      this.check('keyword', 'reg') ||
+      this.check('keyword', 'logic') ||
+      this.check('keyword', 'integer') ||
+      this.check('keyword', 'int') ||
+      this.check('keyword', 'genvar')
+    ) {
       const k = this.next().value;
       kind = k === 'wire' ? 'wire' : 'reg';
       explicitKind = true;
+      isIntType = k === 'integer' || k === 'int' || k === 'genvar';
     }
 
-    const signed = Boolean(this.match('keyword', 'signed'));
+    const signed = isIntType || Boolean(this.match('keyword', 'signed'));
     this.match('keyword', 'unsigned');
-    const range = this.parseOptionalRange();
+    const range =
+      this.parseOptionalRange() ??
+      (isIntType
+        ? {
+            msb: { type: 'number', value: 31, width: 32, sized: false, signed: true, raw: '31', loc: startLoc },
+            lsb: { type: 'number', value: 0, width: 32, sized: false, signed: true, raw: '0', loc: startLoc },
+          }
+        : null);
 
     while (true) {
       const nameTok = this.expect('ident', undefined, '信号声明缺少标识符名称。');
@@ -629,8 +756,10 @@ class Parser {
 
   private parseAssignStmt(): AssignStmt {
     const kw = this.expect('keyword', 'assign', '缺少 assign 关键字。');
+    this.skipOptionalDelay();
     const target = this.parseLValue();
     this.expect('op', '=', 'assign 连续赋值语句必须使用 "="。');
+    this.skipOptionalDelay();
     const value = this.parseExpr();
     this.expect('punct', ';', 'assign 语句末尾缺少分号 ";"。');
     return { target, value, loc: kw.loc };
@@ -703,7 +832,79 @@ class Parser {
 
   private parseStmt(): Stmt {
     const tok = this.peek();
+    return this.withDepth(tok.loc, () => this.parseStmtInner(tok));
+  }
 
+  private parseForStep(): Stmt {
+    const tok = this.peek();
+    if (tok.kind === 'op' && (tok.value === '++' || tok.value === '--')) {
+      const op = this.next().value === '++' ? '+' : '-';
+      const id = this.expect('ident', undefined, 'for 步进表达式缺少循环变量名。');
+      return {
+        type: 'assign',
+        kind: 'blocking',
+        target: { type: 'ident', name: id.value, loc: id.loc },
+        value: {
+          type: 'binary',
+          op,
+          left: { type: 'ident', name: id.value, loc: id.loc },
+          right: { type: 'number', value: 1, width: 32, sized: false, signed: true, raw: '1', loc: tok.loc },
+          loc: tok.loc,
+        },
+        loc: tok.loc,
+      };
+    }
+
+    const id = this.expect('ident', undefined, 'for 步进表达式缺少循环变量名。');
+    const opTok = this.peek();
+    if (opTok.kind === 'op' && (opTok.value === '++' || opTok.value === '--')) {
+      this.next();
+      const op = opTok.value === '++' ? '+' : '-';
+      return {
+        type: 'assign',
+        kind: 'blocking',
+        target: { type: 'ident', name: id.value, loc: id.loc },
+        value: {
+          type: 'binary',
+          op,
+          left: { type: 'ident', name: id.value, loc: id.loc },
+          right: { type: 'number', value: 1, width: 32, sized: false, signed: true, raw: '1', loc: opTok.loc },
+          loc: opTok.loc,
+        },
+        loc: opTok.loc,
+      };
+    }
+    if (opTok.kind === 'op' && (opTok.value === '+=' || opTok.value === '-=')) {
+      this.next();
+      const op = opTok.value === '+=' ? '+' : '-';
+      const delta = this.parseExpr();
+      return {
+        type: 'assign',
+        kind: 'blocking',
+        target: { type: 'ident', name: id.value, loc: id.loc },
+        value: {
+          type: 'binary',
+          op,
+          left: { type: 'ident', name: id.value, loc: id.loc },
+          right: delta,
+          loc: opTok.loc,
+        },
+        loc: opTok.loc,
+      };
+    }
+
+    this.expect('op', '=', 'for 步进表达式期望 "="、"+="、"-="、"++" 或 "--"。');
+    const value = this.parseExpr();
+    return {
+      type: 'assign',
+      kind: 'blocking',
+      target: { type: 'ident', name: id.value, loc: id.loc },
+      value,
+      loc: id.loc,
+    };
+  }
+
+  private parseStmtInner(tok: Token): Stmt {
     if (this.match('punct', ';')) {
       return { type: 'empty', loc: tok.loc };
     }
@@ -732,8 +933,29 @@ class Parser {
       return { type: 'if', condition, thenBranch, elseBranch, loc: tok.loc };
     }
 
-    if (this.check('keyword', 'case') || this.check('keyword', 'casez')) {
-      const kind = this.next().value as 'case' | 'casez';
+    if (this.match('keyword', 'for')) {
+      this.expect('punct', '(', 'for 循环缺少左括号 "("。');
+      if (this.check('keyword', 'integer') || this.check('keyword', 'int')) {
+        this.next();
+      }
+      const initVar = this.expect('ident', undefined, 'for 循环初始化缺少变量名。');
+      this.expect('op', '=', 'for 循环初始化缺少 "="。');
+      const init = this.parseExpr();
+      this.expect('punct', ';', 'for 循环初始化后缺少分号 ";"。');
+      const condition = this.parseExpr();
+      this.expect('punct', ';', 'for 循环条件后缺少分号 ";"。');
+      const step = this.parseForStep();
+      this.expect('punct', ')', 'for 循环头部缺少右括号 ")"。');
+      const body = this.parseStmt();
+      return { type: 'for', varName: initVar.value, init, condition, step, body, loc: tok.loc };
+    }
+
+    if (
+      this.check('keyword', 'case') ||
+      this.check('keyword', 'casez') ||
+      this.check('keyword', 'casex')
+    ) {
+      const kind = this.next().value as 'case' | 'casez' | 'casex';
       this.expect('punct', '(', `${kind} 语句缺少左括号 "("。`);
       const expr = this.parseExpr();
       this.expect('punct', ')', `${kind} 语句缺少右括号 ")"。`);
@@ -741,7 +963,11 @@ class Parser {
       const items: CaseItem[] = [];
       let defaultBranch: Stmt | undefined;
 
-      while (!this.check('keyword', 'endcase') && !this.check('eof')) {
+      while (
+        !this.check('keyword', 'endcase') &&
+        !this.check('keyword', 'endmodule') &&
+        !this.check('eof')
+      ) {
         if (this.match('keyword', 'default')) {
           this.match('punct', ':');
           defaultBranch = this.parseStmt();
@@ -766,6 +992,7 @@ class Parser {
       const opTok = this.peek();
       if (opTok.kind === 'op' && (opTok.value === '=' || opTok.value === '<=')) {
         this.next();
+        this.skipOptionalDelay();
         const value = this.parseExpr();
         this.expect('punct', ';', `第 ${opTok.loc.line} 行赋值语句末尾缺少分号 ";"。`);
         return {
@@ -817,7 +1044,7 @@ class Parser {
   }
 
   private parseExpr(): Expr {
-    return this.parseTernary();
+    return this.withDepth(this.peek().loc, () => this.parseTernary());
   }
 
   private parseTernary(): Expr {
@@ -860,9 +1087,10 @@ class Parser {
 
   private parseBitXor(): Expr {
     let left = this.parseBitAnd();
-    while (this.match('op', '^')) {
+    while (this.check('op', '^') || this.check('op', '~^') || this.check('op', '^~')) {
+      const op = this.next().value as BinaryOp;
       const right = this.parseBitAnd();
-      left = { type: 'binary', op: '^', left, right, loc: left.loc };
+      left = { type: 'binary', op, left, right, loc: left.loc };
     }
     return left;
   }
@@ -878,7 +1106,12 @@ class Parser {
 
   private parseEquality(): Expr {
     let left = this.parseRelational();
-    while (this.check('op', '==') || this.check('op', '!=')) {
+    while (
+      this.check('op', '==') ||
+      this.check('op', '!=') ||
+      this.check('op', '===') ||
+      this.check('op', '!==')
+    ) {
       const op = this.next().value as BinaryOp;
       const right = this.parseRelational();
       left = { type: 'binary', op, left, right, loc: left.loc };
@@ -945,6 +1178,10 @@ class Parser {
         tok.value === '&' ||
         tok.value === '|' ||
         tok.value === '^' ||
+        tok.value === '~&' ||
+        tok.value === '~|' ||
+        tok.value === '~^' ||
+        tok.value === '^~' ||
         tok.value === '-' ||
         tok.value === '+')
     ) {
@@ -983,6 +1220,8 @@ class Parser {
         sized: tok.numInfo.sized,
         signed: tok.numInfo.signed,
         raw: tok.value,
+        ...(tok.numInfo.wildcardMask !== undefined && { wildcardMask: tok.numInfo.wildcardMask }),
+        ...(tok.numInfo.xMask !== undefined && { xMask: tok.numInfo.xMask }),
         loc: tok.loc,
       };
     }

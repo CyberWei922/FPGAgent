@@ -54,6 +54,7 @@ function assignments(stmt: Stmt): Extract<Stmt, { type: 'assign' }>[] {
     case 'block': return stmt.statements.flatMap(assignments);
     case 'if': return [...assignments(stmt.thenBranch), ...assignments(stmt.elseBranch ?? { type: 'empty', loc: stmt.loc })];
     case 'case': return [...stmt.items.flatMap((item) => assignments(item.body)), ...assignments(stmt.defaultBranch ?? { type: 'empty', loc: stmt.loc })];
+    case 'for': return assignments(stmt.body);
   }
 }
 
@@ -71,6 +72,7 @@ function statementInputs(stmt: Stmt, target: string): string[] {
       ...stmt.items.flatMap(({ patterns, body }) => [...patterns.flatMap(dependencies), ...statementInputs(body, target)]),
       ...stmt.defaultBranch ? statementInputs(stmt.defaultBranch, target) : [],
     ];
+    case 'for': return [...dependencies(stmt.init), ...dependencies(stmt.condition), ...statementInputs(stmt.body, target)];
   }
 }
 
@@ -87,12 +89,13 @@ function nextExpression(stmt: Stmt | undefined, name: string, previous: Expr | u
       if (!thenExpr || !elseExpr) return undefined;
       return { type: 'ternary', condition: stmt.condition, thenExpr, elseExpr, loc: stmt.loc };
     }
-    case 'case': return undefined;
+    case 'case':
+    case 'for': return undefined;
   }
 }
 
 function containsCase(stmt: Stmt): boolean {
-  if (stmt.type === 'case') return true;
+  if (stmt.type === 'case' || stmt.type === 'for') return true;
   if (stmt.type === 'block') return stmt.statements.some(containsCase);
   return stmt.type === 'if' && (containsCase(stmt.thenBranch) || Boolean(stmt.elseBranch && containsCase(stmt.elseBranch)));
 }
@@ -123,7 +126,19 @@ export class CompiledNetlist {
     };
     const nodes = this.nodes.map(({ read, ...node }) => ({ ...node, ...sample(read) }));
     const edges = this.edges.map(({ read, ...edge }, index) => ({ ...edge, id: `e_${index}`, ...sample(read) }));
-    return { nodes, edges, maxLevel: this.maxLevel, narration: this.buildNarration(nodes) };
+    return {
+      nodes,
+      edges,
+      maxLevel: this.maxLevel,
+      narration: this.buildNarration(nodes),
+      levelNarrations: this.buildLevelNarrations(nodes),
+    };
+  }
+
+  private formatNodeEvent(node: NetlistNode): string {
+    if (node.id === 'out_traffic') return `${node.label}=${node.value}${formatTrafficNote(node.value)}`;
+    if (['INPUT', 'OUTPUT', 'DFF'].includes(node.kind)) return `${node.label}=${node.value}`;
+    return node.sampled ? `${node.label}=${node.value}` : node.label;
   }
 
   private buildNarration(nodes: NetlistNode[]): string {
@@ -138,6 +153,53 @@ export class CompiledNetlist {
       if (['INPUT', 'OUTPUT', 'DFF'].includes(node.kind)) return `${node.label}=${node.value}`;
       return node.label;
     }).join(' → ') || '当前拍内部信号有变化';
+  }
+
+  private buildLevelNarrations(nodes: NetlistNode[]): string[] {
+    const result: string[] = [];
+    for (let lv = 0; lv <= this.maxLevel; lv++) {
+      const atLevel = nodes.filter((node) => node.level === lv);
+      const changed = atLevel.filter((node) => node.changed);
+      if (lv === 0) {
+        const changedInputs = changed.filter((node) => node.kind === 'INPUT');
+        if (changedInputs.length > 0) {
+          const summary = changedInputs.slice(0, 3).map((n) => this.formatNodeEvent(n)).join('、');
+          result.push(`第 0 层（输入激励）：${summary}`);
+        } else {
+          result.push('第 0 层（输入激励）：输入端口保持稳定');
+        }
+        continue;
+      }
+
+      const changedMeaningful = changed.filter((node) => node.kind !== 'CONST' && node.kind !== 'BUS');
+      const changedList = changedMeaningful.length > 0 ? changedMeaningful : changed;
+      if (changedList.length === 0) {
+        if (atLevel.some((n) => n.kind === 'OUTPUT')) {
+          result.push(`第 ${lv} 层（输出端）：输出保持稳态`);
+        } else if (atLevel.some((n) => n.kind === 'DFF')) {
+          result.push(`第 ${lv} 层（触发器）：寄存器保持原值`);
+        } else {
+          result.push(`第 ${lv} 层（逻辑传播）：本层信号无跳变`);
+        }
+        continue;
+      }
+
+      const outputs = changedList.filter((n) => n.kind === 'OUTPUT');
+      const dffs = changedList.filter((n) => n.kind === 'DFF');
+      const others = changedList.filter((n) => n.kind !== 'OUTPUT' && n.kind !== 'DFF');
+      const ordered = [...outputs, ...dffs, ...others];
+      const stageLabel =
+        outputs.length === changedList.length
+          ? '输出响应'
+          : dffs.length > 0
+            ? '触发器/状态更新'
+            : outputs.length > 0
+              ? '逻辑与输出响应'
+              : '逻辑门传播';
+      const summary = ordered.slice(0, 3).map((n) => this.formatNodeEvent(n)).join('、');
+      result.push(`第 ${lv} 层（${stageLabel}）：${summary}`);
+    }
+    return result;
   }
 }
 
@@ -317,7 +379,7 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
       else if (op === '!' && left.width === 1) kind = 'NOT';
       else if ((op === '&&' || op === '||') && left.width === 1 && right.width === 1) kind = op === '&&' ? 'AND' : 'OR';
       else if (op === '+' || op === '-') kind = 'ADD';
-      else if (['==', '!=', '<', '<=', '>', '>='].includes(op)) kind = 'CMP';
+      else if (['==', '!=', '===', '!==', '<', '<=', '>', '>='].includes(op)) kind = 'CMP';
       const output = addNode(kind, name ?? op, width, read, expr.loc, op);
       operands.forEach((operand, index) => {
         const input = expr.type === 'binary' && bitwise[op] ? resize(operand, width, operand.name, expr.loc) : operand;

@@ -79,10 +79,19 @@ export type Stmt =
   | { type: 'if'; condition: Expr; thenBranch: Stmt; elseBranch?: Stmt; loc: SourceLoc }
   | {
       type: 'case';
-      kind: 'case' | 'casez';
+      kind: 'case' | 'casez' | 'casex';
       expr: Expr;
       items: CaseItem[];
       defaultBranch?: Stmt;
+      loc: SourceLoc;
+    }
+  | {
+      type: 'for';
+      varName: string;
+      init: Expr;
+      condition: Expr;
+      step: Stmt;
+      body: Stmt;
       loc: SourceLoc;
     }
   | { type: 'empty'; loc: SourceLoc };
@@ -93,7 +102,7 @@ export interface CaseItem {
   loc: SourceLoc;
 }
 
-export type UnaryOp = '~' | '!' | '&' | '|' | '^' | '-' | '+';
+export type UnaryOp = '~' | '!' | '&' | '|' | '^' | '~&' | '~|' | '~^' | '^~' | '-' | '+';
 
 export type BinaryOp =
   | '+'
@@ -104,10 +113,14 @@ export type BinaryOp =
   | '&'
   | '|'
   | '^'
+  | '~^'
+  | '^~'
   | '&&'
   | '||'
   | '=='
   | '!='
+  | '==='
+  | '!=='
   | '<'
   | '<='
   | '>'
@@ -125,6 +138,8 @@ export type Expr =
       sized: boolean;
       signed: boolean;
       raw: string;
+      wildcardMask?: number;
+      xMask?: number;
       loc: SourceLoc;
     }
   | { type: 'ident'; name: string; loc: SourceLoc }
