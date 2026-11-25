@@ -2109,24 +2109,84 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 10px;
   font-size: 13px;
   font-weight: 700;
 }
 .fsm-head span { display: inline-flex; align-items: center; gap: 6px; }
+.fsm-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.fsm-mode-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  gap: 2px;
+}
+.fsm-mode-switch button {
+  height: 21px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+.fsm-mode-switch button:hover {
+  color: var(--ink);
+}
+.fsm-mode-switch button.active {
+  background: var(--accent-tint);
+  color: var(--accent-ink);
+}
 .fsm-canvas {
-  padding: 12px;
+  padding: 16px 12px;
   background: var(--canvas-bg);
   overflow-x: auto;
 }
-.fsm-canvas svg { width: 100%; max-height: 300px; display: block; }
-.fsm-node rect { fill: var(--elevated); stroke: var(--line-strong); stroke-width: 1.6; }
+.fsm-canvas svg {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  height: auto;
+}
+.fsm-canvas svg.fsm-svg-scroll { max-width: none; }
+.fsm-node { cursor: default; transition: opacity var(--motion-fast) ease; }
+.fsm-node.dimmed { opacity: 0.35; }
+.fsm-node rect { fill: var(--elevated); stroke: var(--line-strong); stroke-width: 1.5; transition: stroke var(--motion-fast) ease, fill var(--motion-fast) ease; }
 .fsm-node.initial rect { fill: var(--accent-tint); stroke: var(--accent); stroke-width: 2; }
-.fsm-node text { fill: var(--ink); font: 700 12px var(--mono); }
-.fsm-edge path { fill: none; stroke: var(--wire-low); stroke-width: 1.5; }
-.fsm-edge text { fill: var(--muted); font: 500 10.5px var(--sans); }
+.fsm-node.active rect { stroke: var(--accent); stroke-width: 2; }
+.fsm-node .fsm-node-inner { fill: none; stroke: var(--line-strong); stroke-width: 1; }
+.fsm-node.initial .fsm-node-inner, .fsm-node.active .fsm-node-inner { stroke: var(--accent-border); }
+.fsm-node text { fill: var(--ink); font: 700 12.5px var(--mono); }
+.fsm-edge-group { transition: opacity var(--motion-fast) ease; }
+.fsm-edge-group.dimmed { opacity: 0.22; }
+.fsm-edge-hit { fill: none; stroke: transparent; stroke-width: 14; cursor: pointer; }
+.fsm-edge-path { fill: none; stroke: var(--wire-low); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; transition: stroke var(--motion-fast) ease, stroke-width var(--motion-fast) ease; }
+.fsm-edge-primary { stroke: var(--wire-junction); stroke-width: 1.75; }
+.fsm-edge-secondary, .fsm-edge-self { stroke: var(--wire-low); stroke-width: 1.45; }
+.fsm-edge-group.active .fsm-edge-path { stroke: var(--accent); stroke-width: 2.1; }
+.fsm-edge-label { cursor: pointer; transition: opacity var(--motion-fast) ease; }
+.fsm-edge-label.dimmed { opacity: 0.22; }
+.fsm-label-bg { fill: var(--canvas-bg); stroke: var(--line); stroke-width: 1; transition: stroke var(--motion-fast) ease, fill var(--motion-fast) ease; }
+.fsm-edge-label.active .fsm-label-bg { stroke: var(--accent); fill: var(--elevated); }
+.fsm-edge-label text { fill: var(--muted); font: 500 11px var(--sans); transition: fill var(--motion-fast) ease; }
+.fsm-edge-label.active text { fill: var(--ink); font-weight: 600; }
+.fsm-start { transition: opacity var(--motion-fast) ease; }
+.fsm-start.dimmed { opacity: 0.35; }
 .fsm-start circle { fill: var(--accent); }
-.fsm-start line { stroke: var(--accent); stroke-width: 1.6; }
-.fsm-arrow-head { fill: var(--accent); }
+.fsm-start line { stroke: var(--accent); stroke-width: 1.8; stroke-linecap: round; }
+.fsm-arrow-primary { fill: var(--wire-junction); }
+.fsm-arrow-secondary { fill: var(--wire-low); }
+.fsm-arrow-accent { fill: var(--accent); }
 .fsm-raw { margin: 0; padding: 14px; background: var(--surface); font: 12px/1.6 var(--mono); overflow: auto; }
 
 /* Verilog Studio */

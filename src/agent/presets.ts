@@ -115,6 +115,7 @@ const PASSWORD_LOCK_BLUEPRINT: PresetProject['blueprint'] = {
     STEP0 --> STEP0: 数字错误
     STEP1 --> STEP0: 数字错误
     STEP2 --> STEP0: 数字错误
+    STEP3 --> STEP0: 数字错误
     UNLOCKED --> STEP0: KEY1 重新上锁`,
 };
 
@@ -207,6 +208,7 @@ const SEQUENCE_DETECTOR_BLUEPRINT: PresetProject['blueprint'] = {
   ],
   mermaidFsm: `stateDiagram-v2
     [*] --> S0
+    S0 --> S0: din=0
     S0 --> S1: din=1
     S1 --> S1: din=1
     S1 --> S2: din=0
@@ -322,7 +324,7 @@ const STOPWATCH_BLUEPRINT: PresetProject['blueprint'] = {
     [*] --> PAUSED
     PAUSED --> RUNNING: KEY0
     RUNNING --> PAUSED: KEY0
-    RUNNING --> PAUSED: KEY1 清零
+    RUNNING --> RUNNING: KEY1 清零
     PAUSED --> PAUSED: KEY1 清零`,
 };
 
