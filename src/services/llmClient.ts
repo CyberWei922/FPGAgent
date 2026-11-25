@@ -4,12 +4,22 @@ import {
   type LLMCallOptions,
   type LLMClient,
   type LLMErrorCode,
+  type LLMModelOption,
+  type LLMProviderId,
+  type LLMProviderPreset,
 } from '../types/contracts';
 
 export interface ByokConfig {
+  providerId?: Exclude<LLMProviderId, 'site-default'>;
   baseUrl: string;
   apiKey: string;
   model: string;
+  cachedModels?: LLMModelOption[];
+}
+
+export interface AppPreferences {
+  enableWebResearch: boolean;
+  defaultClockSpeed: 'realtime' | 'slow';
 }
 
 type FetchImpl = typeof fetch;
@@ -21,9 +31,88 @@ export type LLMClientConfig =
 
 export const PROXY_ENDPOINT = '/functions/v1/app/agent';
 export const QUOTA_ENDPOINT = '/functions/v1/app/quota';
+export const MODELS_ENDPOINT = '/functions/v1/app/models';
 const BYOK_STORAGE_KEY = 'vibefpga.byok';
+const PREFS_STORAGE_KEY = 'fpgagent.prefs';
 const DEFAULT_NODE_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 const DEFAULT_NODE_MODEL = 'qwen-plus';
+
+export const PROVIDER_PRESETS: LLMProviderPreset[] = [
+  {
+    id: 'deepseek',
+    name: 'DeepSeek',
+    baseUrl: 'https://api.deepseek.com/v1',
+    defaultModel: 'deepseek-chat',
+    suggestedModels: ['deepseek-chat', 'deepseek-reasoner'],
+    docsUrl: 'https://platform.deepseek.com/api_keys',
+    supportsJsonMode: true,
+  },
+  {
+    id: 'zhipu-glm',
+    name: '智谱 GLM',
+    baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
+    defaultModel: 'glm-4.5-air',
+    suggestedModels: ['glm-4.5-air', 'glm-4-plus', 'glm-4-flash'],
+    docsUrl: 'https://open.bigmodel.cn/usercenter/apikeys',
+    supportsJsonMode: true,
+  },
+  {
+    id: 'dashscope-qwen',
+    name: '通义千问',
+    baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    defaultModel: 'qwen-plus',
+    suggestedModels: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-coder-plus'],
+    docsUrl: 'https://bailian.console.aliyun.com/',
+    supportsJsonMode: true,
+  },
+  {
+    id: 'siliconflow',
+    name: '硅基流动',
+    baseUrl: 'https://api.siliconflow.cn/v1',
+    defaultModel: 'deepseek-ai/DeepSeek-V3',
+    suggestedModels: [
+      'deepseek-ai/DeepSeek-V3',
+      'Qwen/Qwen2.5-Coder-32B-Instruct',
+      'Qwen/Qwen2.5-72B-Instruct',
+    ],
+    docsUrl: 'https://cloud.siliconflow.cn/account/ak',
+    supportsJsonMode: true,
+  },
+  {
+    id: 'moonshot-kimi',
+    name: '月之暗面 Kimi',
+    baseUrl: 'https://api.moonshot.cn/v1',
+    defaultModel: 'moonshot-v1-8k',
+    suggestedModels: ['moonshot-v1-8k', 'moonshot-v1-32k', 'kimi-k2-0711-preview'],
+    docsUrl: 'https://platform.moonshot.cn/console/api-keys',
+    supportsJsonMode: true,
+  },
+  {
+    id: 'custom',
+    name: '自定义兼容',
+    baseUrl: '',
+    defaultModel: '',
+    suggestedModels: [],
+    supportsJsonMode: true,
+  },
+];
+
+export function getProviderPreset(id?: LLMProviderId): LLMProviderPreset | undefined {
+  if (!id || id === 'site-default') return undefined;
+  return PROVIDER_PRESETS.find((preset) => preset.id === id);
+}
+
+export function inferProviderId(baseUrl: string): Exclude<LLMProviderId, 'site-default'> {
+  const normalized = normalizeBaseUrl(baseUrl);
+  const matched = PROVIDER_PRESETS.find(
+    (preset) => preset.id !== 'custom' && normalizeBaseUrl(preset.baseUrl) === normalized,
+  );
+  return matched ? matched.id : 'custom';
+}
+
+export function normalizeBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, '').replace(/\/chat\/completions$/, '').replace(/\/models$/, '');
+}
 
 const SERVER_ERROR_MAP: Record<string, LLMErrorCode> = {
   quota_exceeded: 'QUOTA_EXCEEDED',
@@ -54,13 +143,99 @@ function toLLMError(error: unknown): LLMError {
   return new LLMError('NETWORK', error instanceof Error ? error.message : '未知网络错误');
 }
 
-function isAllowedBaseUrl(value: string): boolean {
+export function isAllowedBaseUrl(value: string): boolean {
   try {
     const url = new URL(value);
-    return url.protocol === 'https:' || ['localhost', '127.0.0.1'].includes(url.hostname);
+    const local = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
+    return (local || url.protocol === 'https:') && !url.username && !url.password && !url.search && !url.hash;
   } catch {
     return false;
   }
+}
+
+export async function fetchOpenAIModels(
+  baseUrl: string,
+  apiKey: string,
+  options: { signal?: AbortSignal; fetchImpl?: FetchImpl } = {},
+): Promise<LLMModelOption[]> {
+  if (!apiKey.trim()) throw new LLMError('NOT_CONFIGURED', '请先填写 API Key');
+  const normalized = normalizeBaseUrl(baseUrl);
+  if (!isAllowedBaseUrl(normalized)) throw new LLMError('NOT_CONFIGURED', 'Base URL 必须是有效的 https 地址');
+
+  const fetchImpl = options.fetchImpl ?? fetch;
+  let res: Response;
+  try {
+    res = await fetchImpl(`${normalized}/models`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${apiKey.trim()}`,
+      },
+      signal: options.signal,
+    });
+  } catch (error) {
+    if (options.signal?.aborted) throw new LLMError('ABORTED', '已取消拉取模型列表');
+    throw new LLMError('NETWORK', error instanceof Error ? error.message : '无法连接模型列表接口');
+  }
+
+  if (res.status === 401 || res.status === 403) {
+    throw new LLMError('NOT_CONFIGURED', 'API Key 鉴权失败，请检查密钥是否正确', res.status);
+  }
+  if (!res.ok) {
+    throw new LLMError('UPSTREAM', `获取模型列表失败（HTTP ${res.status}）`, res.status);
+  }
+
+  let payload: unknown;
+  try {
+    payload = await res.json();
+  } catch {
+    throw new LLMError('BAD_RESPONSE', '模型列表接口返回了非 JSON 内容', res.status);
+  }
+
+  const rawList = Array.isArray((payload as { data?: unknown[] })?.data)
+    ? (payload as { data: unknown[] }).data
+    : Array.isArray((payload as { models?: unknown[] })?.models)
+      ? (payload as { models: unknown[] }).models
+      : null;
+
+  if (!rawList) {
+    throw new LLMError('BAD_RESPONSE', '模型列表响应缺少 data 数组', res.status);
+  }
+
+  const seen = new Set<string>();
+  const models: LLMModelOption[] = [];
+  for (const entry of rawList) {
+    if (!entry || typeof entry !== 'object') continue;
+    const item = entry as { id?: unknown; name?: unknown; owned_by?: unknown; context_length?: unknown };
+    const id = typeof item.id === 'string' ? item.id.trim() : '';
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    models.push({
+      id,
+      label: typeof item.name === 'string' && item.name.trim() ? item.name.trim() : undefined,
+      ownedBy: typeof item.owned_by === 'string' ? item.owned_by : undefined,
+      contextWindow: typeof item.context_length === 'number' ? item.context_length : undefined,
+    });
+  }
+
+  models.sort((a, b) => a.id.localeCompare(b.id));
+  return models;
+}
+
+export function getSuggestedModelOptions(providerId?: LLMProviderId, activeModel?: string): LLMModelOption[] {
+  const preset = getProviderPreset(providerId);
+  const ids = new Set<string>();
+  const list: LLMModelOption[] = [];
+  if (activeModel?.trim()) {
+    ids.add(activeModel.trim());
+    list.push({ id: activeModel.trim() });
+  }
+  for (const id of preset?.suggestedModels ?? []) {
+    if (!ids.has(id)) {
+      ids.add(id);
+      list.push({ id });
+    }
+  }
+  return list;
 }
 
 function createDirectClient(cfg: ByokConfig, fetchImpl?: FetchImpl): LLMClient {
@@ -70,18 +245,54 @@ function createDirectClient(cfg: ByokConfig, fetchImpl?: FetchImpl): LLMClient {
       if (!isAllowedBaseUrl(cfg.baseUrl)) {
         throw new LLMError('NOT_CONFIGURED', 'Base URL 必须是 https 地址');
       }
+      const resolvedModel = options.model?.trim() || cfg.model;
       try {
         const text = await callOpenAICompatible({
-          ...cfg,
+          baseUrl: cfg.baseUrl,
+          apiKey: cfg.apiKey,
+          model: resolvedModel,
           messages: options.messages,
           temperature: options.temperature,
           jsonMode: options.jsonMode,
           signal: options.signal,
           fetchImpl,
         });
-        return { text };
+        return { text, ...(options.model ? { model: resolvedModel } : {}) };
       } catch (error) {
         throw toLLMError(error);
+      }
+    },
+
+    async listModels(options) {
+      return fetchOpenAIModels(cfg.baseUrl, cfg.apiKey, {
+        signal: options?.signal,
+        fetchImpl,
+      });
+    },
+
+    async testConnection(options) {
+      const start = Date.now();
+      const targetModel = options?.model?.trim() || cfg.model;
+      try {
+        await callOpenAICompatible({
+          baseUrl: cfg.baseUrl,
+          apiKey: cfg.apiKey,
+          model: targetModel,
+          messages: [{ role: 'user', content: 'ping' }],
+          temperature: 0,
+          jsonMode: false,
+          signal: options?.signal,
+          fetchImpl,
+        });
+        return { ok: true, latencyMs: Math.max(1, Date.now() - start), model: targetModel };
+      } catch (error) {
+        const mapped = toLLMError(error);
+        return {
+          ok: false,
+          latencyMs: Math.max(1, Date.now() - start),
+          model: targetModel,
+          message: mapped.message,
+        };
       }
     },
   };
@@ -92,16 +303,18 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
     async chat(options: LLMCallOptions) {
       let res: Response;
       try {
+        const payloadBody: Record<string, unknown> = {
+          action: options.action,
+          messages: options.messages,
+          temperature: options.temperature,
+          jsonMode: options.jsonMode,
+        };
+        if (options.model?.trim()) payloadBody.model = options.model.trim();
         res = await fetchImpl(endpoint, {
           method: 'POST',
           credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            action: options.action,
-            messages: options.messages,
-            temperature: options.temperature,
-            jsonMode: options.jsonMode,
-          }),
+          body: JSON.stringify(payloadBody),
           signal: options.signal,
         });
       } catch (error) {
@@ -109,7 +322,7 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
         throw toLLMError(error);
       }
 
-      let data: { ok?: boolean; text?: unknown; error?: unknown; remainingQuota?: unknown };
+      let data: { ok?: boolean; text?: unknown; error?: unknown; remainingQuota?: unknown; model?: unknown };
       try {
         const payload: unknown = await res.json();
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -134,7 +347,46 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
       return {
         text: data.text,
         remainingQuota: typeof data.remainingQuota === 'number' ? data.remainingQuota : undefined,
+        ...(typeof data.model === 'string' ? { model: data.model } : {}),
       };
+    },
+
+    async listModels(options) {
+      try {
+        const res = await fetchImpl(MODELS_ENDPOINT, {
+          method: 'GET',
+          credentials: 'same-origin',
+          signal: options?.signal,
+        });
+        if (!res.ok) return [{ id: 'site-default', label: '站点默认模型' }];
+        const data = (await res.json()) as { ok?: boolean; models?: LLMModelOption[] };
+        if (data.ok && Array.isArray(data.models) && data.models.length > 0) return data.models;
+      } catch {
+        // Local dev without edge proxy falls back gracefully.
+      }
+      return [{ id: 'site-default', label: '站点默认模型' }];
+    },
+
+    async testConnection(options) {
+      const start = Date.now();
+      try {
+        const res = await fetchImpl(QUOTA_ENDPOINT, {
+          credentials: 'same-origin',
+          signal: options?.signal,
+        });
+        const data = (await res.json()) as { ok?: boolean; remainingQuota?: unknown };
+        if (res.ok && data.ok) {
+          return {
+            ok: true,
+            latencyMs: Math.max(1, Date.now() - start),
+            model: 'site-default',
+            message: typeof data.remainingQuota === 'number' ? `剩余免费额度 ${data.remainingQuota} 次` : '站点默认服务可用',
+          };
+        }
+        return { ok: false, latencyMs: Math.max(1, Date.now() - start), message: '站点默认代理暂不可用，可切换自备 API Key' };
+      } catch {
+        return { ok: false, latencyMs: Math.max(1, Date.now() - start), message: '未连接到站点默认代理，请在上方选择服务商并填写 Key' };
+      }
     },
   };
 }
@@ -169,7 +421,19 @@ export function loadByokConfig(): ByokConfig | null {
     const cfg = JSON.parse(raw) as Partial<ByokConfig>;
     if (typeof cfg.apiKey !== 'string' || !cfg.apiKey) return null;
     if (typeof cfg.baseUrl !== 'string' || typeof cfg.model !== 'string') return null;
-    return { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: cfg.model };
+    const providerId = cfg.providerId && PROVIDER_PRESETS.some((p) => p.id === cfg.providerId)
+      ? cfg.providerId
+      : inferProviderId(cfg.baseUrl);
+    const cachedModels = Array.isArray(cfg.cachedModels)
+      ? cfg.cachedModels.filter((m): m is LLMModelOption => Boolean(m && typeof m.id === 'string'))
+      : undefined;
+    return {
+      providerId,
+      apiKey: cfg.apiKey,
+      baseUrl: cfg.baseUrl,
+      model: cfg.model,
+      cachedModels,
+    };
   } catch {
     return null;
   }
@@ -180,13 +444,43 @@ export function saveByokConfig(cfg: ByokConfig | null): void {
   else localStorage.removeItem(BYOK_STORAGE_KEY);
 }
 
-// Re-reads BYOK settings on every call so the settings dialog takes effect immediately.
+export function loadAppPreferences(): AppPreferences {
+  try {
+    const raw = localStorage.getItem(PREFS_STORAGE_KEY);
+    if (!raw) return { enableWebResearch: true, defaultClockSpeed: 'realtime' };
+    const parsed = JSON.parse(raw) as Partial<AppPreferences>;
+    return {
+      enableWebResearch: typeof parsed.enableWebResearch === 'boolean' ? parsed.enableWebResearch : true,
+      defaultClockSpeed: parsed.defaultClockSpeed === 'slow' ? 'slow' : 'realtime',
+    };
+  } catch {
+    return { enableWebResearch: true, defaultClockSpeed: 'realtime' };
+  }
+}
+
+export function saveAppPreferences(prefs: AppPreferences): void {
+  try {
+    localStorage.setItem(PREFS_STORAGE_KEY, JSON.stringify(prefs));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+// Re-reads BYOK settings on every call so the settings dialog and inline model switch take effect immediately.
 export function createBrowserLLMClient(): LLMClient {
   const proxy = createProxyClient(PROXY_ENDPOINT);
   return {
     chat(options) {
       const byok = loadByokConfig();
       return byok ? createDirectClient(byok).chat(options) : proxy.chat(options);
+    },
+    listModels(options) {
+      const byok = loadByokConfig();
+      return byok ? createDirectClient(byok).listModels!(options) : proxy.listModels!(options);
+    },
+    testConnection(options) {
+      const byok = loadByokConfig();
+      return byok ? createDirectClient(byok).testConnection!(options) : proxy.testConnection!(options);
     },
   };
 }

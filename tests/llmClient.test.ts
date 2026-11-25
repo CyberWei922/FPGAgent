@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { createLLMClient } from '../src/services/llmClient';
+import {
+  createLLMClient,
+  fetchOpenAIModels,
+  inferProviderId,
+  PROVIDER_PRESETS,
+} from '../src/services/llmClient';
+import { ACCENT_PRESETS, computeAccentTokens } from '../src/services/theme';
 import { LLMError, type LLMCallOptions } from '../src/types/contracts';
 
 const call: LLMCallOptions = { action: 'plan', messages: [{ role: 'user', content: 'hi' }], jsonMode: true };
@@ -111,5 +117,80 @@ describe('llmClient 直连模式（BYOK / Node）', () => {
     const pending = client.chat({ ...call, signal: controller.signal });
     controller.abort();
     await expectCode(pending, 'ABORTED');
+  });
+
+  it('单次 chat 支持通过 options.model 覆盖默认模型', async () => {
+    let sentModel = '';
+    const client = createLLMClient({
+      mode: 'byok',
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-test',
+      model: 'deepseek-chat',
+      fetchImpl: async (_url, init) => {
+        sentModel = JSON.parse(String(init?.body)).model;
+        return new Response(JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }));
+      },
+    });
+    const res = await client.chat({ ...call, model: 'deepseek-reasoner' });
+    expect(sentModel).toBe('deepseek-reasoner');
+    expect(res.model).toBe('deepseek-reasoner');
+  });
+
+  it('listModels 解析 /models 返回并去重排序', async () => {
+    const models = await fetchOpenAIModels('https://api.deepseek.com/v1/', 'sk-test', {
+      fetchImpl: jsonFetch(200, {
+        data: [
+          { id: 'deepseek-reasoner', owned_by: 'deepseek' },
+          { id: 'deepseek-chat', owned_by: 'deepseek' },
+          { id: 'deepseek-chat', owned_by: 'deepseek' },
+        ],
+      }),
+    });
+    expect(models.map((m) => m.id)).toEqual(['deepseek-chat', 'deepseek-reasoner']);
+  });
+
+  it('testConnection 成功与失败均返回结构化延迟与状态', async () => {
+    const okClient = createLLMClient({
+      mode: 'byok',
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-ok',
+      model: 'deepseek-chat',
+      fetchImpl: jsonFetch(200, { choices: [{ message: { content: 'pong' } }] }),
+    });
+    const okRes = await okClient.testConnection!();
+    expect(okRes.ok).toBe(true);
+    expect(okRes.latencyMs).toBeGreaterThanOrEqual(1);
+
+    const failClient = createLLMClient({
+      mode: 'byok',
+      baseUrl: 'https://api.deepseek.com/v1',
+      apiKey: 'sk-bad',
+      model: 'deepseek-chat',
+      fetchImpl: jsonFetch(401, { error: { message: 'invalid key' } }),
+    });
+    const failRes = await failClient.testConnection!();
+    expect(failRes.ok).toBe(false);
+    expect(failRes.message).toBeTruthy();
+  });
+
+  it('内置国内常用服务商预设与 URL 反推正常', () => {
+    const ids = PROVIDER_PRESETS.map((p) => p.id);
+    expect(ids).toEqual(expect.arrayContaining(['deepseek', 'zhipu-glm', 'dashscope-qwen', 'siliconflow', 'moonshot-kimi', 'custom']));
+    expect(inferProviderId('https://api.deepseek.com/v1/')).toBe('deepseek');
+    expect(inferProviderId('https://open.bigmodel.cn/api/paas/v4')).toBe('zhipu-glm');
+    expect(inferProviderId('https://example.invalid/v1')).toBe('custom');
+  });
+
+  it('主题色计算同时兼容预设与自定义颜色的深浅模式', () => {
+    for (const preset of ACCENT_PRESETS) {
+      const light = computeAccentTokens({ mode: 'light', accentId: preset.id, customAccent: '#126e71' }, 'light');
+      const dark = computeAccentTokens({ mode: 'dark', accentId: preset.id, customAccent: '#126e71' }, 'dark');
+      expect(light.accent).toMatch(/^#[0-9a-f]{6}$/i);
+      expect(dark.accent).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+    const customLight = computeAccentTokens({ mode: 'light', accentId: 'custom', customAccent: '#f5ff00' }, 'light');
+    const customDark = computeAccentTokens({ mode: 'dark', accentId: 'custom', customAccent: '#0c1020' }, 'dark');
+    expect(customLight.accent).not.toBe('#f5ff00');
+    expect(customDark.accent).not.toBe('#0c1020');
   });
 });

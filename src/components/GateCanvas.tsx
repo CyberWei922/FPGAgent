@@ -231,7 +231,15 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
   );
 }
 
-export function GateCanvas({ netlist, pending = false }: { netlist?: NetlistGraph; pending?: boolean }) {
+export function GateCanvas({
+  netlist,
+  pending = false,
+  statusBadge,
+}: {
+  netlist?: NetlistGraph;
+  pending?: boolean;
+  statusBadge?: string;
+}) {
   const topology = schematicTopology(netlist);
   const [rendered, setRendered] = useState<{ key: string; layout: SchematicLayout | null }>();
 
@@ -249,14 +257,20 @@ export function GateCanvas({ netlist, pending = false }: { netlist?: NetlistGrap
   if (!netlist || !current?.layout) {
     const message = current?.layout === null ? '门级图布局失败。板卡和波形仍可使用。'
       : topology ? '正在为电路布线…'
-        : pending ? '正在准备电路和仿真数据…' : '电路通过编译后，这里会显示门级图。';
+        : pending ? '正在准备电路和仿真数据…' : '电路通过编译后，这里会显示门级原理图。';
     return <div className="gate-blank" role="status"><Workflow size={34} strokeWidth={1.3} /><p>{message}</p></div>;
   }
 
   return (
     <>
       <SchematicViewport key={topology} layout={current.layout} netlist={netlist} />
-      <div className="signal-caption"><span className="configured-dot" />{netlist.narration}</div>
+      <div className="signal-caption">
+        <span className="signal-caption-text">
+          <span className="configured-dot" />
+          <span>{netlist.narration}</span>
+        </span>
+        {statusBadge && <span className="signal-caption-badge">{statusBadge}</span>}
+      </div>
     </>
   );
 }
