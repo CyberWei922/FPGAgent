@@ -275,4 +275,10 @@ export { elaborate, SimulationSession } from './simulator';
 export { buildNetlist, CompiledNetlist } from './netlist';
 export { lintVerilog, BOARD_PORT_SPECS } from './linter';
 export { runDeterministicSelfTest, exportVerilogTestbench } from './selftest';
+export {
+  tokenizeVerilogForHighlight,
+  type HighlightedLine,
+  type HighlightToken,
+  type HighlightTokenKind,
+} from './highlight';
 export type * from './ast';

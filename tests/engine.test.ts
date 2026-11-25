@@ -7,6 +7,7 @@ import {
   parseVerilog,
   runDeterministicSelfTest,
   SimulationSession,
+  tokenizeVerilogForHighlight,
 } from '../src/engine/index';
 import { MOCK_PRESETS } from '../src/agent/mockPresets';
 import { PRESETS } from '../src/agent/presets';
@@ -2414,5 +2415,81 @@ describe('12. 异常语法、模糊压测、边界位宽与长周期性能', () 
     const elapsed = performance.now() - t0;
     expect(lastSeg).toBe(1000);
     expect(elapsed).toBeLessThan(1000);
+  });
+});
+
+describe('13. Verilog 语法着色器 (highlight.ts)', () => {
+  const reconstruct = (code: string) =>
+    tokenizeVerilogForHighlight(code)
+      .map((line) => line.tokens.map((t) => t.value).join(''))
+      .join('\n');
+
+  it('精准分类关键字、类型、板卡端口、位宽字面量、系统函数、指令、注释与运算符', () => {
+    const code = [
+      '`timescale 1ns/1ps',
+      'module top(input clk, output reg [7:0] led);',
+      '  localparam W = $clog2(16);',
+      "  always @(posedge clk) led <= 8'hA5 ^~ 8'b10??_01xz; // 注释",
+      'endmodule',
+    ].join('\n');
+
+    const lines = tokenizeVerilogForHighlight(code);
+    expect(lines).toHaveLength(5);
+    expect(lines.map((l) => l.line)).toEqual([1, 2, 3, 4, 5]);
+    expect(reconstruct(code)).toBe(code);
+
+    expect(lines[0].tokens[0]).toEqual({ kind: 'directive', value: '`timescale' });
+    expect(lines[1].tokens.some((t) => t.kind === 'keyword' && t.value === 'module')).toBe(true);
+    expect(lines[1].tokens.some((t) => t.kind === 'type' && t.value === 'input')).toBe(true);
+    expect(lines[1].tokens.some((t) => t.kind === 'port' && t.value === 'clk')).toBe(true);
+    expect(lines[1].tokens.some((t) => t.kind === 'port' && t.value === 'led')).toBe(true);
+    expect(lines[2].tokens.some((t) => t.kind === 'sysfn' && t.value === '$clog2')).toBe(true);
+    expect(lines[3].tokens.some((t) => t.kind === 'number' && t.value === "8'hA5")).toBe(true);
+    expect(lines[3].tokens.some((t) => t.kind === 'number' && t.value === "8'b10??_01xz")).toBe(true);
+    expect(lines[3].tokens.some((t) => t.kind === 'operator' && t.value === '<=')).toBe(true);
+    expect(lines[3].tokens.some((t) => t.kind === 'operator' && t.value === '^~')).toBe(true);
+    expect(lines[3].tokens.some((t) => t.kind === 'comment' && t.value === '// 注释')).toBe(true);
+  });
+
+  it('正确处理多行块注释与综合属性，且不将 always @(*) 误判为属性', () => {
+    const code = [
+      '/* 第一行注释',
+      '   第二行注释 */',
+      '(* fsm_encoding = "one_hot",',
+      '   keep = "true" *)',
+      'always @(*) begin',
+      '  $display("hi \\"fpga\\"");',
+      'end',
+    ].join('\n');
+
+    const lines = tokenizeVerilogForHighlight(code);
+    expect(reconstruct(code)).toBe(code);
+    expect(lines[0].tokens).toEqual([{ kind: 'comment', value: '/* 第一行注释' }]);
+    expect(lines[1].tokens).toEqual([{ kind: 'comment', value: '   第二行注释 */' }]);
+    expect(lines[2].tokens).toEqual([{ kind: 'attribute', value: '(* fsm_encoding = "one_hot",' }]);
+    expect(lines[3].tokens).toEqual([{ kind: 'attribute', value: '   keep = "true" *)' }]);
+    expect(lines[4].tokens.some((t) => t.kind === 'attribute')).toBe(false);
+    expect(lines[4].tokens.some((t) => t.kind === 'operator' && t.value === '*')).toBe(true);
+    expect(lines[5].tokens.some((t) => t.kind === 'string' && t.value === '"hi \\"fpga\\""')).toBe(true);
+  });
+
+  it('对全部 5 个预置案例源码与未闭合畸形片段均可无损切分且不抛错', () => {
+    for (const p of PRESETS) {
+      const normalized = p.verilogCode.replace(/\r\n/g, '\n');
+      expect(reconstruct(p.verilogCode)).toBe(normalized);
+    }
+
+    const malformed = [
+      '',
+      '/* 未闭合注释\nmodule top',
+      '(* 未闭合属性',
+      '"未闭合字符串',
+      "4'h",
+      '@@@ ###',
+    ];
+    for (const sample of malformed) {
+      expect(() => tokenizeVerilogForHighlight(sample)).not.toThrow();
+      expect(reconstruct(sample)).toBe(sample.replace(/\r\n/g, '\n'));
+    }
   });
 });
