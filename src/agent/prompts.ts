@@ -295,6 +295,12 @@ function clampInt(value: unknown, fallback: number, min: number, max: number): n
   return Math.min(max, Math.max(min, n));
 }
 
+/** 非数字的期望值直接忽略，避免把 "1"、true 之类的字段静默折算成 0 造成假断言。 */
+function clampOptional(value: unknown, min: number, max: number): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined;
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+}
+
 function ensureMermaid(code: string | undefined): string {
   const body = (code ?? '')
     .replace(/^```(?:mermaid)?\s*/i, '')
@@ -338,15 +344,18 @@ export function normalizeTestVectors(value: unknown): TestVectorStep[] {
     const expectRaw = asRecord(record.expect);
     const expect: Partial<{ led: number; traffic: number; seg: number }> = {};
     if (expectRaw) {
-      if (expectRaw.led !== undefined) expect.led = clampInt(expectRaw.led, 0, 0, 0xff);
-      if (expectRaw.traffic !== undefined) expect.traffic = clampInt(expectRaw.traffic, 0, 0, 0b111);
-      if (expectRaw.seg !== undefined) expect.seg = clampInt(expectRaw.seg, 0, 0, 0xffff);
+      const led = clampOptional(expectRaw.led, 0, 0xff);
+      const traffic = clampOptional(expectRaw.traffic, 0, 0b111);
+      const seg = clampOptional(expectRaw.seg, 0, 0xffff);
+      if (led !== undefined) expect.led = led;
+      if (traffic !== undefined) expect.traffic = traffic;
+      if (seg !== undefined) expect.seg = seg;
     }
     const note = asString(record.note);
     return {
       cycle: index,
       inputs: {
-        rst_n: inputs.rst_n === 0 ? 0 : 1,
+        rst_n: index === 0 ? 0 : inputs.rst_n === 0 ? 0 : 1,
         key: clampInt(inputs.key, 0, 0, 0b1111),
         sw: clampInt(inputs.sw, 0, 0, 0xff),
       },
@@ -447,6 +456,10 @@ export function parseBugCaseResponse(text: string, fallbackFixedCode: string): B
         : fallbackFixedCode,
     highlightLine:
       typeof diagnosisRecord?.highlightLine === 'number' ? Math.trunc(diagnosisRecord.highlightLine as number) : undefined,
+    highlightCycle:
+      typeof diagnosisRecord?.highlightCycle === 'number'
+        ? Math.trunc(diagnosisRecord.highlightCycle as number)
+        : undefined,
   };
   return {
     id: asString(record.id) ?? `bug-${Date.now()}`,

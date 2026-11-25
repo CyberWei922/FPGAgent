@@ -70,6 +70,7 @@ function createStubEngine(script: EngineScript): RtlEngine {
         totalChecks: partial.totalChecks ?? expectCount,
         passedChecks: partial.passedChecks ?? (partial.passed ? expectCount : 0),
         firstFailure: partial.firstFailure,
+        firstUnstableCycle: partial.firstUnstableCycle,
         passedCycles,
         regressedCycles: partial.regressedCycles ?? [],
         waveform: partial.waveform ?? [],
@@ -255,6 +256,21 @@ describe('提示词与 JSON 解析', () => {
     expect(parsed.testVectors[1].expect?.traffic).toBe(7);
   });
 
+  it('首拍强制复位，非数字 expect 被忽略而不是折算成 0', () => {
+    const parsed = parsePlanResponse(
+      JSON.stringify({
+        blueprint: BLUEPRINT,
+        testVectors: [
+          { inputs: { rst_n: 1, key: 0, sw: 0 }, expect: { led: '1', traffic: 3 } },
+          { inputs: { rst_n: 1 }, expect: { seg: 'abc' } },
+        ],
+      }),
+    );
+    expect(parsed.testVectors[0].inputs.rst_n).toBe(0);
+    expect(parsed.testVectors[0].expect).toEqual({ traffic: 3 });
+    expect(parsed.testVectors[1].expect).toBeUndefined();
+  });
+
   it('生成结果可解析 JSON、围栏与纯 Verilog 文本', () => {
     expect(parseCodeResponse(JSON.stringify({ code: CODE_A })).code).toBe(CODE_A);
     expect(parseCodeResponse(`\`\`\`verilog\n${CODE_B}\n\`\`\``).code).toBe(CODE_B);
@@ -284,6 +300,17 @@ describe('提示词与 JSON 解析', () => {
     expect(messages[1].content).toContain('"firstFailure"');
     expect(messages[1].content).toContain('"cycle": 1');
     expect(messages[1].content).toContain('candidate A');
+  });
+
+  it('repair 提示词携带组合逻辑未收敛周期', () => {
+    const messages = buildRepairMessages({
+      code: CODE_A,
+      issues: [],
+      selfTest: { ...failingSelfTest(1, [0]), firstUnstableCycle: 2 },
+      blueprint: BLUEPRINT,
+      testVectors: VECTORS,
+    });
+    expect(messages[1].content).toContain('"firstUnstableCycle": 2');
   });
 });
 
@@ -342,6 +369,7 @@ describe('Harness 闭环', () => {
     expect(result.repairRounds).toBe(1);
     expect(result.verilogCode).toBe(CODE_A);
     expect(calls.map((call) => call.action)).toEqual(['plan', 'generate', 'repair']);
+    expect(calls[2].temperature).toBe(0.2);
     expect(events.some((event) => event.stage === 'repairing' && event.status === 'pass')).toBe(true);
   });
 
@@ -393,6 +421,62 @@ describe('Harness 闭环', () => {
     expect(previousValues[0]).toBeUndefined();
     expect(previousValues[1]).toEqual([0]);
     expect(previousValues[2]).toEqual([0]);
+  });
+
+  it('组合逻辑未收敛时按未收敛周期触发修复', async () => {
+    const { llm, calls } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+      repair: () => JSON.stringify({ code: CODE_B }),
+    });
+    const engine = createStubEngine({
+      selfTest: (code) =>
+        code.includes('candidate A')
+          ? { passed: false, firstUnstableCycle: 2, waveform: Array.from({ length: 6 }, (_, index) => sample(index)) }
+          : { passed: true },
+    });
+    const events: HarnessTraceEvent[] = [];
+
+    const result = await createAgentRuntime({ llm, engine }).runHarness('做个测试电路', {
+      onTrace: (event) => events.push(event),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.verilogCode).toBe(CODE_B);
+    expect(calls.map((call) => call.action)).toEqual(['plan', 'generate', 'repair']);
+    expect(calls[2].messages[1].content).toContain('"firstUnstableCycle": 2');
+    expect(events).toContainEqual(
+      expect.objectContaining({ stage: 'repairing', status: 'running', detail: expect.stringContaining('未收敛') }),
+    );
+  });
+
+  it('代码类动作使用低温，诊断类允许较高温度', async () => {
+    const { llm, calls } = createStubLLM({
+      plan: () => PLAN_JSON,
+      generate: () => JSON.stringify({ code: CODE_A }),
+      diagnose: () =>
+        JSON.stringify({ level1Hint: '先看复位拍', level2Cause: '寄存器未复位', level3PatchCode: CODE_A }),
+      inject_bug: () =>
+        JSON.stringify({
+          title: '隐蔽故障：测试',
+          pitfallTag: 'test-pitfall',
+          symptom: '输出异常',
+          buggyCode: CODE_BAD_1,
+          diagnosis: { level1Hint: '看这里', level2Cause: '因为这里', level3PatchCode: CODE_A },
+        }),
+    });
+    const runtime = createAgentRuntime({ llm, engine: createStubEngine({}) });
+
+    await runtime.runHarness('做个测试电路', { onTrace: () => {} });
+    await runtime.diagnose({
+      code: CODE_A,
+      issues: [],
+      failure: { cycle: 1, signal: 'led', expected: 1, actual: 0 },
+    });
+    await runtime.injectBug(CODE_A);
+
+    const temps = Object.fromEntries(calls.map((call) => [call.action, call.temperature]));
+    expect(temps).toMatchObject({ plan: 0.3, generate: 0.2, diagnose: 0.5, inject_bug: 0.5 });
   });
 
   it('修复额度耗尽时保留候选和反例供用户检查', async () => {
@@ -481,7 +565,12 @@ describe('诊断与故障注入', () => {
           pitfallTag: 'blocking-in-sequential',
           symptom: '倒计时偶发错拍',
           buggyCode: CODE_BAD_2,
-          diagnosis: { level1Hint: '时序块里的赋值符号对吗？', level2Cause: '误用 = 破坏了并发语义。' },
+          diagnosis: {
+            level1Hint: '时序块里的赋值符号对吗？',
+            level2Cause: '误用 = 破坏了并发语义。',
+            highlightLine: 33,
+            highlightCycle: 3,
+          },
         }),
     });
 
@@ -490,6 +579,8 @@ describe('诊断与故障注入', () => {
     expect(bug.id).toMatch(/^bug-/);
     expect(bug.buggyCode).toBe(CODE_BAD_2);
     expect(bug.diagnosis.level3PatchCode).toBe(CODE_A);
+    expect(bug.diagnosis.highlightLine).toBe(33);
+    expect(bug.diagnosis.highlightCycle).toBe(3);
     expect(calls.map((call) => call.action)).toEqual(['inject_bug']);
   });
 });

@@ -140,6 +140,7 @@ export async function requestInjectedBug(llm: LLMClient, code: string): Promise<
   const response = await llm.chat({
     action: 'inject_bug',
     messages: buildInjectBugMessages(code),
+    temperature: 0.5,
     jsonMode: true,
   });
   return parseBugCaseResponse(response.text, code);

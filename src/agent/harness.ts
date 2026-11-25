@@ -29,6 +29,8 @@ import {
 
 const MAX_REPAIR_ROUNDS = 2;
 const WAVEFORM_RADIUS = 4;
+// 代码类动作压低随机性以稳定 JSON 与综合语义，诊断类允许更灵活的表达。
+const TEMPERATURE = { plan: 0.3, generate: 0.2, repair: 0.2, diagnose: 0.5 } as const;
 
 interface Candidate {
   code: string;
@@ -83,6 +85,7 @@ export function createHarnessAgentRuntime({ llm, engine }: AgentRuntimeDeps): Ag
       const planResponse = await llm.chat({
         action: 'plan',
         messages: buildPlanMessages(prompt),
+        temperature: TEMPERATURE.plan,
         jsonMode: true,
         signal,
       });
@@ -99,6 +102,7 @@ export function createHarnessAgentRuntime({ llm, engine }: AgentRuntimeDeps): Ag
       const generateResponse = await llm.chat({
         action: 'generate',
         messages: buildGenerateMessages(plan.blueprint, plan.testVectors),
+        temperature: TEMPERATURE.generate,
         jsonMode: true,
         signal,
       });
@@ -164,6 +168,7 @@ export function createHarnessAgentRuntime({ llm, engine }: AgentRuntimeDeps): Ag
               testVectors: plan.testVectors,
               waveformSlice,
             }),
+            temperature: TEMPERATURE.repair,
             jsonMode: true,
             signal,
           });
@@ -218,6 +223,7 @@ export function createHarnessAgentRuntime({ llm, engine }: AgentRuntimeDeps): Ag
     const response = await llm.chat({
       action: 'diagnose',
       messages: buildDiagnoseMessages(input),
+      temperature: TEMPERATURE.diagnose,
       jsonMode: true,
     });
     return parseDiagnosisResponse(response.text);
