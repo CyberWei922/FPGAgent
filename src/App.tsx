@@ -25,6 +25,7 @@ import {
 import { createAgentRuntime } from './agent';
 import { AboutModal } from './components/AboutModal';
 import { ApiSettings } from './components/ApiSettings';
+import { BrandWordmark } from './components/BrandWordmark';
 import { ChatPane, type ChatTurn } from './components/ChatPane';
 import { GateCanvas } from './components/GateCanvas';
 import { NavRail, type RailTab } from './components/NavRail';
@@ -1154,8 +1155,8 @@ export default function App() {
         <main className="home-stage">
           <header className="home-topbar">
             <div className="home-brand">
-              <strong>FPGAgent</strong>
-              <span>可验证浏览器虚拟 FPGA 实验室</span>
+              <BrandWordmark className="home-brand-wordmark" />
+              <span>专注于 FPGA 的 AI Agent</span>
             </div>
             <div className="home-topbar-actions">
               <button

@@ -1,7 +1,22 @@
-import { CircuitBoard, ExternalLink, GitBranch, Users, X } from 'lucide-react';
+import { CircuitBoard, Compass, ExternalLink, GitBranch, Users, X } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 const REPO_URL = 'https://github.com/CyberWei922/qoderationability';
+
+const VISION_PILLARS = [
+  {
+    title: '填补 FPGA 与 Verilog 专属 Agent 空白',
+    body: '市面上通用编程助手众多，却鲜有真正面向 FPGA 开发与可综合 Verilog 代码生成的专属 Agent。FPGAgent 围绕硬件描述语言的时序、状态机与综合约束构建，让硬件开发不再依赖通用聊天框反复试错。',
+  },
+  {
+    title: '对话退居侧栏，板卡与代码占据中央',
+    body: '硬件调试的重心在于观察电路与信号，而不是翻阅长段对话。我们将 AI 对话收敛到旁观侧栏，把门级原理图、虚拟开发板、实时波形与 Verilog 代码放到工作台中央，回归以硬件为核心的开发体验。',
+  },
+  {
+    title: '零环境门槛，生成即仿真验证',
+    body: '无需配置繁重的本地 EDA 工具链，在浏览器内即可打通“自然语言需求 → 蓝图规划 → 可综合 Verilog → 静态 Lint 与确定性自测 → 交互式板卡与波形验证”的完整闭环。',
+  },
+] as const;
 
 const AUTHORS = [
   {
@@ -57,8 +72,24 @@ export function AboutModal({ onClose }: { onClose: () => void }) {
         <div className="about-hero">
           <div className="about-badge">2026 Qoder 高校创造力大赛 · StudyHack 赛道</div>
           <p className="about-desc">
-            AI 驱动的可验证浏览器虚拟 FPGA 实验室。输入自然语言需求，自动规划蓝图、生成可综合 Verilog、在浏览器内完成静态 Lint 与确定性自测，并通过门级原理图、实时波形与虚拟开发板直观呈现数字电路信号流。
+            <strong>专注于 FPGA 的 AI Agent</strong> — 面向数字电路设计与可综合 Verilog
+            开发的浏览器端硬件工作台。输入自然语言需求，自动规划蓝图、生成可综合 Verilog、在浏览器内完成静态 Lint
+            与确定性自测，并通过门级原理图、实时波形与虚拟开发板直观呈现数字电路信号流。
           </p>
+        </div>
+
+        <div className="about-section">
+          <span className="about-section-label">
+            <Compass size={13} /> 项目初衷与设计理念
+          </span>
+          <div className="about-pillars">
+            {VISION_PILLARS.map((item) => (
+              <div key={item.title} className="about-pillar">
+                <strong>{item.title}</strong>
+                <p>{item.body}</p>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="about-section">
