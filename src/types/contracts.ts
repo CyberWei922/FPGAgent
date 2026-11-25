@@ -64,6 +64,7 @@ export interface NetlistGraph {
   edges: NetlistEdge[];
   maxLevel: number;
   narration: string;   // 底部白话信号流播报，例如："KEY0=1 → 选通紧急MUX → 触发RED_LED点亮"
+  levelNarrations?: string[]; // 按拓扑层级 0..maxLevel 的逐级播报（慢动作/单步传播使用）
 }
 
 // ============================================================
@@ -121,10 +122,23 @@ export interface SelfTestResult {
 // 4. 仿真引擎统一对外接口（队友 1 在 src/engine/index.ts 导出）
 // ============================================================
 
+export interface SignalDescriptor {
+  name: string;
+  width: number;
+}
+
+export interface CircuitMetadata {
+  moduleName: string;
+  usedInputs: Array<'rst_n' | 'key' | 'sw'>;
+  usedOutputs: Array<'led' | 'traffic' | 'seg'>;
+  internalSignals: SignalDescriptor[]; // 内部关键寄存器/信号及位宽，供波形示波器自动展开
+}
+
 export interface CompileResult {
   ok: boolean;
   issues: LintIssue[];
   netlist?: NetlistGraph;
+  metadata?: CircuitMetadata;
 }
 
 // compile 成功后 reset，step 的 sample.cycle 从 0 开始递增；reset 后重新从 0 计数。
@@ -141,6 +155,7 @@ export interface RtlEngine {
     vectors: TestVectorStep[],
     previousPassedCycles?: number[]
   ): SelfTestResult;
+  exportTestbench?(code: string, vectors: TestVectorStep[]): string; // 可选：生成标准 tb_top.v 供外部仿真器运行
 }
 
 // src/engine/index.ts 必须导出：export const createRtlEngine: RtlEngineFactory
@@ -165,6 +180,7 @@ export interface AgentBlueprint {
 
 export type HarnessStage =
   | 'idle'
+  | 'researching'
   | 'planning'
   | 'coding'
   | 'linting'
@@ -173,12 +189,20 @@ export type HarnessStage =
   | 'done'
   | 'failed';
 
+export interface HarnessTraceMeta {
+  round?: number;
+  model?: string;
+  checkpoints?: string[];
+  sources?: WebReference[];
+}
+
 export interface HarnessTraceEvent {
   stage: HarnessStage;
   status: 'running' | 'pass' | 'fail';
   title: string;
   detail: string;
   timestamp: number;
+  meta?: HarnessTraceMeta;
 }
 
 export interface DiagnosisResponse {
@@ -206,11 +230,40 @@ export interface PresetProject {
   verilogCode: string;
   testVectors: TestVectorStep[];
   bugs: BugClinicCase[];      // 该工程自带的故障诊所关卡
+  category?: string;          // 案例分类，如 "状态机" / "计数器" / "数字接口"
+  difficulty?: 'beginner' | 'intermediate' | 'advanced';
+  boardHint?: 'traffic' | 'lock' | 'counter' | 'general';
 }
 
 // ============================================================
-// 6. 统一大模型调用接口（队长封装 -> 队友 2 消费）
+// 6. 统一大模型调用、服务商预设与模型列表接口（队长封装 -> 队友 2 消费）
 // ============================================================
+
+export type LLMProviderId =
+  | 'site-default'
+  | 'deepseek'
+  | 'zhipu-glm'
+  | 'dashscope-qwen'
+  | 'siliconflow'
+  | 'moonshot-kimi'
+  | 'custom';
+
+export interface LLMProviderPreset {
+  id: Exclude<LLMProviderId, 'site-default'>;
+  name: string;
+  baseUrl: string;
+  defaultModel: string;
+  suggestedModels: string[];
+  docsUrl?: string;
+  supportsJsonMode: boolean;
+}
+
+export interface LLMModelOption {
+  id: string;
+  label?: string;
+  ownedBy?: string;
+  contextWindow?: number;
+}
 
 export interface ChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -223,17 +276,49 @@ export interface LLMCallOptions {
   temperature?: number;
   jsonMode?: boolean;
   signal?: AbortSignal;       // 用户取消或超时中断
+  model?: string;             // 可选：单次请求覆盖当前模型（供对话内实时切换）
+  onDelta?: (chunk: string) => void; // 可选：流式文本增量回调
 }
 
 export interface LLMClient {
   chat(options: LLMCallOptions): Promise<{
     text: string;
-    remainingQuota?: number;  // 剩余免费次数（供前端右上角提示）
+    remainingQuota?: number;  // 剩余免费次数（供前端提示）
+    model?: string;           // 实际执行本次请求的模型名
+  }>;
+  listModels?(options?: { signal?: AbortSignal }): Promise<LLMModelOption[]>;
+  testConnection?(options?: { model?: string; signal?: AbortSignal }): Promise<{
+    ok: boolean;
+    latencyMs: number;
+    model?: string;
+    message?: string;
   }>;
 }
 
 // ============================================================
-// 7. 大模型调用统一错误（LLMClient.chat 只会抛出 LLMError）
+// 7. 联网检索与网页读取接口（队长/云函数封装 -> 队友 2 Agent 消费）
+// ============================================================
+
+export interface WebReference {
+  title: string;
+  url: string;
+  snippet: string;
+  source?: string;
+}
+
+export interface WebPageContent {
+  url: string;
+  title: string;
+  excerpt: string;
+}
+
+export interface WebResearchClient {
+  search(query: string, options?: { limit?: number; signal?: AbortSignal }): Promise<WebReference[]>;
+  fetchPage?(url: string, options?: { maxChars?: number; signal?: AbortSignal }): Promise<WebPageContent>;
+}
+
+// ============================================================
+// 8. 大模型调用统一错误（LLMClient.chat 只会抛出 LLMError）
 // ============================================================
 
 export type LLMErrorCode =
@@ -263,12 +348,23 @@ export function isLLMError(error: unknown): error is LLMError {
 }
 
 // ============================================================
-// 8. 智能体运行时（队友 2 在 src/agent/index.ts 导出 -> 队长 UI 消费）
+// 9. 智能体运行时（队友 2 在 src/agent/index.ts 导出 -> 队长 UI 消费）
 // ============================================================
+
+export interface HarnessPreviousContext {
+  blueprint?: AgentBlueprint;
+  verilogCode?: string;
+  testVectors?: TestVectorStep[];
+  history?: ChatMessage[];
+}
 
 export interface HarnessRunOptions {
   onTrace: (event: HarnessTraceEvent) => void;
+  onAssistantDelta?: (chunk: string) => void;
   signal?: AbortSignal;
+  model?: string;                  // 用户在对话中选中的模型
+  previousContext?: HarnessPreviousContext; // 多轮增量修改上下文
+  enableWebResearch?: boolean;     // 是否允许在不确定或修复受阻时联网查阅
 }
 
 export interface HarnessResult {
@@ -279,6 +375,11 @@ export interface HarnessResult {
   issues: LintIssue[];
   selfTest?: SelfTestResult;       // 编译失败时为空
   repairRounds: number;            // 实际修复轮数（0..2）
+  assistantSummary?: string;       // 面向左侧对话区的通俗总结
+  suggestedFilename?: string;      // 建议的 .v 导出文件名，如 "traffic_light.v"
+  remainingQuota?: number;         // 透传最后一次模型调用的剩余额度
+  modelUsed?: string;              // 本轮实际使用的模型名
+  references?: WebReference[];     // 本轮联网查阅引用来源
 }
 
 export interface DiagnoseInput {
@@ -289,16 +390,22 @@ export interface DiagnoseInput {
   blueprint?: AgentBlueprint;
 }
 
+export interface AgentActionOptions {
+  signal?: AbortSignal;
+  model?: string;
+}
+
 export interface AgentRuntime {
   presets: PresetProject[];        // 零 Token 预置案例，离线可用
   runHarness(prompt: string, options: HarnessRunOptions): Promise<HarnessResult>;
-  diagnose(input: DiagnoseInput): Promise<DiagnosisResponse>;
-  injectBug(code: string): Promise<BugClinicCase>;
+  diagnose(input: DiagnoseInput, options?: AgentActionOptions): Promise<DiagnosisResponse>;
+  injectBug(code: string, options?: AgentActionOptions): Promise<BugClinicCase>;
 }
 
 export interface AgentRuntimeDeps {
   llm: LLMClient;
   engine: RtlEngine;
+  research?: WebResearchClient;    // 可选：云端/浏览器联网检索与网页读取能力
 }
 
 // src/agent/index.ts 必须导出：export const createAgentRuntime: AgentRuntimeFactory

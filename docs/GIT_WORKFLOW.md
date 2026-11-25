@@ -10,11 +10,11 @@
 
 | 成员 | 专属开发分支 | 负责范围 | 接口交付 |
 | --- | --- | --- | --- |
-| **队长（全栈/前端/部署）** | `feat/ui-core` | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/`、工程配置及平台测试 | 向 Agent 工厂注入 `LLMClient` 和独立的 `RtlEngine`，并在 UI 消费板卡采样、网表和 `HarnessTraceEvent`。 |
-| **队友 1（仿真与验证引擎）** | `feat/engine` | `src/engine/`、`tests/engine.test.ts` | 保留 `createRtlEngine(): RtlEngine` 导出，在工厂接入真实解析、仿真、网表、Lint 和自测。 |
-| **队友 2（AI 闭环与案例库）** | `feat/agent` | `src/agent/`、`tests/agent.test.ts`、参赛文案素材 | 保留 `createAgentRuntime({ llm, engine }): AgentRuntime` 导出，在工厂接入真实 Harness、预置案例和诊断。 |
+| **队长（全栈/前端/部署）** | `feat/ui-core` | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/`、工程配置及平台测试 | 维护 V2 契约、多服务商 API 预设/模型列表与云端 `WebResearchClient` 代理，向 Agent 注入 `{ llm, engine, research }`，升级设置面板、对话切模型与工作台布局。 |
+| **队友 1（仿真与验证引擎）** | `feat/engine` | `src/engine/`、`tests/engine.test.ts` | 保留 `createRtlEngine(): RtlEngine` 导出，完善网页端 Verilog 子集编译/仿真、补齐 `levelNarrations`/`metadata`/`exportTestbench`，并通过 ≥120 条广范围回归与异常压测。 |
+| **队友 2（AI 闭环与案例库）** | `feat/agent` | `src/agent/`、`tests/agent.test.ts`、参赛文案素材 | 保留 `createAgentRuntime({ llm, engine, research }): AgentRuntime` 导出，实现多模型透传与国产模型容错、联网检索/网页读取与降级、多轮增量修改和真实模型评测。 |
 
-接口以 [冻结契约](../src/types/contracts.ts) 为准，行为约定见 [数据契约说明](DATA_CONTRACTS.md)。涉及公共字段或跨目录调整时，由队长协调合入 `main`，两条开发分支再同步。当前引擎冒烟测试引用 `src/agent/mockPresets.ts` 的交通灯样例，队友 2 如需迁移该样例，先与队友 1 同步测试引用。
+接口以 [冻结契约](../src/types/contracts.ts) 为准，行为约定见 [数据契约说明](DATA_CONTRACTS.md)。涉及公共字段或跨目录调整时，由队长协调合入 `main`，两条开发分支再同步。**第二轮开发统一在 V2 契约合入 `main` 后，从最新 `main` 拉齐各自开发分支再开工。**
 
 ---
 

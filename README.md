@@ -17,15 +17,15 @@
 
 ---
 
-## 三人团队分工速览
+## 三人团队分工速览（第二轮 · V2 契约）
 
 | 角色 | 负责范围 | 核心目录 | 接口与验收 |
 | --- | --- | --- | --- |
-| **队长（全栈统筹 + 前端 + 云端部署）** | 维护冻结契约、门级信号图、虚拟板卡、波形、模型代理与 Qoder Sites 部署 | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/` | 提供 `LLMClient`，在工作台接入 `RtlEngine` 与 `AgentRuntime`。运行 `npm run build`、`npm run test:platform`。 |
-| **队友 1（硬件与仿真移植）** | 纯 TS Verilog 解析、周期仿真、教学网表、Lint、自测与回退定位 | `src/engine/`、`tests/engine.test.ts` | 通过 `createRtlEngine()` 交付真实引擎。运行 `npm run test:engine`，目标至少 50 条回归测试。 |
-| **队友 2（AI 智能体与内容）** | Prompt 与 JSON Schema、Harness 闭环、4–5 个离线案例、故障诊所和参赛文案 | `src/agent/`、`tests/agent.test.ts` | 通过 `createAgentRuntime({ llm, engine })` 交付智能体，调用注入的 `llm.chat()` 与引擎。运行 `npm run test:agent`。 |
+| **队长（全栈统筹 + UI/布局 + 多服务商 API + 云端部署）** | 维护 V2 冻结契约、国内常用 API 预设与自动拉取模型列表、对话内切模型、设置面板与布局升级、逐级门级动画、故障诊所 UI、云端联网检索代理与 Qoder Sites 部署 | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/` | 提供 `LLMClient` 与 `WebResearchClient`，在工作台接入 `RtlEngine` 与 `AgentRuntime`。运行 `npm run build`、`npm run test:platform`。 |
+| **队友 1（硬件仿真引擎强化与广范围压测）** | 扩展网页端纯 TS Verilog 语法子集与异常容错、补齐逐级播报 `levelNarrations` / 电路元数据 / `tb_top.v` 导出、广范围跨电路与异常压测 | `src/engine/`、`tests/engine.test.ts` | 通过 `createRtlEngine()` 交付增强版引擎。运行 `npm run test:engine`，第二轮目标 ≥ 120 条回归与鲁棒性测试。 |
+| **队友 2（AI 智能体：多模型适配 + 联网查阅 + 多轮修改）** | 透传模型切换并适配国产模型输出、接入 `WebResearchClient` 联网搜索与网页读取（含降级）、多轮增量对话修改、真实模型评测与参赛文案 | `src/agent/`、`tests/agent.test.ts` | 通过 `createAgentRuntime({ llm, engine, research })` 交付升级版智能体。运行 `npm run test:agent`。 |
 
-两位队友可以从 M0 的 `main` 切出各自分支。公共入口和自测语义见 [冻结契约](src/types/contracts.ts) 与 [协作流程](docs/GIT_WORKFLOW.md)。
+第二轮开发统一从最新 `main`（含 V2 冻结契约）切出或同步各自开发分支。公共入口和自测语义见 [冻结契约](src/types/contracts.ts) 与 [协作流程](docs/GIT_WORKFLOW.md)。
 
 ---
 

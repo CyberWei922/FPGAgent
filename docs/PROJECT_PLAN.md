@@ -30,8 +30,9 @@
 - **30 秒（教学深度）**：点击 `故障诊所`，体验“故障注入 → 波形首个出错周期标红 → 苏格拉底引导修复 → 无回退绿灯通过”。
 
 ### 1.4 最终验收质量目标
-- 浏览器仿真 + Lint 引擎通过 **≥ 50 条自动化单元测试**（覆盖组合逻辑、时序逻辑、FSM、位宽、6 类 Lint 与反例定位），测试结果写入参赛帖作为工程可信度证据。
-- 内置 **4–5 个零 Token 经典预置案例**（交通灯、4 位密码锁、序列检测器、数字秒表、四人抢答器），断网或额度耗尽时全部核心仿真与板卡交互依然 100% 可用。
+- 浏览器仿真 + Lint 引擎通过 **≥ 120 条自动化单元测试**（覆盖 10+ 类经典与 AI 常见全新电路、组合/时序/FSM/位宽边界、6 类 Lint、语法容错、反例定位与无回退检测），测试结果写入参赛帖作为工程可信度证据。
+- 内置 **5 个零 Token 经典预置案例**（交通灯、4 位密码锁、序列检测器、数字秒表、四人抢答器），断网或额度耗尽时全部核心仿真与板卡交互依然 100% 可用。
+- 支持**站点默认免费体验 + 国内常用 API 服务商一键预设（DeepSeek / 智谱 GLM / 通义千问 / 硅基流动 / Kimi 等）+ 自动拉取模型列表 + 对话内实时切换模型 + 可选联网查阅 Verilog 规范/实例**。
 - 公网部署至 **Qoder Sites**，无痕浏览器与移动端核验无报错、免填 Key 即可直接触发实时 AI 生成与诊断。
 - 页面与帖子清晰声明 **Known Limitations（明确支持的可综合 Verilog 教学子集，不做布局布线与门级物理延迟）**。
 
@@ -108,71 +109,100 @@ module top (
   - 精准捕获**首个失配周期 `firstFailure.cycle`** 及期望/实际差异信号，回传给示波器画红框；
   - 对比上一版通过的检查点集合，若出现“旧通过点变失败”则标记 `regressedCycles`，防止改坏已有功能。
 
-#### 模块 4：前端 Harness 智能体闭环 + 案例/故障库（`src/agent/`）
-- 复用原项目 [REPORT.md](../reference/fpga2026/代码-可验证RTL闭环设计智能体/44959_rtlagent/REPORT.md) 的核心思想，构建可视化状态机：
-  1. **阶段 1（规划）**：调用大模型生成结构化蓝图（行为要点、引脚映射、Mermaid 状态转移图、自测向量 JSON）；
-  2. **阶段 2（编码）**：携带精简交接蓝图 + 原项目 `skill/` 提炼的 Verilog 规范，生成符合 `top` 接口的 Verilog；
-  3. **阶段 3（本地确定性验证）**：调用 `linter.ts` + `simulator.ts` + `selftest.ts`；
-  4. **阶段 4（最多 2 轮分流自动修复）**：
+#### 模块 4：前端 Harness 智能体闭环 + 联网查阅 + 案例/故障库（`src/agent/`）
+- 复用原项目 [REPORT.md](../reference/fpga2026/代码-可验证RTL闭环设计智能体/44959_rtlagent/REPORT.md) 的核心思想，并在第二轮升级为支持**多模型切换、多轮增量修改与可选联网检索**的可视化状态机：
+  1. **阶段 0（按需联网查阅，可选）**：当需求涉及不确定协议/算法、Verilog 语法规范存疑或首次修复受阻，且联网开关开启时，调用注入的 `WebResearchClient` 检索规范/参考实现并读取网页正文摘要，将证据注入提示词并输出可核验参考链接；检索不可用或超时时平滑降级；
+  2. **阶段 1（规划）**：调用当前所选模型（透传 `options.model`）生成结构化蓝图（行为要点、引脚映射、Mermaid 状态转移图、自测向量 JSON），多轮追问时结合 `previousContext` 保持已有功能不回退；
+  3. **阶段 2（编码）**：携带精简交接蓝图 + 联网规范摘要（如有）+ 原项目 `skill/` 提炼的 Verilog 规范，生成符合 `top` 接口的 Verilog；
+  4. **阶段 3（本地确定性验证）**：调用 `linter.ts` + `simulator.ts` + `selftest.ts`；
+  5. **阶段 4（最多 2 轮分流自动修复）**：
      - 语法/Lint 错 → 直接带错误行号修复；
-     - 功能失配 → 携带**首个反例波形切片**进行诊断修复，并执行无回退校验；
-  5. **阶段 5（教学模式）**：在“AI 助教”或“故障诊所”模式下，提供 `只给线索 / 指出错因 / 对比修复` 三档苏格拉底引导。
+     - 功能失配 → 携带**首个反例波形切片**（必要时辅以联网规范查阅）进行诊断修复，并执行无回退校验；
+  6. **阶段 5（教学模式）**：在“AI 助教”或“故障诊所”模式下，提供 `只给线索 / 指出错因 / 对比修复` 三档苏格拉底引导。
 
-#### 模块 5：Qoder Sites 云函数代理与四层额度风控（`functions/index.ts` + `src/services/llmClient.ts`）
-- **四层防爆省钱设计**：
-  1. **零 Token 预置案例**：首页 4–5 个经典案例（交通灯、密码锁、序列检测器、秒表、抢答器）自带完整预生成蓝图、代码、自测断言与故障模板，点击秒开不消耗任何 API；
-  2. **服务端 Secret 藏 Key**：API Key 只存放在 Qoder Sites 环境变量中，绝不写入前端代码或 Git 仓库；
-  3. **云函数防刷与免费额度模型**：使用阿里云百炼免费新手额度（如 `qwen-plus` / `qwen-turbo`）或智谱免费 Flash 模型，并在云函数中加入 `Origin/Referer` 校验、单 IP 每日次数限制（如 8 次/天）及云平台日消费硬封顶（如 5 元/天）；
-  4. **优雅降级 + BYOK**：超出免费次数后本地仿真/门级图/板卡/Lint 仍 100% 可用，同时允许用户在设置面板填入自己的 OpenAI 兼容 API Key（仅存 `localStorage`）。
+#### 模块 5：多服务商 API 接入、Qoder Sites 云函数代理与风控（`functions/` + `src/services/`）
+- **四层防爆省钱 + 丝滑 BYOK 接入设计**：
+  1. **零 Token 预置案例**：5 个经典案例（交通灯、密码锁、序列检测器、秒表、抢答器）自带完整预生成蓝图、代码、自测断言与故障模板，点击秒开不消耗任何 API；
+  2. **服务端 Secret 藏 Key + 云端辅助能力**：站点默认 API Key 只存放在 Qoder Sites 环境变量中，绝不写入前端代码或 Git 仓库；云函数除 `/agent` 对话代理外，还提供 `/models` 模型列表代理（解决部分服务商浏览器跨域问题）及 `/research` 安全联网搜索与网页正文提取接口；
+  3. **云函数防刷与免费额度模型**：使用免费/低成本模型作为站点默认，并在云函数中加入 `Origin/Referer` 校验、单 IP 每日次数限制及云平台日消费硬封顶，联网读取端严格做 URL 协议/内网段 SSRF 拦截与响应体积截断；
+  4. **国内常用服务商一键预设 + 自动拉模型 + 对话切模型**：在设置面板内置 DeepSeek、智谱 GLM、通义千问（DashScope）、硅基流动（SiliconFlow）、月之暗面（Kimi）及自定义 OpenAI 兼容预设，选定服务商后自动填入接口地址与推荐模型，填入 Key 即可自动拉取 `/models` 模型列表并一键测连；用户可在设置页及**左侧对话栏**随时选择和切换模型。
 
 ---
 
-## 3. 三人团队模块分工与零冲突协作
+## 3. 第二轮（Round 2）三人团队分工责任书与零冲突协作
 
-> 设计原则：**将所有 Web 框架、SVG 渲染与云函数部署收拢到全栈队长；让两位无网站开发经验的队友完全专注纯 TypeScript 逻辑、Prompt 与单元测试，无需接触 React/CSS/部署。**
+> **开发基线说明**：第一轮（首版三端联调）已合入 `main` 并通过 108 项自动化测试。第二轮所有开发工作**统一基于当前 `main` 最新版本（含 V2 冻结契约）** 启动。
+>
+> **零冲突铁律**：保持目录所有权不变——所有 Web 框架、页面布局、SVG 渲染、API 设置与云函数部署收拢到队长；队友 1 专注 `src/engine/` 与 `tests/engine.test.ts`；队友 2 专注 `src/agent/` 与 `tests/agent.test.ts`，不跨界修改他人业务代码。
 
-### 3.1 队长（全栈统筹 + 网站前端开发 + 云函数部署）
-- **专属目录**：`src/types/contracts.ts`、`src/services/`、`src/components/`、`src/App.tsx`、`functions/index.ts`、`vite.config.ts`
-- **工作清单**：
-  1. 在 Qoder 中初始化 `React + TypeScript + Vite + Tailwind CSS + Vitest` 工程，配置好 `npm run test:engine` 和 `npm run test:agent` 脚本；
-  2. 维护 [`src/types/contracts.ts`](../src/types/contracts.ts)，在 `main` 发布两位队友共用的接口。用 `createRtlEngine()` 分别为板卡与 Harness 创建独立实例，再用 `createAgentRuntime({ llm, engine })` 注入后者与模型客户端；
-  3. 维护 `src/services/llmClient.ts` 的云函数代理、Node 直连和浏览器 BYOK 三种模式。工作台订阅 `onTrace` 展示步骤，按 `LLMError.code` 处理额度耗尽、连接错误和取消；
-  4. 开发前端 UI：三栏工作台、顶部指挥条、**动态门级信号流画布（`elkjs` 正交布线 + SVG 发光脉冲 + 白话播报）**、**虚拟 FPGA 开发板**、**迷你波形示波器（红框反例）**、左栏透明智能体面板；
-  5. 开发 `functions/index.ts`（Qoder Sites Server Function），配置服务端 Secret 与限流；
-  6. 统筹 Git 分支合并、全链路联调，完成 **Qoder Sites 公网部署**与最终体验验收。
+### 3.1 队长（全栈统筹 + 网页 UI/布局重构 + 多服务商 API/模型切换 + 云函数与部署）
+- **专属目录**：`src/types/contracts.ts`、`src/services/`、`src/components/`、`src/App.tsx`、`functions/`、`tests/platform.test.ts`、`vite.config.ts`
+- **第二轮工作清单**：
+  1. **冻结 V2 契约与服务层升级（`src/types/contracts.ts` + `src/services/`）**：
+     - 维护 V2 向后兼容契约，为队友 1 暴露 `levelNarrations`、`CircuitMetadata`、`exportTestbench`，为队友 2 暴露 `LLMProviderPreset`、`LLMModelOption`、`LLMClient.listModels/testConnection`、`WebResearchClient` 及多轮上下文/模型透传字段；
+     - 在 `src/services/` 内置国内常用 API 服务商预设（DeepSeek、智谱 GLM、通义千问 DashScope、硅基流动 SiliconFlow、月之暗面 Kimi、自定义 OpenAI 兼容 + 站点默认），支持自动拉取 `/models` 模型列表（失败时优雅回退到预设推荐模型）、一键测试连接耗时，并支持按次覆盖 `model` 参数；
+     - 实现浏览器端 `WebResearchClient`（经 Qoder Sites 云函数 `/research` 代理），注入 `createAgentRuntime({ llm, engine, research })`。
+  2. **设置面板与网页整体布局改版（`src/components/` + `src/App.tsx`）**：
+     - **设置面板重构**：提供服务商预设一键切换（免手填 Base URL）、API Key 输入、自动刷新并选择模型、一键测连反馈、站点默认剩余额度状态以及“联网查阅 Verilog 规范”开关；
+     - **对话内模型选择与切换**：在首页与工作台对话输入区直接提供模型下拉选择器与联网状态切换，切换模型后即时生效于下一轮生成、追问与诊断；
+     - **整体布局与第二轮核心功能补齐**：优化对话区、画布区、板卡/波形区的布局比例与操作流畅度；开放全部 5 个预置案例的按需选择入口；接通「故障诊所」完整闭环 UI（注入故障 → 观察板卡异常与波形标红 → 三档苏格拉底提示 → 一键修复复测）；将蓝图中的 Mermaid 状态图真正渲染为可视图形（非纯源码）；接入代码导出（`.v` + `tb_top.v`）。
+  3. **门级逐级动画与元数据联动**：
+     - 消费队友 1 的 `NetlistGraph.levelNarrations` 与拓扑层级 `level`/`changed`，在 `0.2x` 慢动作和单步模式下实现导线与逻辑门按层逐级发光与白话播报，并让波形光标与当前拍状态联动；
+     - 消费 `CompileResult.metadata`，动态突出当前电路实际使用的板卡外设并在示波器自动展开内部关键寄存器。
+  4. **云函数扩展与 Qoder Sites 公网交付（`functions/`）**：
+     - 扩展 `functions/` 支持 `/agent`（透传可选模型）、`/models`（辅助获取存在 CORS 限制的服务商模型列表）与 `/research`（联网检索 + 网页正文提取，带 SSRF 防护、域名/协议校验、正文截断与频率限流）；
+     - 完成 Qoder Sites 公网部署、服务端 Secret 配置，并在无痕浏览器验收“免 Key 跑预设 + 免 Key 生成新电路 + 自带国内 API 选模型对话”。
+- **队长验收标准**：`npm run build`、`npm run test:platform` 与 `npm test` 全部通过；浏览器验收设置面板预设切换、模型拉取与对话内切换、5 个案例与故障诊所、慢动作逐级信号流、公网无痕访问无报错。
 
-### 3.2 队友 1（硬件/仿真移植，零 Web 门槛）
+### 3.2 队友 1（硬件仿真引擎完善 + 网页移植加固 + 广范围鲁棒性测试，`feat/engine`）
 - **专属目录**：`src/engine/`、`tests/engine.test.ts`
-- **接口交付**：`src/engine/index.ts` 保留 `createRtlEngine: RtlEngineFactory`，把实现从 Mock 切换到真实引擎。`step` 每次返回 `sample` 与 `netlist`，`runSelfTest` 保持运行中的板卡状态。使用 `npm run test:engine` 独立验收。
-- **工作清单**：
-  1. `src/engine/parser.ts`：实现可综合 Verilog 教学子集词法/语法解析器，给出清晰行号错误；
-  2. `src/engine/simulator.ts`：实现周期精确仿真引擎，固定输出 `BoardOutputs`（LED/交通灯/数码管）和波形历史；
-  3. `src/engine/netlist.ts`：将 AST 编译为教学级门/模块网表（`AND/OR/NOT/XOR/MUX/CMP/ADD/DFF`），完成拓扑分层与逐拍信号跳变标记；
-  4. `src/engine/linter.ts`：参考 `reference/fpga2026/.../skill/rtl-lint-rules` 与 `rtl-interface-check`，实现 6 条静态规则检查；
-  5. `src/engine/selftest.ts`：按同一组 `TestVectorStep[]` 执行独立自测，输出 `firstFailure`、`passedCycles` 和 `regressedCycles`。周期从 0 起算，时序用例显式拉低 `rst_n`；
-  6. `tests/engine.test.ts`：编写 **≥ 50 条回归测试用例**（涵盖 5 个经典电路及各类错误样例）。
+- **接口交付**：保持 `src/engine/index.ts` 导出 `createRtlEngine: RtlEngineFactory`，在 V1 能力基础上补齐 V2 契约的 `levelNarrations`、`CompileResult.metadata` 与 `exportTestbench`。使用 `npm run test:engine` 独立验收。
+- **第二轮工作清单**：
+  1. **网页端编译与仿真子集扩展（防 AI 生成新代码触发异常）**：
+     - 盘点大模型生成全新 Verilog 时常见但首版可能报错的合法语法并完善移植，重点覆盖：块注释 `/* ... */` 与行内注释、多种合法模块端口声明风格（如 `output reg [7:0] led`、非 ANSI 声明等）、`localparam`/`parameter` 常量表达式运算、拼接重复 `{4{a}}`、单目归约运算符（`&` / `|` / `^` / `~&` / `~|` / `~^`）、`casez`/`casex`、有界静态 `for` 循环展开、有符号/无符号位宽截断与符号扩展、同步/异步混合复位写法；
+     - 加固浏览器端运行安全：对组合逻辑震荡环、超深嵌套、非法字面量、数组越界、未声明信号等异常输入做到 100% 不抛未捕获异常、不卡死页面主线程，统一输出准确行号与中文修复提示的 `LintIssue`。
+  2. **V2 契约能力补齐**：
+     - `src/engine/netlist.ts`：补充 `NetlistGraph.levelNarrations`（长度覆盖 `0..maxLevel`），每层给出简洁中文播报，确保交通灯 `KEY0 → 逻辑门 → 红灯` 等路径在慢动作/单步下可逐级讲清信号流向；
+     - `src/engine/index.ts` / `parser.ts`：在 `compile()` 返回 `CompileResult.metadata`（模块名、实际用到的 `usedInputs`/`usedOutputs` 以及 `internalSignals` 内部寄存器名与位宽）；
+     - `src/engine/selftest.ts`（或独立模块）：实现 `exportTestbench(code, vectors)`，输出规范的 `tb_top.v` 代码，方便用户下载到 Vivado / Icarus Verilog 复现验证。
+  3. **广范围跨电路与异常压测（`tests/engine.test.ts`）**：
+     - 将单元测试从首版扩充至 **≥ 120 条**，构建广覆盖电路回归库（至少 10+ 类 AI 容易生成的全新电路：流水灯、模 N/BCD 计数器、PWM/分频器、简易 ALU、移位寄存器、自动售货机状态机、按键消抖、奇偶校验、译码器/编码器、抢答器等）；
+     - 增补语法边界/异常代码模糊测试（残缺语句、非法运算符、组合环、位宽溢出、多驱动、多模块/注释干扰）以及大周期仿真性能测试，确保 AI 临场生成的全新代码在网页端跑得稳、报错准。
+- **队友 1 验收标准**：`npm run test:engine` 达到 **≥ 120 条全部通过**；5 个预置案例与新增 10+ 类电路的编译、仿真、`levelNarrations`、`metadata`、`exportTestbench` 与 Lint/自测无回退全部验收通过。
 
-### 3.3 队友 2（AI 调用与提示词 + 案例/故障库，零 Web 门槛）
-- **专属目录**：`src/agent/`、`tests/agent.test.ts`
-- **接口交付**：`src/agent/index.ts` 保留 `createAgentRuntime: AgentRuntimeFactory`，消费注入的 `LLMClient` 和 `RtlEngine`，通过 `AgentRuntime` 交付 `runHarness`、`presets`、`diagnose` 和 `injectBug`。用替身依赖运行 `npm run test:agent`，实测模型时可另用本地 `.env.local`。
-- **工作清单**：
-  1. `src/agent/prompts.ts`：从 `reference/fpga2026/.../skill/` 提炼精简高效的 Verilog 写作规则与严格 JSON Schema（规划蓝图、生成代码、反例苏格拉底诊断、故障注入）；
-  2. `src/agent/harness.ts`：参考 `reference/fpga2026/.../REPORT.md`，实现规划、生成、Lint、自测及最多 2 轮修复。用同一组向量比较 `passedCycles` 与 `regressedCycles`，通过 `onTrace` 回调和 `HarnessResult` 交付过程及最佳候选，并接收取消信号；
-  3. `src/agent/presets.ts`：精心打磨 **4–5 个零 Token 预置案例**（交通灯、4 位密码锁、序列检测器、数字秒表、抢答器）——每个案例包含完整的中文需求、蓝图、Mermaid 状态图、经过队友 1 仿真器验证的 Verilog、自测断言；
-  4. `src/agent/bugClinic.ts`：参考 `reference/fpga2026/.../skill/rtl-pitfalls`，为预置案例编写 **6–8 个典型硬件故障注入模板**（附带故障现象说明、三档苏格拉底提示和标准修复方案）；
-  5. 负责整理参赛发帖文档素材（产品 5 步上手指南、Known Limitations 边界说明、团队分工与 Qoder 过程截图汇总）。
+### 3.3 队友 2（AI 智能体升级：多模型切换适配 + 联网检索/网页读取 + 多轮对话与评测，`feat/agent`）
+- **专属目录**：`src/agent/`、`tests/agent.test.ts`、参赛发帖文档与素材
+- **接口交付**：保持 `src/agent/index.ts` 导出 `createAgentRuntime: AgentRuntimeFactory`，升级消费 `AgentRuntimeDeps = { llm, engine, research? }`，按 V2 `AgentRuntime` 交付模型透传、多轮修改、联网检索引用与诊断/故障注入。离线测试用替身依赖运行 `npm run test:agent`，真实模型验证使用本地 `.env.local`。
+- **第二轮工作清单**：
+  1. **多模型切换透传与国产模型输出适配**：
+     - 在 `runHarness`、`diagnose`、`injectBug` 中接收 `options.model`，透传给本轮每一次 `llm.chat({ ..., model })`，并在 `HarnessTraceEvent.meta.model` 与 `HarnessResult.modelUsed` 回传实际执行的模型名，透传 `remainingQuota`；
+     - 强化 `src/agent/prompts.ts` 提示词与 JSON 容错解析，兼容 DeepSeek（包括推理模型 `<think>...</think>` 思考段）、智谱 GLM、通义千问、Kimi 等模型在不同 `jsonMode` 策略下的输出格式，确保跨模型切换时规划、生成、修复、诊断均稳定可解析。
+  2. **联网检索与网页读取闭环（`WebResearchClient`）**：
+     - 接入可选依赖 `research?: WebResearchClient` 与运行开关 `options.enableWebResearch`；
+     - 设计轻量可靠的触发策略：当用户输入包含模型不确定的算法/协议/外设名词、显式要求查阅规范/实例、或第 1 轮编译/自测修复受阻时，进入 `researching` 阶段，调用 `research.search(query)` 查找 Verilog 规范或参考实现，并择优调用 `research.fetchPage(url)` 提取正文关键片段，压缩为精简参考上下文注入规划或修复提示词；
+     - 在 `HarnessTraceEvent.meta.sources` 和 `HarnessResult.references` 中返回检索来源，便于前端在思考轨迹和回复卡片展示可核验链接；
+     - **优雅降级铁律**：当 `research` 未注入、`enableWebResearch === false`、无有效检索结果或联网请求超时/异常时，不得中止主流程，需发出清晰降级提示并继续完成本地验证闭环。
+  3. **多轮增量对话修改与内容打磨**：
+     - 消费 `options.previousContext`（已有蓝图、Verilog、测试向量与对话历史），支持用户在当前电路基础上持续提修改需求（如“加一个夜间黄灯闪烁模式”），优先增量演进并借助既有自测向量防回退；
+     - 生成通俗易懂的 `assistantSummary`（供左侧对话展示）和规范的 `suggestedFilename`（供一键下载 `.v`）；
+     - 完善 5 个预置案例的 `category`、`difficulty`、`boardHint` 分类元数据与故障诊所关卡文案，核验全部案例与故障关在真实 `RtlEngine` 下表现准确。
+  4. **真实模型评测、单元测试与参赛素材**：
+     - 在 `tests/agent.test.ts` 补充多模型透传、`<think>`/围栏 JSON 容错、联网检索触发/网页读取/降级兜底、多轮增量修改等自动化测试（全部使用 Mock 替身，保证 `npm run test:agent` 零成本快速通过）；
+     - 使用真实国产模型（如 DeepSeek / GLM）对代表性全新电路需求（计数器、序列检测器、多轮追问等）执行端到端评测，用独立断言核验生成电路是否真正符合原需求并针对性调优 Prompt；
+     - 整理天池参赛帖素材（5 步上手指南、Known Limitations、单测通过率证据与 Qoder 协作截图汇总）。
+- **队友 2 验收标准**：`npm run test:agent` 全部通过（Mock 下覆盖模型切换、联网搜索与降级、多轮修改及全部 5 案例/故障库校验）；完成真实模型实测记录并输出可复现的 Prompt 调优结论。
 
 ---
 
 ## 4. 协作推进阶段（按里程碑，不绑定死天数）
 
-| 里程碑 | 核心目标 | 参与人 | 验收出口 |
-| --- | --- | --- | --- |
-| **M0 · 骨架与契约冻结** | 发布 Vite 工作台、交通灯 Mock、`RtlEngine`、`AgentRuntime`、`LLMClient` 和 `LLMError` 到 `main` | 队长 | `npm ci`、`npm test`、`npm run build` 通过，浏览器可体验交通灯与生成步骤演示 |
-| **M1 · 三线并行独立开发** | 队长完善板卡与逐层传播；队友 1 接入真实 `RtlEngine`；队友 2 接入真实 `AgentRuntime` | 三人并行 | 分别在 `feat/ui-core`、`feat/engine`、`feat/agent` 通过各自的模块验收 |
-| **M2 · 本地硬核闭环联调** | 合并 `feat/engine` 到 `main`，前端接真仿真内核与真门级网表 | 队长 + 队友 1 | 5 个预置案例可在网页真亮灯、0.2x 慢动作看信号、改代码实时标红 Lint 与波形反例 |
-| **M3 · AI 全链路与云函数联调** | 合并 `feat/agent` 到 `main`，接入 Qoder Sites 云函数代理与故障诊所 | 全体成员 | 输入全新中文需求能完整走通“蓝图 → 代码 → 自测修复 → 上板亮灯”，故障诊所可用 |
-| **M4 · 公网部署与参赛交付** | 部署 Qoder Sites，无痕模式压测免 Key 体验、限流与降级；整理截图发天池论坛帖 | 队长主部署 + 队友 2 整文案 | 链接公网秒开、5 步内跑通、论坛提交审核通过 |
+| 里程碑 | 状态 | 核心目标 | 参与人 | 验收出口 |
+| --- | --- | --- | --- | --- |
+| **R1（M0–M2）· 首版三端联调基线** | 已完成 | 完成骨架、引擎 V1、Agent V1、前端三栏工作台并合并到 `main`（`3433a06`） | 全体成员 | `npm test` 108/108 通过，`npm run build` 通过，本地两条预设与工作台跑通 |
+| **R2-0 · V2 契约与分工冻结** | 当前阶段 | 基于最新 `main` 升级 `src/types/contracts.ts`、契约文档、责任书与开工提示词并合并至 `main` | 队长 | V2 类型 100% 向后兼容，`npm test` 与 `npm run build` 保持全绿 |
+| **R2-1 · 第二轮三线并行开发** | 下一阶段 | 队长做 API 预设/自动拉模型/对话切模型/UI 布局与云端检索代理；队友 1 强化引擎子集、逐级播报、导出 TB 与 120+ 广范围压测；队友 2 接多模型透传、联网查阅/网页读取与多轮修改 | 三人并行 | 各自基于最新 `main` 在 `feat/ui-core`、`feat/engine`、`feat/agent` 通过独立模块验收 |
+| **R2-2 · 第二轮联调与真实模型验收** | 待开始 | 合并三分支到 `main`，真引擎 + 真模型（DeepSeek/GLM 等）+ 云端联网查阅 + 慢动作逐级动画 + 故障诊所全链路联调 | 全体成员 | 选国内 API 一键拉模型并对话切换；全新需求走通联网查阅/生成/自测修复/逐级亮灯；故障诊所闭环可用 |
+| **R2-3 · Qoder Sites 公网发布与参赛交付** | 待开始 | 公网部署 Qoder Sites，配置默认模型、限流与联网代理；无痕模式验收免 Key 体验；发天池论坛帖 | 队长主部署 + 队友 2 整文案 | 公网链接秒开、5 步内跑通、无痕免 Key 与 BYOK 均可用、论坛提交审核通过 |
 
 ---
 
