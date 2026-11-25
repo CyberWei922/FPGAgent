@@ -38,6 +38,7 @@ import {
 } from '../services/llmClient';
 import {
   ACCENT_PRESETS,
+  contrastInkOn,
   type AccentPresetId,
   type ThemeMode,
   type ThemePreferences,
@@ -651,7 +652,13 @@ export function ApiSettings({
                         onClick={() => updateAccent(preset.id)}
                       >
                         <span className="accent-swatch" style={{ background: preset.swatch }}>
-                          {selected && <Check size={13} color="#fff" strokeWidth={3} />}
+                          {selected && (
+                            <Check
+                              size={13}
+                              color={contrastInkOn(preset.swatch)}
+                              strokeWidth={3}
+                            />
+                          )}
                         </span>
                         <span>{preset.name}</span>
                       </button>
@@ -669,7 +676,9 @@ export function ApiSettings({
                       onChange={(event) => updateAccent('custom', event.target.value)}
                     />
                     <span className="accent-swatch" style={{ background: theme.customAccent }}>
-                      {theme.accentId === 'custom' && <Check size={13} color="#fff" strokeWidth={3} />}
+                      {theme.accentId === 'custom' && (
+                        <Check size={13} color={contrastInkOn(theme.customAccent)} strokeWidth={3} />
+                      )}
                     </span>
                     <span>自定义</span>
                   </label>

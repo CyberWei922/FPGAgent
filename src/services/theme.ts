@@ -1,6 +1,6 @@
 export type ThemeMode = 'light' | 'dark' | 'system';
 
-export type AccentPresetId = 'teal' | 'cobalt' | 'emerald' | 'amber' | 'indigo' | 'crimson' | 'custom';
+export type AccentPresetId = 'nvidia' | 'teal' | 'cobalt' | 'emerald' | 'amber' | 'indigo' | 'crimson' | 'custom';
 
 export interface AccentPreset {
   id: Exclude<AccentPresetId, 'custom'>;
@@ -30,15 +30,36 @@ export interface ThemePreferences {
   customAccent: string;
 }
 
-const THEME_STORAGE_KEY = 'fpgagent.theme';
+const THEME_STORAGE_KEY = 'fpgagent.theme.v2';
 
 export const DEFAULT_THEME: ThemePreferences = {
-  mode: 'light',
-  accentId: 'teal',
-  customAccent: '#126e71',
+  mode: 'dark',
+  accentId: 'nvidia',
+  customAccent: '#76b900',
 };
 
 export const ACCENT_PRESETS: AccentPreset[] = [
+  {
+    id: 'nvidia',
+    name: 'NVIDIA 绿',
+    swatch: '#76b900',
+    light: {
+      accent: '#76b900',
+      dark: '#5a8f00',
+      tint: '#eaf6d4',
+      tintSoft: '#f4fae9',
+      border: '#a5cf58',
+      ink: '#3d6e00',
+    },
+    dark: {
+      accent: '#76b900',
+      dark: '#5b8f00',
+      tint: '#182406',
+      tintSoft: '#101804',
+      border: '#3e6109',
+      ink: '#9ce619',
+    },
+  },
   {
     id: 'teal',
     name: '青瓷绿',
@@ -209,12 +230,15 @@ export function resolveThemeMode(mode: ThemeMode): 'light' | 'dark' {
   return 'light';
 }
 
+export function contrastInkOn(hex: string): '#081216' | '#ffffff' {
+  return relativeLuminance(hex) > 0.26 ? '#081216' : '#ffffff';
+}
+
 export function computeAccentTokens(prefs: ThemePreferences, resolvedMode: 'light' | 'dark') {
   if (prefs.accentId !== 'custom') {
     const preset = ACCENT_PRESETS.find((item) => item.id === prefs.accentId) ?? ACCENT_PRESETS[0];
     const palette = preset[resolvedMode];
-    const onAccent = relativeLuminance(palette.accent) > 0.26 ? '#081216' : '#ffffff';
-    return { ...palette, onAccent };
+    return { ...palette, onAccent: contrastInkOn(palette.accent) };
   }
 
   const base = /^#[0-9a-fA-F]{6}$/.test(prefs.customAccent) ? prefs.customAccent : DEFAULT_THEME.customAccent;
@@ -229,7 +253,7 @@ export function computeAccentTokens(prefs: ThemePreferences, resolvedMode: 'ligh
       tintSoft: mixHex(accent, '#ffffff', 0.93),
       border: mixHex(accent, '#ffffff', 0.65),
       ink: dark,
-      onAccent: relativeLuminance(accent) > 0.26 ? '#081216' : '#ffffff',
+      onAccent: contrastInkOn(accent),
     };
   }
 
@@ -243,7 +267,7 @@ export function computeAccentTokens(prefs: ThemePreferences, resolvedMode: 'ligh
     tintSoft: mixHex(accent, '#101618', 0.86),
     border: mixHex(accent, '#101618', 0.56),
     ink: mixHex(accent, '#ffffff', 0.35),
-    onAccent: relativeLuminance(accent) > 0.26 ? '#081216' : '#ffffff',
+    onAccent: contrastInkOn(accent),
   };
 }
 
@@ -281,13 +305,13 @@ export function applyThemePreferences(prefs: ThemePreferences): 'light' | 'dark'
   root.dataset.theme = resolved;
   root.style.colorScheme = resolved;
   const tokens = computeAccentTokens(prefs, resolved);
-  root.style.setProperty('--accent', tokens.accent);
+  root.style.setProperty('--theme-accent', tokens.accent);
   root.style.setProperty('--accent-dark', tokens.dark);
   root.style.setProperty('--accent-tint', tokens.tint);
   root.style.setProperty('--accent-tint-soft', tokens.tintSoft);
   root.style.setProperty('--accent-border', tokens.border);
   root.style.setProperty('--accent-ink', tokens.ink);
-  root.style.setProperty('--on-accent', tokens.onAccent);
+  root.style.setProperty('--theme-on-accent', tokens.onAccent);
   return resolved;
 }
 

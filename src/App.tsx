@@ -181,6 +181,44 @@ function nextId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
+const HOME_TIME_PREFIX_PROBABILITY = 0.7;
+
+const HOME_GREETING_BODIES = [
+  '从哪个模块开始？',
+  '想在板子上跑点什么？',
+  '想点亮哪块电路？',
+  '手头在调什么逻辑？',
+  '想写点什么 Verilog？',
+  '准备验证什么电路？',
+  '想先看哪段波形？',
+  '打算先搭哪个原型？',
+] as const;
+
+const HOME_STANDALONE_GREETINGS = [
+  '时钟已就绪，从哪个模块开始？',
+  '板卡已上电，准备验证什么？',
+  '先搭个原型，看看波形。',
+] as const;
+
+function getTimeGreetingPrefix(date: Date): string {
+  const hour = date.getHours();
+  if (hour >= 5 && hour < 9) return '早上好';
+  if (hour >= 9 && hour < 12) return '上午好';
+  if (hour >= 12 && hour < 14) return '中午好';
+  if (hour >= 14 && hour < 18) return '下午好';
+  if (hour >= 18 && hour < 23) return '晚上好';
+  return '夜深了';
+}
+
+function pickHomeGreeting(previous?: string, now = new Date()): string {
+  const withTimePrefix = Math.random() < HOME_TIME_PREFIX_PROBABILITY;
+  const candidates = withTimePrefix
+    ? HOME_GREETING_BODIES.map((body) => `${getTimeGreetingPrefix(now)}，${body}`)
+    : [...HOME_GREETING_BODIES, ...HOME_STANDALONE_GREETINGS];
+  const pool = previous ? candidates.filter((item) => item !== previous) : candidates;
+  return pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
+}
+
 export default function App() {
   const engineFactory = useMemo(() => createRtlEngine, []);
   const runtime = useMemo(
@@ -199,6 +237,7 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<'api' | 'appearance'>('api');
   const [aboutOpen, setAboutOpen] = useState(false);
   const [remainingQuota, setRemainingQuota] = useState<number | undefined>();
+  const [homeGreeting, setHomeGreeting] = useState<string>(() => pickHomeGreeting());
 
   // Navigation & Browser History State
   const initialRoute = useMemo<RouteState>(() => {
@@ -552,11 +591,13 @@ export default function App() {
     setSpeed(prefs.defaultClockSpeed);
     setRunning(true);
     clearCircuit();
+    setHomeGreeting((prev) => pickHomeGreeting(prev));
     navigateTo({ view: 'home', railTab: 'chat', wbTab: 'canvas' });
   }
 
   function goHome() {
     setSidebarCollapsed(false);
+    setHomeGreeting((prev) => pickHomeGreeting(prev));
     navigateTo({ view: 'home', railTab: 'chat' });
   }
 
@@ -1149,10 +1190,7 @@ export default function App() {
 
           <div className="home-center">
             <div className="home-hero">
-              <h1>你想做什么电路？</h1>
-              <p className="home-subtitle">
-                输入自然语言需求，自动规划蓝图、生成可综合 Verilog、在浏览器里自测验证并点亮门级仿真与虚拟板卡。
-              </p>
+              <h1>{homeGreeting}</h1>
 
               <PromptComposer
                 onSend={(prompt) => void run(prompt)}
