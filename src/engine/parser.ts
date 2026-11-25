@@ -642,6 +642,8 @@ class Parser {
     let hasAsyncReset = false;
     let resetSignal: string | undefined;
     let resetActiveLow: boolean | undefined;
+    let clockSignal: string | undefined;
+    let clockFalling: boolean | undefined;
 
     if (kw.value === 'always_comb') {
       sensitivity = 'comb';
@@ -667,10 +669,12 @@ class Parser {
             }
             break;
           }
-          const hasEdge = items.some((it) => it.edge !== undefined);
-          if (hasEdge) {
+          const clock = items.find((it) => it.edge && it.name === 'clk') ?? items.find((it) => it.edge);
+          if (clock) {
             sensitivity = 'seq';
-            const rstItem = items.find((it) => it.edge !== undefined && it.name !== 'clk');
+            clockSignal = clock.name;
+            clockFalling = clock.edge === 'negedge';
+            const rstItem = items.find((it) => it.edge && it.name !== clock.name);
             if (rstItem) {
               hasAsyncReset = true;
               resetSignal = rstItem.name;
@@ -687,6 +691,8 @@ class Parser {
     const body = this.parseStmt();
     return {
       sensitivity,
+      clockSignal,
+      clockFalling,
       hasAsyncReset,
       resetSignal,
       resetActiveLow,

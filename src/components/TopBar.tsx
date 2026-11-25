@@ -1,7 +1,6 @@
 import {
   ArrowUp,
   Bug,
-  ChevronDown,
   Globe,
   Pause,
   Play,
@@ -12,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import type { LLMModelOption } from '../types/contracts';
+import { CustomModelSelect } from './CustomSelect';
 
 export type ClockSpeed = 'realtime' | 'slow' | 'step';
 
@@ -91,42 +91,29 @@ export function PromptComposer({
 
       <div className="composer-foot">
         <div className="composer-tools">
-          <div className="model-select-wrap" title={`当前服务商：${providerLabel}`}>
-            <Sparkles size={13} className="model-select-icon" />
-            {models.length > 1 ? (
-              <>
-                <select
-                  aria-label="切换对话模型"
-                  className="inline-model-select"
-                  value={selectedModel}
-                  onChange={(event) => {
-                    if (event.target.value === '__open_settings__') {
-                      onOpenSettings();
-                      return;
-                    }
-                    onSelectModel(event.target.value);
-                  }}
-                >
-                  {models.map((item) => (
-                    <option key={item.id} value={item.id}>
-                      {item.label ?? item.id}
-                    </option>
-                  ))}
-                  <option value="__open_settings__">管理 API 与模型…</option>
-                </select>
-                <ChevronDown size={12} className="model-select-caret" />
-              </>
-            ) : (
+          {models.length > 1 ? (
+            <CustomModelSelect
+              ariaLabel="切换对话模型"
+              variant="inline"
+              options={models}
+              value={selectedModel}
+              onChange={onSelectModel}
+              title={`当前服务商：${providerLabel} · ${selectedModel}`}
+              footerAction={{ label: '管理 API 与模型…', onClick: onOpenSettings }}
+            />
+          ) : (
+            <div className="model-select-wrap" title={`当前服务商：${providerLabel}`}>
+              <Sparkles size={13} className="model-select-icon" />
               <button
                 type="button"
                 className="inline-model-trigger"
                 onClick={onOpenSettings}
               >
-                <span>{models[0]?.label ?? (selectedModel || providerLabel)}</span>
+                <span className="custom-select-value">{models[0]?.label ?? (selectedModel || providerLabel)}</span>
                 <Settings2 size={11} />
               </button>
-            )}
-          </div>
+            </div>
+          )}
 
           <button
             type="button"

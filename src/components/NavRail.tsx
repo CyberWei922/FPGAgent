@@ -22,6 +22,7 @@ const NAV_ITEMS: Array<{ id: RailTab; label: string; Icon: typeof MessageSquare 
 export function NavRail({
   activeTab,
   onSelectTab,
+  onGoHome,
   onNewChat,
   onOpenSettings,
   resolvedTheme,
@@ -31,6 +32,7 @@ export function NavRail({
 }: {
   activeTab: RailTab;
   onSelectTab: (tab: RailTab) => void;
+  onGoHome: () => void;
   onNewChat: () => void;
   onOpenSettings: () => void;
   resolvedTheme: 'light' | 'dark';
@@ -45,7 +47,7 @@ export function NavRail({
         className="rail-brand"
         title="FPGAgent · 返回首页"
         aria-label="FPGAgent 返回首页"
-        onClick={onNewChat}
+        onClick={onGoHome}
       >
         <CircuitBoard size={19} strokeWidth={2.1} />
       </button>

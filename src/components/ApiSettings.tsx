@@ -18,6 +18,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { CustomModelSelect } from './CustomSelect';
 import {
   createLLMClient,
   fetchOpenAIModels,
@@ -25,6 +26,9 @@ import {
   getSuggestedModelOptions,
   inferProviderId,
   isAllowedBaseUrl,
+  isApiKeyOptional,
+  isLocalDevOrigin,
+  isLocalOrPrivateBaseUrl,
   normalizeBaseUrl,
   PROVIDER_PRESETS,
   saveAppPreferences,
@@ -81,7 +85,13 @@ export function ApiSettings({
   const [model, setModel] = useState(config?.model ?? '');
   const [apiKey, setApiKey] = useState(config?.apiKey ?? '');
   const [showKey, setShowKey] = useState(false);
-  const [customModelInput, setCustomModelInput] = useState(false);
+  const [customModelInput, setCustomModelInput] = useState(
+    (initialProvider === 'local-gateway' || initialProvider === 'custom') &&
+      !(config?.cachedModels && config.cachedModels.length > 0),
+  );
+  const [useLocalProxy, setUseLocalProxy] = useState<boolean>(
+    config?.useLocalProxy ?? (initialProvider === 'local-gateway' || isLocalOrPrivateBaseUrl(config?.baseUrl ?? '')),
+  );
 
   const [fetchedModels, setFetchedModels] = useState<LLMModelOption[]>(() =>
     config?.cachedModels?.length
@@ -100,6 +110,8 @@ export function ApiSettings({
 
   const activePreset = getProviderPreset(providerId);
   const isCustomProvider = providerId !== 'site-default';
+  const keyOptional = isCustomProvider && isApiKeyOptional(baseUrl, providerId);
+  const localDevAvailable = isLocalDevOrigin();
 
   function selectProvider(nextId: LLMProviderId) {
     setProviderId(nextId);
@@ -111,10 +123,21 @@ export function ApiSettings({
     if (nextId === 'site-default') return;
 
     const preset = getProviderPreset(nextId);
+    if (nextId === 'local-gateway') {
+      const nextUrl = isLocalOrPrivateBaseUrl(baseUrl) ? baseUrl : preset?.baseUrl ?? 'http://127.0.0.1:11434/v1';
+      setBaseUrl(nextUrl);
+      if (activePreset && activePreset.id !== 'local-gateway') setModel('');
+      setFetchedModels(getSuggestedModelOptions(nextId, ''));
+      setCustomModelInput(true);
+      setUseLocalProxy(true);
+      return;
+    }
+
     if (preset && nextId !== 'custom') {
       setBaseUrl(preset.baseUrl);
       setModel(preset.defaultModel);
       setFetchedModels(getSuggestedModelOptions(nextId, preset.defaultModel));
+      setUseLocalProxy(false);
     } else if (nextId === 'custom') {
       if (activePreset && activePreset.id !== 'custom') {
         setBaseUrl('');
@@ -122,6 +145,7 @@ export function ApiSettings({
       }
       setFetchedModels([]);
       setCustomModelInput(true);
+      setUseLocalProxy(false);
     }
   }
 
@@ -130,38 +154,61 @@ export function ApiSettings({
     setError('');
     setModelsHint('');
     const normalized = normalizeBaseUrl(baseUrl);
-    if (!isAllowedBaseUrl(normalized)) {
-      setError('请先填写有效的 HTTPS API Base URL。');
+    if (!isAllowedBaseUrl(normalized, providerId)) {
+      setError(
+        providerId === 'local-gateway'
+          ? '请先填写有效的本地/内网网关地址（如 http://127.0.0.1:11434/v1 或 http://192.168.x.x:8000/v1）。'
+          : '请先填写有效的 HTTPS API Base URL（内网地址请选择「本地 / 内网网关」）。',
+      );
       return;
     }
-    if (!apiKey.trim()) {
+    if (!isApiKeyOptional(normalized, providerId) && !apiKey.trim()) {
       setError('请先填写 API Key，再自动获取模型列表。');
       return;
     }
 
     setModelsLoading(true);
     try {
-      const list = await fetchOpenAIModels(normalized, apiKey.trim());
+      const list = await fetchOpenAIModels(normalized, apiKey.trim(), {
+        providerId,
+        useLocalProxy: localDevAvailable ? useLocalProxy : false,
+      });
       if (list.length === 0) {
         const fallback = getSuggestedModelOptions(providerId, model);
         setFetchedModels(fallback);
         setModelsHint('接口返回了空列表，已回退为推荐模型列表。');
       } else {
         setFetchedModels(list);
-        if (!model.trim() || !list.some((item) => item.id === model.trim())) {
-          const preferred = activePreset?.defaultModel && list.some((m) => m.id === activePreset.defaultModel)
-            ? activePreset.defaultModel
-            : list[0].id;
-          setModel(preferred);
-        }
+        const preferred =
+          !model.trim() || !list.some((item) => item.id === model.trim())
+            ? activePreset?.defaultModel && list.some((m) => m.id === activePreset.defaultModel)
+              ? activePreset.defaultModel
+              : list[0].id
+            : model.trim();
+        setModel(preferred);
         setCustomModelInput(false);
-        setModelsHint(`已从服务商同步 ${list.length} 个可用模型。`);
+        setModelsHint(`已从网关同步 ${list.length} 个可用模型。`);
+        if (config && normalizeBaseUrl(config.baseUrl) === normalized) {
+          const synced: ByokConfig = {
+            ...config,
+            providerId,
+            model: preferred,
+            cachedModels: list.slice(0, 80),
+            useLocalProxy: localDevAvailable ? useLocalProxy : false,
+          };
+          try {
+            saveByokConfig(synced);
+            onSaveApi(synced);
+          } catch {
+            // ignore storage errors on background sync
+          }
+        }
       }
     } catch (err) {
       const fallback = getSuggestedModelOptions(providerId, model);
       setFetchedModels(fallback);
       const reason = isLLMError(err) ? err.message : '拉取失败';
-      setModelsHint(`自动拉取未成功（${reason}），已使用预设模型，你也可以手动输入模型名。`);
+      setModelsHint(`自动拉取未成功（${reason}），可手动填写模型名称。`);
     } finally {
       setModelsLoading(false);
     }
@@ -184,12 +231,17 @@ export function ApiSettings({
       }
 
       const normalized = normalizeBaseUrl(baseUrl);
-      if (!isAllowedBaseUrl(normalized)) {
-        setError('请使用 HTTPS 地址（本机调试允许 http://localhost）。');
+      if (!isAllowedBaseUrl(normalized, providerId)) {
+        setError(
+          providerId === 'local-gateway'
+            ? '请填写有效的 http:// 或 https:// 网关地址。'
+            : '请使用 HTTPS 地址（本地/内网 HTTP 地址请选「本地 / 内网网关」）。',
+        );
         return;
       }
-      if (!apiKey.trim() || !model.trim()) {
-        setError('请先填写模型名称和 API Key。');
+      const optional = isApiKeyOptional(normalized, providerId);
+      if (!model.trim() || (!optional && !apiKey.trim())) {
+        setError(optional ? '请先填写或获取模型名称。' : '请先填写模型名称和 API Key。');
         return;
       }
 
@@ -199,6 +251,7 @@ export function ApiSettings({
         baseUrl: normalized,
         apiKey: apiKey.trim(),
         model: model.trim(),
+        useLocalProxy: localDevAvailable ? useLocalProxy : false,
       });
       const result = await client.testConnection!({ model: model.trim() });
       setTestResult({
@@ -223,12 +276,17 @@ export function ApiSettings({
     let next: ByokConfig | null = null;
     if (isCustomProvider) {
       const normalized = normalizeBaseUrl(baseUrl);
-      if (!isAllowedBaseUrl(normalized)) {
-        setError('请使用 HTTPS 地址（本机 localhost 可用 HTTP），且不要包含密钥或查询参数。');
+      if (!isAllowedBaseUrl(normalized, providerId)) {
+        setError(
+          providerId === 'local-gateway'
+            ? '请填写有效的 http:// 或 https:// 网关地址，且不要包含 URL 凭据或查询参数。'
+            : '请使用 HTTPS 地址（本机或局域网 HTTP 网关请选「本地 / 内网网关」），且不要包含查询参数。',
+        );
         return;
       }
-      if (!model.trim() || !apiKey.trim()) {
-        setError('请填写模型名称和 API Key。');
+      const optional = isApiKeyOptional(normalized, providerId);
+      if (!model.trim() || (!optional && !apiKey.trim())) {
+        setError(optional ? '请填写或获取模型名称。' : '请填写模型名称和 API Key。');
         return;
       }
       const ensuredModels = fetchedModels.some((m) => m.id === model.trim())
@@ -240,6 +298,7 @@ export function ApiSettings({
         model: model.trim(),
         apiKey: apiKey.trim(),
         cachedModels: ensuredModels.slice(0, 80),
+        useLocalProxy: localDevAvailable ? useLocalProxy : false,
       };
     }
 
@@ -287,10 +346,7 @@ export function ApiSettings({
       <div className="dialog-heading">
         <div className="dialog-title-group">
           <SlidersHorizontal size={18} />
-          <div>
-            <h2 id="settings-modal-title">工作台设置</h2>
-            <p className="dialog-subtitle">配置大模型服务商、界面主题与联网检索偏好</p>
-          </div>
+          <h2 id="settings-modal-title">工作台设置</h2>
         </div>
         <button
           type="button"
@@ -348,7 +404,6 @@ export function ApiSettings({
                     onClick={() => selectProvider('site-default')}
                   >
                     <span>站点默认</span>
-                    <small>{remainingQuota !== undefined ? `余 ${remainingQuota} 次` : '免 Key 体验'}</small>
                   </button>
                   {PROVIDER_PRESETS.map((preset) => (
                     <button
@@ -360,7 +415,6 @@ export function ApiSettings({
                       onClick={() => selectProvider(preset.id)}
                     >
                       <span>{preset.name}</span>
-                      <small>{preset.defaultModel || 'OpenAI 兼容'}</small>
                     </button>
                   ))}
                 </div>
@@ -378,15 +432,24 @@ export function ApiSettings({
                           setBaseUrl(event.target.value);
                           setTestResult(null);
                         }}
-                        placeholder="https://api.deepseek.com/v1"
+                        placeholder={
+                          providerId === 'local-gateway'
+                            ? 'http://127.0.0.1:11434/v1 或 http://192.168.x.x:8000/v1'
+                            : 'https://api.deepseek.com/v1'
+                        }
                         required
                       />
                     </label>
+                    {providerId === 'local-gateway' && (
+                      <p className="field-help">
+                        支持 OpenAI 兼容的本地或内网网关（Ollama、LM Studio、vLLM、OneAPI / NewAPI、自建转发网关等），可直接填写 http:// 本机或局域网 IP。
+                      </p>
+                    )}
                   </div>
 
                   <div className="setting-block">
                     <label className="setting-field" htmlFor="settings-api-key">
-                      <span>API Key</span>
+                      <span>{keyOptional ? 'API Key（本地/内网网关可选）' : 'API Key'}</span>
                       <div className="key-field">
                         <input
                           id="settings-api-key"
@@ -396,10 +459,10 @@ export function ApiSettings({
                             setApiKey(event.target.value);
                             setTestResult(null);
                           }}
-                          placeholder="sk-..."
+                          placeholder={keyOptional ? '无需鉴权可留空，需要则填写 sk-...' : 'sk-...'}
                           autoComplete="off"
                           spellCheck={false}
-                          required
+                          required={!keyOptional}
                         />
                         <button
                           type="button"
@@ -412,9 +475,35 @@ export function ApiSettings({
                       </div>
                     </label>
                     <p className="field-help">
-                      Key 仅保存在你当前浏览器的本地存储中，生成电路时直连所选服务商。
+                      {keyOptional
+                        ? '若网关免鉴权可直接留空；填写后仅保存在当前浏览器本地存储中。'
+                        : 'Key 仅保存在你当前浏览器的本地存储中，生成电路时直连所选服务商。'}
                     </p>
                   </div>
+
+                  {localDevAvailable && (providerId === 'local-gateway' || providerId === 'custom' || isLocalOrPrivateBaseUrl(baseUrl)) && (
+                    <div className="setting-row-card">
+                      <div className="setting-row-copy">
+                        <span className="setting-row-title">
+                          <Wifi size={14} /> 通过本地开发代理转发（解决内网 CORS 跨域）
+                        </span>
+                        <span className="field-help">
+                          由当前本机开发服务器代发至目标网关，内网 API 未配置 CORS 响应头也能直接拉取模型并调用
+                        </span>
+                      </div>
+                      <label className="switch-toggle">
+                        <input
+                          type="checkbox"
+                          checked={useLocalProxy}
+                          onChange={(event) => {
+                            setUseLocalProxy(event.target.checked);
+                            setTestResult(null);
+                          }}
+                        />
+                        <span className="switch-track" />
+                      </label>
+                    </div>
+                  )}
 
                   <div className="setting-block">
                     <div className="setting-block-head">
@@ -452,18 +541,14 @@ export function ApiSettings({
                         required
                       />
                     ) : (
-                      <select
+                      <CustomModelSelect
                         id="settings-model-select"
-                        className="select-input"
+                        ariaLabel="默认对话模型"
+                        variant="field"
+                        options={modelChoices}
                         value={modelChoices.some((m) => m.id === model) ? model : modelChoices[0].id}
-                        onChange={(event) => setModel(event.target.value)}
-                      >
-                        {modelChoices.map((option) => (
-                          <option key={option.id} value={option.id}>
-                            {option.label ? `${option.label} (${option.id})` : option.id}
-                          </option>
-                        ))}
-                      </select>
+                        onChange={(nextModel) => setModel(nextModel)}
+                      />
                     )}
                     {modelsHint && <p className="field-help">{modelsHint}</p>}
                   </div>
@@ -529,11 +614,11 @@ export function ApiSettings({
                 <div className="theme-mode-grid" role="radiogroup" aria-label="深色与浅色模式">
                   {(
                     [
-                      { id: 'light', label: '浅色模式', desc: '明亮图纸视野', Icon: Sun },
-                      { id: 'dark', label: '深色模式', desc: '低眩光夜间实验室', Icon: Moon },
-                      { id: 'system', label: '跟随系统', desc: '随操作系统切换', Icon: Monitor },
+                      { id: 'light', label: '浅色模式', Icon: Sun },
+                      { id: 'dark', label: '深色模式', Icon: Moon },
+                      { id: 'system', label: '跟随系统', Icon: Monitor },
                     ] as const
-                  ).map(({ id, label, desc, Icon }) => (
+                  ).map(({ id, label, Icon }) => (
                     <button
                       key={id}
                       type="button"
@@ -546,7 +631,6 @@ export function ApiSettings({
                         <Icon size={17} />
                       </span>
                       <strong>{label}</strong>
-                      <small>{desc}</small>
                     </button>
                   ))}
                 </div>
@@ -554,9 +638,6 @@ export function ApiSettings({
 
               <div className="setting-block">
                 <span className="setting-label">主题强调色</span>
-                <p className="field-help">
-                  实时作用于导航激活态、主要操作按钮、高电平信号脉冲与状态指示。
-                </p>
                 <div className="accent-grid" role="radiogroup" aria-label="主题色选择">
                   {ACCENT_PRESETS.map((preset) => {
                     const selected = theme.accentId === preset.id;

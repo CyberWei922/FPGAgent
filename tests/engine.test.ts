@@ -907,6 +907,119 @@ describe('5. 教学级门网表与白话播报 (netlist.ts)', () => {
     expect(kinds.has('ADD')).toBe(true);
   });
 
+  it('四位加法绘出真实的进位链，位拼接和常量不产生 MUX', () => {
+    const engine = createRtlEngine();
+    const result = engine.compile(`
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        wire [4:0] sum = {1'b0, sw[3:0]} + {1'b0, key};
+        assign led = {3'b0, sum};
+        assign seg = {11'b0, sum};
+        assign traffic = 3'b0;
+      endmodule
+    `);
+    expect(result.ok).toBe(true);
+    const { sample, netlist } = engine.step({ rst_n: 1, key: 1, sw: 15 });
+    expect(sample.outputs).toEqual({ led: 16, seg: 16, traffic: 0 });
+    expect(netlist.nodes.map((node) => node.kind)).not.toContain('MUX');
+    expect(netlist.nodes.map((node) => node.kind)).toEqual(expect.arrayContaining(['AND', 'XOR', 'OR', 'CONST']));
+    const nodes = new Map(netlist.nodes.map((node) => [node.id, node]));
+    expect(netlist.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ signalName: 'C2', width: 1, value: 1 }),
+      expect.objectContaining({ signalName: 'C4', width: 1, value: 1 }),
+    ]));
+    expect(netlist.edges.some((edge) => nodes.get(edge.from)?.kind === 'CONST' && edge.to === 'out_traffic')).toBe(true);
+  });
+
+  it('累加器从触发器 Q 反馈到加法器，时钟与低有效清零各接自己的引脚', () => {
+    const engine = createRtlEngine();
+    const result = engine.compile(`
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] key_num;
+        always @(posedge clk or negedge rst_n)
+          if (!rst_n) key_num <= 8'd0;
+          else if (sw[0]) key_num <= key_num + key;
+        assign led = key_num;
+        assign seg = 16'd0;
+        assign traffic = 3'd0;
+      endmodule
+    `);
+    expect(result.ok).toBe(true);
+    const graph = engine.step({ rst_n: 1, key: 2, sw: 1 }).netlist;
+    const add = graph.nodes.find((node) => node.kind === 'ADD');
+    const mux = graph.nodes.find((node) => node.kind === 'MUX');
+    expect(add?.value).toBe(4);
+    expect(graph.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ from: 'dff_key_num', to: add?.id, value: 2 }),
+      expect.objectContaining({ from: add?.id, to: mux?.id, toPin: '1' }),
+      expect.objectContaining({ to: mux?.id, toPin: 'S', width: 1 }),
+      expect.objectContaining({ from: mux?.id, to: 'dff_key_num', toPin: 'D', value: 4 }),
+      expect.objectContaining({ from: 'in_clk', to: 'dff_key_num', toPin: 'CLK' }),
+      expect.objectContaining({ from: 'in_rst_n', to: 'dff_key_num', toPin: 'CLR', activeLow: true }),
+      expect.objectContaining({ from: 'dff_key_num', to: 'out_led', width: 8, value: 2 }),
+    ]));
+  });
+
+  it('时序块的独立位赋值不会隐藏其他寄存器的加法', () => {
+    const engine = createRtlEngine();
+    const result = engine.compile(`module top(
+      input clk, input rst_n, input [3:0] key, input [7:0] sw,
+      output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+    );
+      reg [3:0] count;
+      always @(posedge clk) begin
+        count <= count + 4'd1;
+        led[0] <= ~key[0];
+      end
+      assign seg = {12'd0, count};
+      assign traffic = 3'd0;
+    endmodule`);
+    expect(result.ok).toBe(true);
+    expect(result.netlist?.nodes.some((node) => node.kind === 'XOR')).toBe(true);
+    expect(result.netlist?.edges.find((edge) => edge.to === 'dff_count' && edge.toPin === 'D')?.value).toBe(1);
+  });
+
+  it('动态位宽加法的连接值与仿真输出一致', () => {
+    const engine = createRtlEngine();
+    const result = engine.compile(`module top(
+      input clk, input rst_n, input [3:0] key, input [7:0] sw,
+      output [7:0] led, output [2:0] traffic, output [15:0] seg
+    );
+      assign led = sw[key[2:0]:0] + 1'b1;
+      assign seg = 16'd0;
+      assign traffic = 3'd0;
+    endmodule`);
+    expect(result.ok).toBe(true);
+    const { sample, netlist } = engine.step({ rst_n: 1, key: 4, sw: 17 });
+    expect(sample.outputs.led).toBe(18);
+    expect(netlist.edges.find((edge) => edge.to === 'out_led')).toMatchObject({ width: 8, value: 18 });
+  });
+
+  it('有声明偏移和类型转换的取位分别走不同的物理位线', () => {
+    const engine = createRtlEngine();
+    const result = engine.compile(`module top(
+      input clk, input rst_n, input [3:0] key, input [7:0] sw,
+      output [7:0] led, output [2:0] traffic, output [15:0] seg
+    );
+      wire [11:4] data = sw;
+      assign led = {6'd0, $unsigned(data)[4], data[4]};
+      assign seg = 16'd0;
+      assign traffic = 3'd0;
+    endmodule`);
+    expect(result.ok).toBe(true);
+    const { sample, netlist } = engine.step({ rst_n: 1, key: 0, sw: 1 });
+    expect(sample.outputs.led).toBe(1);
+    expect(netlist.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ fromPin: '[4]', toPin: '[0]', value: 1 }),
+      expect.objectContaining({ fromPin: '[8]', toPin: '[1]', value: 0 }),
+    ]));
+  });
+
   it('网表节点携带 sourceLine 供前端点击门高亮源码', () => {
     const elab = elaborate(parseVerilog(trafficCode).ast!);
     const session = new SimulationSession(elab);

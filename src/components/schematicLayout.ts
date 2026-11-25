@@ -4,7 +4,7 @@ import type { GateKind, NetlistEdge, NetlistGraph, NetlistNode } from '../types/
 
 export interface SchematicPin extends ElkPoint {
   id: string;
-  side: 'WEST' | 'EAST';
+  side: 'WEST' | 'EAST' | 'SOUTH';
   label?: string;
   clock?: boolean;
   activeLow?: boolean;
@@ -14,6 +14,7 @@ export interface SchematicNode extends ElkPoint {
   id: string;
   label: string;
   kind: GateKind;
+  operator?: string;
   width: number;
   height: number;
   bodyHeight: number;
@@ -35,32 +36,22 @@ export interface SchematicLayout {
   wires: SchematicWire[];
 }
 
-type TopologyNode = Pick<NetlistNode, 'id' | 'label' | 'kind' | 'width' | 'level'>;
-type TopologyEdge = Pick<NetlistEdge, 'id' | 'from' | 'to' | 'signalName'>;
+type TopologyNode = Pick<NetlistNode, 'id' | 'label' | 'kind' | 'width' | 'level' | 'operator'>;
+type TopologyEdge = Pick<NetlistEdge, 'id' | 'from' | 'to' | 'signalName' | 'width' | 'fromPin' | 'toPin' | 'activeLow'>;
 interface Topology { nodes: TopologyNode[]; edges: TopologyEdge[] }
 
 let elk: InstanceType<typeof ELK> | undefined;
 
 export function schematicTopology(netlist?: NetlistGraph): string {
   if (!netlist?.nodes.length) return '';
-  const nodes = netlist.nodes.map(({ id, label, kind, width, level }) => ({ id, label, kind, width, level }))
-    .sort((a, b) => a.level - b.level || a.id.localeCompare(b.id));
-  const edges = netlist.edges.map(({ id, from, to, signalName }) => ({ id, from, to, signalName }))
-    .sort((a, b) => a.id.localeCompare(b.id));
+  const nodes = netlist.nodes.map(({ id, label, kind, width, level, operator }) => ({ id, label, kind, width, level, operator }))
+    .sort((a, b) => a.level - b.level);
+  const edges = netlist.edges.map(({ id, from, to, signalName, width, fromPin, toPin, activeLow }) => ({ id, from, to, signalName, width, fromPin, toPin, activeLow }));
   return JSON.stringify({ nodes, edges });
 }
 
 function netId(edge: TopologyEdge): string {
-  return JSON.stringify([edge.from, edge.signalName]);
-}
-
-function pinLabel(kind: GateKind, edge: TopologyEdge, nodes: Map<string, TopologyNode>) {
-  if (kind !== 'DFF') return {};
-  const signal = [edge.signalName, edge.from, nodes.get(edge.from)?.label].join(' ');
-  if (/\b(?:clk|clock)\b/i.test(signal)) return { clock: true };
-  if (/\b(?:rst|reset)_n\b/i.test(signal)) return { label: 'R', activeLow: true };
-  if (/\b(?:rst|reset)\b/i.test(signal)) return { label: 'R' };
-  return { label: 'D' };
+  return JSON.stringify([edge.from, edge.fromPin ?? '']);
 }
 
 function layoutInput(topology: Topology) {
@@ -88,22 +79,28 @@ function layoutInput(topology: Topology) {
 
   const nodes = topology.nodes.map((node): SchematicNode => {
     const incoming = inputs.get(node.id) ?? [];
-    const outgoing = outputs.get(node.id) ?? [];
-    const bodyHeight = Math.max(44, 12 * (Math.max(incoming.length, outgoing.length) + 1));
-    const width = Math.min(160, Math.max(104, node.label.length * 7 + 22));
+    const outgoing = (outputs.get(node.id) ?? []).sort((a, b) =>
+      (groups.get(b)?.[0].fromPin ?? '').localeCompare(groups.get(a)?.[0].fromPin ?? '', undefined, { numeric: true }));
+    const select = node.kind === 'MUX' ? incoming.find((edge) => edge.toPin === 'S') : undefined;
+    const west = incoming.filter((edge) => edge !== select);
+    const terminal = node.kind === 'INPUT' || node.kind === 'OUTPUT' || node.kind === 'CONST';
+    const primitive = ['AND', 'OR', 'XOR', 'NOT'].includes(node.kind);
+    const bodyHeight = Math.max(terminal ? 28 : 34, 14 * (Math.max(west.length, outgoing.length) + 1));
+    const width = primitive ? 64 : Math.min(154, Math.max(terminal ? 82 : 90, node.label.length * 7 + 20));
+    const height = bodyHeight + (select ? 37 : 28);
     const pins: SchematicPin[] = [
-      ...incoming.map((edge, index): SchematicPin => ({
-        id: `in:${edge.id}`,
-        side: 'WEST', x: 0, y: 8 + bodyHeight * (index + 1) / (incoming.length + 1),
-        ...pinLabel(node.kind, edge, nodeById),
+      ...west.map((edge, index): SchematicPin => ({
+        id: `in:${edge.id}`, side: 'WEST', x: 0, y: 8 + bodyHeight * (index + 1) / (west.length + 1),
+        label: primitive ? undefined : edge.toPin,
+        clock: edge.toPin === 'CLK', activeLow: edge.activeLow,
       })),
       ...outgoing.map((group, index): SchematicPin => ({
-        id: `out:${group}`,
-        side: 'EAST', x: width, y: 8 + bodyHeight * (index + 1) / (outgoing.length + 1),
-        label: node.kind === 'DFF' && outgoing.length === 1 ? 'Q' : undefined,
+        id: `out:${group}`, side: 'EAST', x: width, y: 8 + bodyHeight * (index + 1) / (outgoing.length + 1),
+        label: node.kind === 'DFF' ? 'Q' : groups.get(group)?.[0].fromPin,
       })),
     ];
-    return { ...node, width, height: bodyHeight + 33, bodyHeight, pins, x: 0, y: 0 };
+    if (select) pins.push({ id: `in:${select.id}`, side: 'SOUTH', x: width / 2, y: height, label: 'S' });
+    return { ...node, width, height, bodyHeight, pins, x: 0, y: 0 };
   });
 
   const graph: ElkNode = {
@@ -114,9 +111,10 @@ function layoutInput(topology: Topology) {
       'elk.edgeRouting': 'ORTHOGONAL',
       'elk.padding': '[top=20,left=20,bottom=20,right=20]',
       'elk.spacing.nodeNode': '18',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '50',
-      'elk.layered.spacing.edgeEdgeBetweenLayers': '12',
-      'elk.layered.spacing.edgeNodeBetweenLayers': '14',
+      'elk.layered.spacing.nodeNodeBetweenLayers': '38',
+      'elk.layered.spacing.edgeEdgeBetweenLayers': '10',
+      'elk.layered.spacing.edgeNodeBetweenLayers': '12',
+      'elk.separateConnectedComponents': 'false',
       'elk.layered.feedbackEdges': 'true',
     },
     children: nodes.map((node): ElkNode => ({
@@ -134,35 +132,38 @@ function layoutInput(topology: Topology) {
 }
 
 function wirePath(routes: ElkExtendedEdge[]): string {
-  const spans = new Map<string, { horizontal: boolean; fixed: number; forward: boolean; ranges: [number, number][] }>();
+  const spans = new Map<string, { horizontal: boolean; fixed: number; ranges: [number, number][] }>();
+  const paths: string[] = [];
+  const snap = ({ x, y }: ElkPoint) => ({ x: Number(x.toFixed(5)), y: Number(y.toFixed(5)) });
 
   for (const route of routes) {
     for (const section of route.sections ?? []) {
-      const points = [section.startPoint, ...section.bendPoints ?? [], section.endPoint];
+      const points = [section.startPoint, ...section.bendPoints ?? [], section.endPoint].map(snap);
       for (let index = 1; index < points.length; index++) {
         const first = points[index - 1];
         const last = points[index];
         if (first.x === last.x && first.y === last.y) continue;
+        if (first.x !== last.x && first.y !== last.y) {
+          paths.push(`M ${first.x} ${first.y} L ${last.x} ${last.y}`);
+          continue;
+        }
         const horizontal = first.y === last.y;
         const fixed = horizontal ? first.y : first.x;
         const a = horizontal ? first.x : first.y;
         const b = horizontal ? last.x : last.y;
-        const forward = a < b;
-        const key = `${horizontal}:${fixed}:${forward}`;
-        const span = spans.get(key) ?? { horizontal, fixed, forward, ranges: [] };
+        const key = `${horizontal}:${fixed}`;
+        const span = spans.get(key) ?? { horizontal, fixed, ranges: [] };
         span.ranges.push([Math.min(a, b), Math.max(a, b)]);
         spans.set(key, span);
       }
     }
   }
 
-  const paths: string[] = [];
-  for (const { horizontal, fixed, forward, ranges } of spans.values()) {
+  for (const { horizontal, fixed, ranges } of spans.values()) {
     const [first, ...rest] = ranges.sort((a, b) => a[0] - b[0]);
     let [start, end] = first;
     const append = () => {
-      const [from, to] = forward ? [start, end] : [end, start];
-      paths.push(horizontal ? `M ${from} ${fixed} H ${to}` : `M ${fixed} ${from} V ${to}`);
+      paths.push(horizontal ? `M ${start} ${fixed} H ${end}` : `M ${fixed} ${start} V ${end}`);
     };
     for (const [left, right] of rest) {
       if (left <= end) end = Math.max(end, right);
@@ -193,7 +194,7 @@ export async function layoutSchematic(topology: string): Promise<SchematicLayout
       const routes = group.flatMap((edge) => edges.get(`wire:${edge.id}`) ?? []);
       const points = routes.flatMap((route) => route.junctionPoints ?? []);
       const junctions = [...new Map(points.map((point) => [`${point.x},${point.y}`, point])).values()];
-      return { id, edgeIds: group.map((edge) => edge.id), width: nodeById.get(group[0].from)?.width ?? 1, path: wirePath(routes), junctions };
+      return { id, edgeIds: group.map((edge) => edge.id), width: group[0].width ?? nodeById.get(group[0].from)?.width ?? 1, path: wirePath(routes), junctions };
     }),
   };
 }

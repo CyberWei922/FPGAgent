@@ -3,16 +3,27 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Info,
   LayoutGrid,
   LockKeyhole,
-  Palette,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Radio,
-  SlidersHorizontal,
+  Sun,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react';
 import { createAgentRuntime } from './agent';
+import { AboutModal } from './components/AboutModal';
 import { ApiSettings } from './components/ApiSettings';
 import { ChatPane, type ChatTurn } from './components/ChatPane';
 import { GateCanvas } from './components/GateCanvas';
@@ -73,6 +84,36 @@ import {
 
 const IDLE_INPUTS: BoardInputs = { rst_n: 1, key: 0, sw: 0 };
 const HISTORY_LIMIT = 48;
+const LEFT_PANE_STORAGE_KEY = 'fpgagent.leftPaneWidth';
+const LEFT_PANE_MIN = 260;
+const LEFT_PANE_MAX = 640;
+const WORKBENCH_MIN = 420;
+
+function defaultLeftPaneWidth(): number {
+  if (typeof window === 'undefined') return 384;
+  return window.innerWidth <= 1240 ? 320 : 384;
+}
+
+function clampLeftPaneWidth(
+  width: number,
+  viewportWidth = typeof window === 'undefined' ? 1440 : window.innerWidth,
+): number {
+  const rail = viewportWidth <= 1240 ? 52 : 56;
+  const maxAllowed = Math.max(LEFT_PANE_MIN, Math.min(LEFT_PANE_MAX, viewportWidth - rail - WORKBENCH_MIN));
+  return Math.round(Math.max(LEFT_PANE_MIN, Math.min(maxAllowed, width)));
+}
+
+function loadLeftPaneWidth(): number {
+  if (typeof window === 'undefined') return 384;
+  try {
+    const raw = window.localStorage.getItem(LEFT_PANE_STORAGE_KEY);
+    const parsed = raw ? Number(raw) : NaN;
+    if (Number.isFinite(parsed) && parsed > 0) return clampLeftPaneWidth(parsed);
+  } catch {
+    // Ignore storage read failures in restricted environments.
+  }
+  return clampLeftPaneWidth(defaultLeftPaneWidth());
+}
 
 const LLM_ERROR_TEXT: Record<LLMErrorCode, string> = {
   QUOTA_EXCEEDED: '今日免费次数已用完。可体验预置案例，或在设置中切换 DeepSeek / GLM / 通义千问等自有 Key。',
@@ -90,8 +131,51 @@ const QUICK_PROMPTS = [
   { id: 'password-lock', prompt: '做一个四位密码锁', desc: 'SW 拨码输入 + KEY0 提交开锁', Icon: LockKeyhole },
 ];
 
+type AppView = 'home' | 'workbench';
 type WorkbenchTab = 'canvas' | 'blueprint' | 'verilog' | 'verify';
 type Outcome = 'busy' | 'ready' | 'cancelled' | 'failed';
+
+interface RouteState {
+  view: AppView;
+  railTab: RailTab;
+  wbTab: WorkbenchTab;
+}
+
+function parseRouteFromHash(hash: string): RouteState {
+  const clean = hash.replace(/^#\/?/, '').trim();
+  if (!clean) return { view: 'home', railTab: 'chat', wbTab: 'canvas' };
+  const [pathPart, queryPart] = clean.split('?');
+  const params = new URLSearchParams(queryPart ?? '');
+  const segs = pathPart.split('/').filter(Boolean);
+  if (segs[0] === 'presets' || segs[0] === 'clinic' || segs[0] === 'history') {
+    const wb = params.get('tab');
+    const wbTab: WorkbenchTab =
+      wb === 'blueprint' || wb === 'verilog' || wb === 'verify' ? wb : 'canvas';
+    return { view: 'workbench', railTab: segs[0], wbTab };
+  }
+  if (segs[0] === 'workbench') {
+    const wb = segs[1];
+    const wbTab: WorkbenchTab =
+      wb === 'blueprint' || wb === 'verilog' || wb === 'verify' ? wb : 'canvas';
+    const panel = params.get('panel');
+    const railTab: RailTab =
+      panel === 'presets' || panel === 'clinic' || panel === 'history' ? panel : 'chat';
+    return { view: 'workbench', railTab, wbTab };
+  }
+  return { view: 'home', railTab: 'chat', wbTab: 'canvas' };
+}
+
+function formatHashFromRoute(route: RouteState): string {
+  if (route.view === 'home') return '#/';
+  if (route.railTab !== 'chat') {
+    return route.wbTab !== 'canvas' ? `#/${route.railTab}?tab=${route.wbTab}` : `#/${route.railTab}`;
+  }
+  return `#/workbench/${route.wbTab}`;
+}
+
+function isSameRoute(a: RouteState, b: RouteState): boolean {
+  return a.view === b.view && a.railTab === b.railTab && a.wbTab === b.wbTab;
+}
 
 function nextId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -113,12 +197,67 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<'api' | 'appearance'>('api');
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [remainingQuota, setRemainingQuota] = useState<number | undefined>();
 
-  // Navigation & Layout
-  const [railTab, setRailTab] = useState<RailTab>('chat');
+  // Navigation & Browser History State
+  const initialRoute = useMemo<RouteState>(() => {
+    const parsed = parseRouteFromHash(window.location.hash);
+    if (parsed.view === 'workbench' && parsed.railTab === 'chat') {
+      return { view: 'home', railTab: 'chat', wbTab: 'canvas' };
+    }
+    return parsed;
+  }, []);
+  const [view, setView] = useState<AppView>(initialRoute.view);
+  const [railTab, setRailTab] = useState<RailTab>(initialRoute.railTab);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [wbTab, setWbTab] = useState<WorkbenchTab>('canvas');
+  const [wbTab, setWbTab] = useState<WorkbenchTab>(initialRoute.wbTab);
+  const routeRef = useRef<RouteState>(initialRoute);
+
+  const navigateTo = useCallback(
+    (patch: Partial<RouteState>, options: { replace?: boolean } = {}) => {
+      const next: RouteState = { ...routeRef.current, ...patch };
+      if (isSameRoute(routeRef.current, next)) return;
+      routeRef.current = next;
+      setView(next.view);
+      setRailTab(next.railTab);
+      setWbTab(next.wbTab);
+      const hash = formatHashFromRoute(next);
+      if (options.replace) {
+        window.history.replaceState(next, '', hash);
+      } else {
+        window.history.pushState(next, '', hash);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    window.history.replaceState(routeRef.current, '', formatHashFromRoute(routeRef.current));
+    const onPopState = (event: PopStateEvent) => {
+      const candidate = event.state as Partial<RouteState> | null;
+      const next: RouteState =
+        candidate &&
+        (candidate.view === 'home' || candidate.view === 'workbench') &&
+        (candidate.railTab === 'chat' ||
+          candidate.railTab === 'presets' ||
+          candidate.railTab === 'clinic' ||
+          candidate.railTab === 'history') &&
+        (candidate.wbTab === 'canvas' ||
+          candidate.wbTab === 'blueprint' ||
+          candidate.wbTab === 'verilog' ||
+          candidate.wbTab === 'verify')
+          ? { view: candidate.view, railTab: candidate.railTab, wbTab: candidate.wbTab }
+          : parseRouteFromHash(window.location.hash);
+      routeRef.current = next;
+      setView(next.view);
+      setRailTab(next.railTab);
+      setWbTab(next.wbTab);
+      setSidebarCollapsed(false);
+    };
+    window.addEventListener('popstate', onPopState);
+    return () => window.removeEventListener('popstate', onPopState);
+  }, []);
 
   // Chat & Session State
   const [turns, setTurns] = useState<ChatTurn[]>([]);
@@ -134,6 +273,11 @@ export default function App() {
   const [highlightLine, setHighlightLine] = useState<number>();
   const [copiedHeader, setCopiedHeader] = useState(false);
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[]>(loadHistoryEntries);
+  const [leftPaneWidth, setLeftPaneWidth] = useState<number>(loadLeftPaneWidth);
+  const [resizingPane, setResizingPane] = useState(false);
+  const leftPaneWidthRef = useRef(leftPaneWidth);
+  leftPaneWidthRef.current = leftPaneWidth;
+  const resizeDragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
 
   // Bug Clinic State
   const [activeBug, setActiveBug] = useState<BugClinicCase | null>(null);
@@ -179,6 +323,78 @@ export default function App() {
     });
     return () => { active = false; };
   }, [api]);
+
+  useEffect(() => {
+    function handleWindowResize() {
+      setLeftPaneWidth((prev) => clampLeftPaneWidth(prev));
+    }
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, []);
+
+  const persistLeftPaneWidth = useCallback((width: number) => {
+    try {
+      window.localStorage.setItem(LEFT_PANE_STORAGE_KEY, String(width));
+    } catch {
+      // Ignore storage write failures.
+    }
+  }, []);
+
+  function beginPaneResize(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic pointer events in tests may not have an active browser pointer.
+    }
+    resizeDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: leftPaneWidthRef.current,
+    };
+    setResizingPane(true);
+  }
+
+  function movePaneResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = resizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const next = clampLeftPaneWidth(drag.startWidth + (event.clientX - drag.startX));
+    leftPaneWidthRef.current = next;
+    setLeftPaneWidth(next);
+  }
+
+  function endPaneResize(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = resizeDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    resizeDragRef.current = null;
+    setResizingPane(false);
+    persistLeftPaneWidth(leftPaneWidthRef.current);
+  }
+
+  function resetLeftPaneWidth() {
+    const next = clampLeftPaneWidth(defaultLeftPaneWidth());
+    leftPaneWidthRef.current = next;
+    setLeftPaneWidth(next);
+    persistLeftPaneWidth(next);
+  }
+
+  function keyboardPaneResize(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Home') {
+      event.preventDefault();
+      resetLeftPaneWidth();
+      return;
+    }
+    const step = event.shiftKey ? 40 : 16;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      const delta = event.key === 'ArrowRight' ? step : -step;
+      const next = clampLeftPaneWidth(leftPaneWidthRef.current + delta);
+      leftPaneWidthRef.current = next;
+      setLeftPaneWidth(next);
+      persistLeftPaneWidth(next);
+    }
+  }
 
   const toggleLightDark = useCallback(() => {
     const nextMode = resolvedTheme === 'dark' ? 'light' : 'dark';
@@ -332,12 +548,16 @@ export default function App() {
     setTraces([]);
     setVersion(0);
     setActivePresetId(undefined);
-    setRailTab('chat');
-    setWbTab('canvas');
     setSidebarCollapsed(false);
     setSpeed(prefs.defaultClockSpeed);
     setRunning(true);
     clearCircuit();
+    navigateTo({ view: 'home', railTab: 'chat', wbTab: 'canvas' });
+  }
+
+  function goHome() {
+    setSidebarCollapsed(false);
+    navigateTo({ view: 'home', railTab: 'chat' });
   }
 
   function updateAssistantTurn(turnId: string, updater: (prev: ChatTurn) => ChatTurn) {
@@ -356,7 +576,7 @@ export default function App() {
       }
     } else {
       setOutcome('failed');
-      setWbTab('verify');
+      navigateTo({ view: 'workbench', wbTab: 'verify' });
     }
   }
 
@@ -370,7 +590,7 @@ export default function App() {
     const userTurnId = nextId('user');
     const aiTurnId = nextId('ai');
 
-    setRailTab('chat');
+    navigateTo({ view: 'workbench', railTab: 'chat' });
     setSidebarCollapsed(false);
     setActiveBug(null);
     setHintLevel(0);
@@ -453,14 +673,14 @@ export default function App() {
             status: 'failed',
             text: '预设案例验证未通过，可在右侧「自测」页签查看详情。',
           }));
-          setWbTab('verify');
+          navigateTo({ view: 'workbench', wbTab: 'verify' }, { replace: true });
           return;
         }
 
         const filename = deriveVerilogFilename(preset.verilogCode, preset.id);
         setVersion(nextVer);
         setOutcome('ready');
-        setWbTab('canvas');
+        navigateTo({ view: 'workbench', wbTab: 'canvas' }, { replace: true });
         pushTrace({
           stage: 'done',
           status: 'pass',
@@ -495,13 +715,23 @@ export default function App() {
         });
         setHistoryEntries(saved);
       } else {
-        const contextPrompt = previous
-          ? `请基于当前电路完成这次修改。当前电路：${previous.title ?? '未命名'}\n\`\`\`verilog\n${previous.source}\n\`\`\`\n修改需求：\n${prompt}`
-          : prompt;
+        const recentHistory = turns
+          .filter((t) => t.text.trim())
+          .slice(-6)
+          .map((t) => ({ role: t.role, content: t.text }));
 
-        const result = await runtime.runHarness(contextPrompt, {
+        let streamedSummary = '';
+        const result = await runtime.runHarness(prompt, {
           signal: controller.signal,
           onTrace: pushTrace,
+          onAssistantDelta: (chunk) => {
+            if (!active()) return;
+            streamedSummary += chunk;
+            updateAssistantTurn(aiTurnId, (t) => ({
+              ...t,
+              text: streamedSummary,
+            }));
+          },
           model: api ? selectedModel : undefined,
           enableWebResearch: prefs.enableWebResearch,
           previousContext: previous
@@ -509,6 +739,7 @@ export default function App() {
                 blueprint,
                 verilogCode: previous.source,
                 testVectors: vectors,
+                history: recentHistory,
               }
             : undefined,
         });
@@ -527,15 +758,17 @@ export default function App() {
           updateAssistantTurn(aiTurnId, (t) => ({
             ...t,
             status: 'failed',
-            text: previous
-              ? '新候选验证未通过，右侧板卡仍保持上一版本运行。可在「自测」或「Verilog」页签排查。'
-              : '生成的候选代码未通过编译或自测，可在右侧「自测」页签查看具体失配拍与 Lint 提示。',
+            text:
+              result.assistantSummary ??
+              (previous
+                ? '新候选验证未通过，右侧板卡仍保持上一版本运行。可在「自测」或「Verilog」页签排查。'
+                : '生成的候选代码未通过编译或自测，可在右侧「自测」页签查看具体失配拍与 Lint 提示。'),
             passedChecks: result.selfTest?.passedChecks,
             totalChecks: result.selfTest?.totalChecks,
             modelUsed: result.modelUsed ?? (api ? selectedModel : undefined),
             references: result.references,
           }));
-          setWbTab('verify');
+          navigateTo({ view: 'workbench', wbTab: 'verify' }, { replace: true });
           return;
         }
 
@@ -555,7 +788,7 @@ export default function App() {
             status: 'failed',
             text: '上板验证未通过，请在右侧「自测」页签查看原因。',
           }));
-          setWbTab('verify');
+          navigateTo({ view: 'workbench', wbTab: 'verify' }, { replace: true });
           return;
         }
 
@@ -567,7 +800,7 @@ export default function App() {
         const usedModel = result.modelUsed ?? (api ? selectedModel : undefined);
         setVersion(nextVer);
         setOutcome('ready');
-        setWbTab('canvas');
+        navigateTo({ view: 'workbench', wbTab: 'canvas' }, { replace: true });
 
         updateAssistantTurn(aiTurnId, (t) => ({
           ...t,
@@ -602,7 +835,12 @@ export default function App() {
     } catch (error) {
       if (!active()) return;
       const errCode = isLLMError(error) ? error.code : undefined;
-      const detail = errCode ? LLM_ERROR_TEXT[errCode] : '生成未完成，请重试。';
+      const rawMessage = isLLMError(error) ? error.message.trim() : '';
+      const baseText = errCode ? LLM_ERROR_TEXT[errCode] : '生成未完成，请重试。';
+      const detail =
+        rawMessage && errCode !== 'ABORTED' && !baseText.includes(rawMessage)
+          ? `${baseText}（${rawMessage}）`
+          : baseText;
       setOutcome('failed');
       pushTrace({ stage: 'failed', status: 'fail', title: '执行失败', detail, timestamp: Date.now() });
       updateAssistantTurn(aiTurnId, (t) => ({
@@ -649,15 +887,13 @@ export default function App() {
     setActiveBug(bug);
     setHintLevel(0);
     setHighlightLine(bug.diagnosis.highlightLine);
-    setRailTab('clinic');
     setSidebarCollapsed(false);
 
     const { ok } = loadCircuit(bug.buggyCode, targetVectors, targetBlueprint?.title, targetPresetId, undefined, {
       allowFailedSelfTest: true,
       nextVersion: Math.max(1, version),
     });
-    if (!ok) setWbTab('verify');
-    else setWbTab('canvas');
+    navigateTo({ view: 'workbench', railTab: 'clinic', wbTab: ok ? 'canvas' : 'verify' });
   }
 
   async function injectAiBug() {
@@ -678,7 +914,7 @@ export default function App() {
           errorCode: isLLMError(error) ? error.code : undefined,
         },
       ]);
-      setRailTab('chat');
+      navigateTo({ view: 'workbench', railTab: 'chat' });
     } finally {
       setInjectingBug(false);
     }
@@ -738,8 +974,7 @@ export default function App() {
         modelUsed: entry.modelUsed,
       },
     ]);
-    setRailTab('chat');
-    setWbTab('canvas');
+    navigateTo({ view: 'workbench', railTab: 'chat', wbTab: 'canvas' });
   }
 
   // Export & Copy helpers
@@ -787,14 +1022,14 @@ export default function App() {
 
   function jumpToVerilogLine(line?: number) {
     setHighlightLine(line);
-    setWbTab('verilog');
+    navigateTo({ view: 'workbench', wbTab: 'verilog' });
   }
 
   const busy = outcome === 'busy';
   const latest = history.at(-1);
   const lockActive = activePresetId === 'password-lock';
   const activePreset = runtime.presets.find((item) => item.id === activePresetId);
-  const hasSession = turns.length > 0 || compiled || railTab !== 'chat';
+  const hasSession = view === 'workbench' || railTab !== 'chat';
 
   const statusBadge = useMemo(() => {
     if (!latest) return undefined;
@@ -825,13 +1060,28 @@ export default function App() {
   const wbTitleVersion = applied.current?.version ?? version;
 
   return (
-    <div className="app-frame" data-has-session={hasSession} data-sidebar-collapsed={sidebarCollapsed}>
+    <div
+      className="app-frame"
+      data-has-session={hasSession}
+      data-sidebar-collapsed={sidebarCollapsed}
+      data-resizing={resizingPane}
+      style={{ '--left-pane-width': `${leftPaneWidth}px` } as CSSProperties}
+    >
       <NavRail
         activeTab={railTab}
         onSelectTab={(tab) => {
-          setRailTab(tab);
           setSidebarCollapsed(false);
+          if (tab === 'chat') {
+            if (turns.length > 0 || compiled) {
+              navigateTo({ view: 'workbench', railTab: 'chat' });
+            } else {
+              navigateTo({ view: 'home', railTab: 'chat' });
+            }
+          } else {
+            navigateTo({ view: 'workbench', railTab: tab });
+          }
         }}
+        onGoHome={goHome}
         onNewChat={newChat}
         onOpenSettings={() => openSettings('api')}
         resolvedTheme={resolvedTheme}
@@ -857,6 +1107,8 @@ export default function App() {
         />
       )}
 
+      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
+
       {!hasSession ? (
         <main className="home-stage">
           <header className="home-topbar">
@@ -869,25 +1121,28 @@ export default function App() {
                 type="button"
                 className="status-pill-btn"
                 onClick={() => openSettings('api')}
-                title="管理模型与 API 配置"
+                title={`${quotaOrModelPill} · 点击管理模型与 API 配置`}
               >
                 <span className="status-dot" />
-                <span>{quotaOrModelPill}</span>
+                <span className="status-pill-text">{quotaOrModelPill}</span>
               </button>
               <button
                 type="button"
-                className="outline-button compact-btn"
-                onClick={() => openSettings('appearance')}
-                title="切换浅色/深色与主题色"
+                className="icon-button topbar-icon-btn"
+                onClick={toggleLightDark}
+                title={resolvedTheme === 'dark' ? '切换浅色模式' : '切换深色模式'}
+                aria-label={resolvedTheme === 'dark' ? '切换浅色模式' : '切换深色模式'}
               >
-                <Palette size={14} /> 外观主题
+                {resolvedTheme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
               </button>
               <button
                 type="button"
-                className="outline-button compact-btn"
-                onClick={() => openSettings('api')}
+                className="icon-button topbar-icon-btn"
+                onClick={() => setAboutOpen(true)}
+                title="关于 FPGAgent"
+                aria-label="关于 FPGAgent"
               >
-                <SlidersHorizontal size={14} /> 设置
+                <Info size={16} />
               </button>
             </div>
           </header>
@@ -917,8 +1172,8 @@ export default function App() {
                     type="button"
                     className="text-link"
                     onClick={() => {
-                      setRailTab('presets');
                       setSidebarCollapsed(false);
+                      navigateTo({ view: 'workbench', railTab: 'presets' });
                     }}
                   >
                     <LayoutGrid size={13} /> 全部 {runtime.presets.length} 个案例
@@ -966,7 +1221,7 @@ export default function App() {
                   <button
                     type="button"
                     className="status-pill-btn"
-                    title="点击切换模型或 API 服务商"
+                    title={`${quotaOrModelPill} · 点击切换模型或 API 服务商`}
                     onClick={() => openSettings('api')}
                   >
                     <span className="status-dot" />
@@ -990,10 +1245,10 @@ export default function App() {
                     turns={turns}
                     onOpenCode={(src) => {
                       if (src) setCode(src);
-                      setWbTab('verilog');
+                      navigateTo({ view: 'workbench', wbTab: 'verilog' });
                     }}
                     onDownloadCode={(filename, src) => handleExportVerilog(filename, src)}
-                    onOpenVerify={() => setWbTab('verify')}
+                    onOpenVerify={() => navigateTo({ view: 'workbench', wbTab: 'verify' })}
                     onOpenSettings={() => openSettings('api')}
                   />
                   <div className="composer-dock">
@@ -1009,7 +1264,7 @@ export default function App() {
                       onOpenSettings={() => openSettings('api')}
                       enableWebResearch={prefs.enableWebResearch}
                       onToggleWebResearch={handleToggleWebResearch}
-                      onInjectBug={compiled ? () => setRailTab('clinic') : undefined}
+                      onInjectBug={compiled ? () => navigateTo({ view: 'workbench', railTab: 'clinic' }) : undefined}
                       liveHint={busy && compiled ? `V${wbTitleVersion} 仿真可继续操作` : undefined}
                     />
                   </div>
@@ -1059,6 +1314,27 @@ export default function App() {
             </section>
           )}
 
+          {!sidebarCollapsed && (
+            <div
+              className="pane-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="拖动调整左右面板宽度"
+              aria-valuemin={LEFT_PANE_MIN}
+              aria-valuemax={clampLeftPaneWidth(LEFT_PANE_MAX)}
+              aria-valuenow={leftPaneWidth}
+              title="左右拖动调整面板宽度（双击恢复默认）"
+              tabIndex={0}
+              onPointerDown={beginPaneResize}
+              onPointerMove={movePaneResize}
+              onPointerUp={endPaneResize}
+              onPointerCancel={endPaneResize}
+              onLostPointerCapture={endPaneResize}
+              onDoubleClick={resetLeftPaneWidth}
+              onKeyDown={keyboardPaneResize}
+            />
+          )}
+
           <main className="workbench-pane" aria-label="FPGA 可视化工作台">
             <header className="wb-header">
               <div className="wb-header-left">
@@ -1080,7 +1356,7 @@ export default function App() {
                     role="tab"
                     aria-selected={wbTab === 'canvas'}
                     className={wbTab === 'canvas' ? 'active' : undefined}
-                    onClick={() => setWbTab('canvas')}
+                    onClick={() => navigateTo({ view: 'workbench', wbTab: 'canvas' })}
                   >
                     仿真画布
                   </button>
@@ -1089,7 +1365,7 @@ export default function App() {
                     role="tab"
                     aria-selected={wbTab === 'blueprint'}
                     className={wbTab === 'blueprint' ? 'active' : undefined}
-                    onClick={() => setWbTab('blueprint')}
+                    onClick={() => navigateTo({ view: 'workbench', wbTab: 'blueprint' })}
                   >
                     蓝图
                   </button>
@@ -1098,7 +1374,7 @@ export default function App() {
                     role="tab"
                     aria-selected={wbTab === 'verilog'}
                     className={wbTab === 'verilog' ? 'active' : undefined}
-                    onClick={() => setWbTab('verilog')}
+                    onClick={() => navigateTo({ view: 'workbench', wbTab: 'verilog' })}
                   >
                     Verilog
                   </button>
@@ -1107,7 +1383,7 @@ export default function App() {
                     role="tab"
                     aria-selected={wbTab === 'verify'}
                     className={wbTab === 'verify' ? 'active' : undefined}
-                    onClick={() => setWbTab('verify')}
+                    onClick={() => navigateTo({ view: 'workbench', wbTab: 'verify' })}
                   >
                     自测
                     {selfTest && (

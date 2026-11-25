@@ -149,9 +149,9 @@ export function elaborate(ast: ModuleAst): ElaboratedModule {
   return { ast, params, signals, wireInits, regInits };
 }
 
-function evalExpr(
+export function evalExpr(
   expr: Expr,
-  values: Map<string, number>,
+  values: ReadonlyMap<string, number>,
   signals: Map<string, SignalMeta>,
   params: Map<string, { value: number; width: number; signed: boolean }>
 ): EvalValue {

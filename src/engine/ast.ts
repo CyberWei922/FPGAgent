@@ -48,6 +48,8 @@ export interface AssignStmt {
 
 export interface AlwaysBlock {
   sensitivity: 'comb' | 'seq';
+  clockSignal?: string;
+  clockFalling?: boolean;
   hasAsyncReset: boolean;
   resetSignal?: string;
   resetActiveLow?: boolean;

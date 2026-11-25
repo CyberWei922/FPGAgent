@@ -15,6 +15,7 @@ export interface ByokConfig {
   apiKey: string;
   model: string;
   cachedModels?: LLMModelOption[];
+  useLocalProxy?: boolean;
 }
 
 export interface AppPreferences {
@@ -32,6 +33,7 @@ export type LLMClientConfig =
 export const PROXY_ENDPOINT = '/functions/v1/app/agent';
 export const QUOTA_ENDPOINT = '/functions/v1/app/quota';
 export const MODELS_ENDPOINT = '/functions/v1/app/models';
+export const LOCAL_GATEWAY_PROXY_ENDPOINT = '/__local_gateway_proxy';
 const BYOK_STORAGE_KEY = 'vibefpga.byok';
 const PREFS_STORAGE_KEY = 'fpgagent.prefs';
 const DEFAULT_NODE_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
@@ -88,6 +90,15 @@ export const PROVIDER_PRESETS: LLMProviderPreset[] = [
     supportsJsonMode: true,
   },
   {
+    id: 'local-gateway',
+    name: '本地 / 内网网关',
+    baseUrl: 'http://127.0.0.1:11434/v1',
+    defaultModel: '',
+    suggestedModels: ['qwen2.5-coder:7b', 'deepseek-r1:8b', 'llama3.1:8b'],
+    supportsJsonMode: true,
+    apiKeyOptional: true,
+  },
+  {
     id: 'custom',
     name: '自定义兼容',
     baseUrl: '',
@@ -102,12 +113,58 @@ export function getProviderPreset(id?: LLMProviderId): LLMProviderPreset | undef
   return PROVIDER_PRESETS.find((preset) => preset.id === id);
 }
 
+export function isPrivateOrLocalHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (!host) return false;
+  if (host === 'localhost' || host === '::1' || host === '0.0.0.0') return true;
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(host)) return true;
+  const rfc172 = /^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (rfc172) {
+    const second = Number(rfc172[1]);
+    if (second >= 16 && second <= 31) return true;
+  }
+  const cgnat = /^100\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  if (cgnat) {
+    const second = Number(cgnat[1]);
+    if (second >= 64 && second <= 127) return true;
+  }
+  if (/\.(local|lan|internal|home|intranet|corp|arpa)$/i.test(host)) return true;
+  if (!host.includes('.') && /^[a-z0-9-]+$/i.test(host)) return true;
+  return false;
+}
+
+export function isLocalOrPrivateBaseUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && isPrivateOrLocalHost(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+export function isApiKeyOptional(baseUrl: string, providerId?: LLMProviderId): boolean {
+  return providerId === 'local-gateway' || isLocalOrPrivateBaseUrl(baseUrl);
+}
+
+export function isLocalDevOrigin(): boolean {
+  if (typeof window === 'undefined') return false;
+  return ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
+}
+
 export function inferProviderId(baseUrl: string): Exclude<LLMProviderId, 'site-default'> {
   const normalized = normalizeBaseUrl(baseUrl);
   const matched = PROVIDER_PRESETS.find(
-    (preset) => preset.id !== 'custom' && normalizeBaseUrl(preset.baseUrl) === normalized,
+    (preset) =>
+      preset.id !== 'custom' &&
+      preset.id !== 'local-gateway' &&
+      normalizeBaseUrl(preset.baseUrl) === normalized,
   );
-  return matched ? matched.id : 'custom';
+  if (matched) return matched.id;
+  if (isLocalOrPrivateBaseUrl(normalized)) return 'local-gateway';
+  return 'custom';
 }
 
 export function normalizeBaseUrl(value: string): string {
@@ -143,33 +200,65 @@ function toLLMError(error: unknown): LLMError {
   return new LLMError('NETWORK', error instanceof Error ? error.message : '未知网络错误');
 }
 
-export function isAllowedBaseUrl(value: string): boolean {
+export function isAllowedBaseUrl(value: string, providerId?: LLMProviderId): boolean {
   try {
     const url = new URL(value);
-    const local = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
-    return (local || url.protocol === 'https:') && !url.username && !url.password && !url.search && !url.hash;
+    const allowHttp = url.protocol === 'http:' && (isPrivateOrLocalHost(url.hostname) || providerId === 'local-gateway');
+    return (allowHttp || url.protocol === 'https:') && !url.username && !url.password && !url.search && !url.hash;
   } catch {
     return false;
   }
 }
 
+function resolveDirectFetch(
+  baseUrl: string,
+  providerId: LLMProviderId | undefined,
+  useLocalProxy: boolean | undefined,
+  customFetch?: FetchImpl,
+): FetchImpl {
+  if (customFetch) return customFetch;
+  const shouldProxy =
+    isLocalDevOrigin() &&
+    (useLocalProxy ?? (providerId === 'local-gateway' || isLocalOrPrivateBaseUrl(baseUrl)));
+  if (!shouldProxy) return fetch;
+  return (input, init) => {
+    const targetUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const headers = new Headers(init?.headers);
+    headers.set('x-gateway-target', targetUrl);
+    return fetch(LOCAL_GATEWAY_PROXY_ENDPOINT, {
+      ...init,
+      headers,
+      credentials: 'same-origin',
+    });
+  };
+}
+
 export async function fetchOpenAIModels(
   baseUrl: string,
   apiKey: string,
-  options: { signal?: AbortSignal; fetchImpl?: FetchImpl } = {},
+  options: {
+    signal?: AbortSignal;
+    fetchImpl?: FetchImpl;
+    providerId?: LLMProviderId;
+    useLocalProxy?: boolean;
+  } = {},
 ): Promise<LLMModelOption[]> {
-  if (!apiKey.trim()) throw new LLMError('NOT_CONFIGURED', '请先填写 API Key');
   const normalized = normalizeBaseUrl(baseUrl);
-  if (!isAllowedBaseUrl(normalized)) throw new LLMError('NOT_CONFIGURED', 'Base URL 必须是有效的 https 地址');
+  if (!isAllowedBaseUrl(normalized, options.providerId)) {
+    throw new LLMError('NOT_CONFIGURED', 'Base URL 格式无效（公网需使用 https，本地或内网网关支持 http）');
+  }
+  const keyOptional = isApiKeyOptional(normalized, options.providerId);
+  if (!keyOptional && !apiKey.trim()) throw new LLMError('NOT_CONFIGURED', '请先填写 API Key');
 
-  const fetchImpl = options.fetchImpl ?? fetch;
+  const fetchImpl = resolveDirectFetch(normalized, options.providerId, options.useLocalProxy, options.fetchImpl);
+  const headers: Record<string, string> = {};
+  if (apiKey.trim()) headers.Authorization = `Bearer ${apiKey.trim()}`;
+
   let res: Response;
   try {
     res = await fetchImpl(`${normalized}/models`, {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${apiKey.trim()}`,
-      },
+      headers,
       signal: options.signal,
     });
   } catch (error) {
@@ -181,7 +270,15 @@ export async function fetchOpenAIModels(
     throw new LLMError('NOT_CONFIGURED', 'API Key 鉴权失败，请检查密钥是否正确', res.status);
   }
   if (!res.ok) {
-    throw new LLMError('UPSTREAM', `获取模型列表失败（HTTP ${res.status}）`, res.status);
+    let detail = '';
+    try {
+      const errJson = (await res.json()) as { error?: { message?: unknown } | string };
+      const msg = typeof errJson?.error === 'string' ? errJson.error : errJson?.error?.message;
+      if (typeof msg === 'string' && msg.trim()) detail = `：${msg.trim().slice(0, 140)}`;
+    } catch {
+      // Ignore non-JSON error body.
+    }
+    throw new LLMError('UPSTREAM', `获取模型列表失败（HTTP ${res.status}）${detail}`, res.status);
   }
 
   let payload: unknown;
@@ -239,23 +336,27 @@ export function getSuggestedModelOptions(providerId?: LLMProviderId, activeModel
 }
 
 function createDirectClient(cfg: ByokConfig, fetchImpl?: FetchImpl): LLMClient {
+  const normalizedBaseUrl = normalizeBaseUrl(cfg.baseUrl);
+  const directFetch = resolveDirectFetch(normalizedBaseUrl, cfg.providerId, cfg.useLocalProxy, fetchImpl);
   return {
     async chat(options: LLMCallOptions) {
-      if (!cfg.apiKey) throw new LLMError('NOT_CONFIGURED', '未配置大模型 API Key');
-      if (!isAllowedBaseUrl(cfg.baseUrl)) {
-        throw new LLMError('NOT_CONFIGURED', 'Base URL 必须是 https 地址');
+      if (!isAllowedBaseUrl(normalizedBaseUrl, cfg.providerId)) {
+        throw new LLMError('NOT_CONFIGURED', 'Base URL 格式无效（公网需使用 https，本地或内网网关支持 http）');
+      }
+      if (!isApiKeyOptional(normalizedBaseUrl, cfg.providerId) && !cfg.apiKey.trim()) {
+        throw new LLMError('NOT_CONFIGURED', '未配置大模型 API Key');
       }
       const resolvedModel = options.model?.trim() || cfg.model;
       try {
         const text = await callOpenAICompatible({
-          baseUrl: cfg.baseUrl,
+          baseUrl: normalizedBaseUrl,
           apiKey: cfg.apiKey,
           model: resolvedModel,
           messages: options.messages,
           temperature: options.temperature,
           jsonMode: options.jsonMode,
           signal: options.signal,
-          fetchImpl,
+          fetchImpl: directFetch,
         });
         return { text, ...(options.model ? { model: resolvedModel } : {}) };
       } catch (error) {
@@ -264,25 +365,35 @@ function createDirectClient(cfg: ByokConfig, fetchImpl?: FetchImpl): LLMClient {
     },
 
     async listModels(options) {
-      return fetchOpenAIModels(cfg.baseUrl, cfg.apiKey, {
+      return fetchOpenAIModels(normalizedBaseUrl, cfg.apiKey, {
         signal: options?.signal,
         fetchImpl,
+        providerId: cfg.providerId,
+        useLocalProxy: cfg.useLocalProxy,
       });
     },
 
     async testConnection(options) {
       const start = Date.now();
       const targetModel = options?.model?.trim() || cfg.model;
+      if (!isAllowedBaseUrl(normalizedBaseUrl, cfg.providerId)) {
+        return {
+          ok: false,
+          latencyMs: Math.max(1, Date.now() - start),
+          model: targetModel,
+          message: 'Base URL 格式无效',
+        };
+      }
       try {
         await callOpenAICompatible({
-          baseUrl: cfg.baseUrl,
+          baseUrl: normalizedBaseUrl,
           apiKey: cfg.apiKey,
           model: targetModel,
           messages: [{ role: 'user', content: 'ping' }],
           temperature: 0,
           jsonMode: false,
           signal: options?.signal,
-          fetchImpl,
+          fetchImpl: directFetch,
         });
         return { ok: true, latencyMs: Math.max(1, Date.now() - start), model: targetModel };
       } catch (error) {
@@ -419,20 +530,22 @@ export function loadByokConfig(): ByokConfig | null {
     const raw = localStorage.getItem(BYOK_STORAGE_KEY);
     if (!raw) return null;
     const cfg = JSON.parse(raw) as Partial<ByokConfig>;
-    if (typeof cfg.apiKey !== 'string' || !cfg.apiKey) return null;
-    if (typeof cfg.baseUrl !== 'string' || typeof cfg.model !== 'string') return null;
+    if (typeof cfg.baseUrl !== 'string' || !cfg.baseUrl || typeof cfg.model !== 'string' || !cfg.model) return null;
     const providerId = cfg.providerId && PROVIDER_PRESETS.some((p) => p.id === cfg.providerId)
       ? cfg.providerId
       : inferProviderId(cfg.baseUrl);
+    const apiKey = typeof cfg.apiKey === 'string' ? cfg.apiKey : '';
+    if (!isApiKeyOptional(cfg.baseUrl, providerId) && !apiKey) return null;
     const cachedModels = Array.isArray(cfg.cachedModels)
       ? cfg.cachedModels.filter((m): m is LLMModelOption => Boolean(m && typeof m.id === 'string'))
       : undefined;
     return {
       providerId,
-      apiKey: cfg.apiKey,
+      apiKey,
       baseUrl: cfg.baseUrl,
       model: cfg.model,
       cachedModels,
+      ...(typeof cfg.useLocalProxy === 'boolean' ? { useLocalProxy: cfg.useLocalProxy } : {}),
     };
   } catch {
     return null;

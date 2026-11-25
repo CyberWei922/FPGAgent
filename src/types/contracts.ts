@@ -37,7 +37,10 @@ export type GateKind =
   | 'MUX'
   | 'CMP'
   | 'ADD'
-  | 'DFF';
+  | 'DFF'
+  | 'CONST'
+  | 'BUS'
+  | 'RTL';
 
 export interface NetlistNode {
   id: string;
@@ -48,6 +51,8 @@ export interface NetlistNode {
   value: number;       // 当前拍数值
   changed: boolean;    // 相比上一拍是否发生跳变（驱动慢动作高光）
   sourceLine?: number; // 对应 Verilog 代码行号（点击门可高亮对应代码）
+  operator?: string;
+  sampled?: boolean;
 }
 
 export interface NetlistEdge {
@@ -55,6 +60,11 @@ export interface NetlistEdge {
   from: string;        // 源节点 id
   to: string;          // 目标节点 id
   signalName: string;  // 导线信号名
+  width?: number;
+  fromPin?: string;
+  toPin?: string;
+  activeLow?: boolean;
+  sampled?: boolean;
   value: number;       // 当前导线逻辑值（>0 视为高电平发光）
   changed: boolean;    // 是否跳变（用于播放电流脉冲动画）
 }
@@ -246,6 +256,7 @@ export type LLMProviderId =
   | 'dashscope-qwen'
   | 'siliconflow'
   | 'moonshot-kimi'
+  | 'local-gateway'
   | 'custom';
 
 export interface LLMProviderPreset {
@@ -256,6 +267,7 @@ export interface LLMProviderPreset {
   suggestedModels: string[];
   docsUrl?: string;
   supportsJsonMode: boolean;
+  apiKeyOptional?: boolean;
 }
 
 export interface LLMModelOption {

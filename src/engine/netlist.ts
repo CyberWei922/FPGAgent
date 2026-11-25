@@ -1,552 +1,458 @@
 import type { GateKind, NetlistEdge, NetlistGraph, NetlistNode } from '../types/contracts';
-import type { Expr, LValue, Stmt } from './ast';
-import type { ElaboratedModule, SignalSnapshot } from './simulator';
+import type { AlwaysBlock, Expr, LValue, SourceLoc, Stmt } from './ast';
+import { evalExpr, maskWidth, type ElaboratedModule, type SignalSnapshot } from './simulator';
 
-interface InternalNode {
-  id: string;
-  label: string;
-  kind: GateKind;
+type Frame = ReadonlyMap<string, number>;
+type ReadValue = (frame: Frame) => number | undefined;
+type InternalNode = Omit<NetlistNode, 'value' | 'changed' | 'sampled'> & { read: ReadValue };
+type InternalEdge = Omit<NetlistEdge, 'id' | 'value' | 'changed' | 'sampled'> & { read: ReadValue };
+
+interface Source {
+  name: string;
   width: number;
-  level: number;
-  sourceLine?: number;
-  boundSignal?: string;
+  read: ReadValue;
+  node?: string;
+  pin?: string;
+  signal?: string;
+  parts?: Source[];
+  slice?: { source: Source; offset: number };
+  constant?: number;
 }
 
-interface InternalEdge {
-  id: string;
-  from: string;
-  to: string;
-  signalName: string;
-  boundSignal?: string;
-}
-
-const BOARD_INPUT_LABELS: Record<string, string> = {
-  rst_n: 'RST_N',
-  key: 'KEY[3:0]',
-  sw: 'SW[7:0]',
+const BOARD_LABELS: Record<string, string> = {
+  rst_n: 'RST_N', key: 'KEY[3:0]', sw: 'SW[7:0]',
+  led: 'LED[7:0]', traffic: 'TRAFFIC[2:0]', seg: 'SEG[15:0]',
 };
 
-const BOARD_OUTPUT_LABELS: Record<string, string> = {
-  led: 'LED[7:0]',
-  traffic: 'TRAFFIC[2:0]',
-  seg: 'SEG[15:0]',
-};
-
-function collectLValueNames(lv: LValue, out: Set<string>): void {
-  switch (lv.type) {
-    case 'ident':
-    case 'index':
-    case 'slice':
-      out.add(lv.name);
-      return;
-    case 'concat':
-      for (const item of lv.items) collectLValueNames(item, out);
-      return;
-  }
+function targetNames(target: LValue): string[] {
+  return target.type === 'concat' ? target.items.flatMap(targetNames) : [target.name];
 }
 
-function collectExprSignals(expr: Expr, knownSignals: Set<string>, out: Set<string>): void {
+function operands(expr: Expr): Expr[] {
   switch (expr.type) {
     case 'number':
-      return;
-    case 'ident':
-      if (knownSignals.has(expr.name)) out.add(expr.name);
-      return;
-    case 'index':
-      collectExprSignals(expr.target, knownSignals, out);
-      collectExprSignals(expr.index, knownSignals, out);
-      return;
-    case 'slice':
-      collectExprSignals(expr.target, knownSignals, out);
-      collectExprSignals(expr.msb, knownSignals, out);
-      collectExprSignals(expr.lsb, knownSignals, out);
-      return;
-    case 'concat':
-      for (const it of expr.items) collectExprSignals(it, knownSignals, out);
-      return;
-    case 'repeat':
-      collectExprSignals(expr.count, knownSignals, out);
-      for (const it of expr.items) collectExprSignals(it, knownSignals, out);
-      return;
-    case 'unary':
-      collectExprSignals(expr.operand, knownSignals, out);
-      return;
-    case 'binary':
-      collectExprSignals(expr.left, knownSignals, out);
-      collectExprSignals(expr.right, knownSignals, out);
-      return;
-    case 'ternary':
-      collectExprSignals(expr.condition, knownSignals, out);
-      collectExprSignals(expr.thenExpr, knownSignals, out);
-      collectExprSignals(expr.elseExpr, knownSignals, out);
-      return;
-    case 'sysfn':
-      collectExprSignals(expr.arg, knownSignals, out);
-      return;
+    case 'ident': return [];
+    case 'index': return [expr.target, expr.index];
+    case 'slice': return [expr.target, expr.msb, expr.lsb];
+    case 'concat': return expr.items;
+    case 'repeat': return [expr.count, ...expr.items];
+    case 'unary': return [expr.operand];
+    case 'binary': return [expr.left, expr.right];
+    case 'ternary': return [expr.condition, expr.thenExpr, expr.elseExpr];
+    case 'sysfn': return [expr.arg];
   }
 }
 
-function collectStmtIO(
-  stmt: Stmt,
-  knownSignals: Set<string>,
-  reads: Set<string>,
-  writes: Set<string>,
-  ops: Set<GateKind>
-): void {
+function dependencies(expr: Expr): string[] {
+  return expr.type === 'ident' ? [expr.name] : operands(expr).flatMap(dependencies);
+}
+
+function assignments(stmt: Stmt): Extract<Stmt, { type: 'assign' }>[] {
   switch (stmt.type) {
-    case 'empty':
-      return;
-    case 'block':
-      for (const s of stmt.statements) collectStmtIO(s, knownSignals, reads, writes, ops);
-      return;
-    case 'assign':
-      collectLValueNames(stmt.target, writes);
-      collectExprSignals(stmt.value, knownSignals, reads);
-      ops.add(classifyExprGate(stmt.value));
-      return;
-    case 'if':
-      ops.add('MUX');
-      collectExprSignals(stmt.condition, knownSignals, reads);
-      collectStmtIO(stmt.thenBranch, knownSignals, reads, writes, ops);
-      if (stmt.elseBranch) collectStmtIO(stmt.elseBranch, knownSignals, reads, writes, ops);
-      return;
-    case 'case':
-      ops.add('MUX');
-      collectExprSignals(stmt.expr, knownSignals, reads);
-      for (const item of stmt.items) {
-        for (const p of item.patterns) collectExprSignals(p, knownSignals, reads);
-        collectStmtIO(item.body, knownSignals, reads, writes, ops);
-      }
-      if (stmt.defaultBranch) collectStmtIO(stmt.defaultBranch, knownSignals, reads, writes, ops);
-      return;
+    case 'empty': return [];
+    case 'assign': return [stmt];
+    case 'block': return stmt.statements.flatMap(assignments);
+    case 'if': return [...assignments(stmt.thenBranch), ...assignments(stmt.elseBranch ?? { type: 'empty', loc: stmt.loc })];
+    case 'case': return [...stmt.items.flatMap((item) => assignments(item.body)), ...assignments(stmt.defaultBranch ?? { type: 'empty', loc: stmt.loc })];
   }
 }
 
-function classifyExprGate(expr: Expr): GateKind {
-  switch (expr.type) {
-    case 'ternary':
-      return 'MUX';
-    case 'unary':
-      if (expr.op === '~' || expr.op === '!') return 'NOT';
-      if (expr.op === '&') return 'AND';
-      if (expr.op === '|') return 'OR';
-      if (expr.op === '^') return 'XOR';
-      return 'ADD';
-    case 'binary':
-      switch (expr.op) {
-        case '&':
-        case '&&':
-          return 'AND';
-        case '|':
-        case '||':
-          return 'OR';
-        case '^':
-          return 'XOR';
-        case '==':
-        case '!=':
-        case '<':
-        case '<=':
-        case '>':
-        case '>=':
-          return 'CMP';
-        case '+':
-        case '-':
-        case '*':
-        case '/':
-        case '%':
-        case '<<':
-        case '>>':
-        case '<<<':
-        case '>>>':
-          return 'ADD';
-      }
-      return 'MUX';
-    default:
-      return 'MUX';
+function statementInputs(stmt: Stmt, target: string): string[] {
+  switch (stmt.type) {
+    case 'empty': return [];
+    case 'assign': return targetNames(stmt.target).includes(target) ? dependencies(stmt.value) : [];
+    case 'block': return stmt.statements.flatMap((child) => statementInputs(child, target));
+    case 'if': return [
+      ...dependencies(stmt.condition), ...statementInputs(stmt.thenBranch, target),
+      ...stmt.elseBranch ? statementInputs(stmt.elseBranch, target) : [],
+    ];
+    case 'case': return [
+      ...dependencies(stmt.expr),
+      ...stmt.items.flatMap(({ patterns, body }) => [...patterns.flatMap(dependencies), ...statementInputs(body, target)]),
+      ...stmt.defaultBranch ? statementInputs(stmt.defaultBranch, target) : [],
+    ];
   }
 }
 
-function formatTrafficNote(val: number): string {
-  const parts: string[] = [];
-  if (val & 0b100) parts.push('红灯');
-  if (val & 0b010) parts.push('黄灯');
-  if (val & 0b001) parts.push('绿灯');
-  return parts.length > 0 ? `(${parts.join('+')})` : '(全灭)';
+function nextExpression(stmt: Stmt | undefined, name: string, previous: Expr | undefined): Expr | undefined {
+  switch (stmt?.type) {
+    case undefined:
+    case 'empty': return previous;
+    case 'assign': return stmt.target.type === 'ident' && stmt.target.name === name ? stmt.value : previous;
+    case 'block': return stmt.statements.reduce<Expr | undefined>((value, child) => nextExpression(child, name, value), previous);
+    case 'if': {
+      const thenExpr = nextExpression(stmt.thenBranch, name, previous);
+      const elseExpr = nextExpression(stmt.elseBranch, name, previous);
+      if (thenExpr === elseExpr) return thenExpr;
+      if (!thenExpr || !elseExpr) return undefined;
+      return { type: 'ternary', condition: stmt.condition, thenExpr, elseExpr, loc: stmt.loc };
+    }
+    case 'case': return undefined;
+  }
+}
+
+function containsCase(stmt: Stmt): boolean {
+  if (stmt.type === 'case') return true;
+  if (stmt.type === 'block') return stmt.statements.some(containsCase);
+  return stmt.type === 'if' && (containsCase(stmt.thenBranch) || Boolean(stmt.elseBranch && containsCase(stmt.elseBranch)));
+}
+
+function resetBranch({ body, resetSignal, resetActiveLow }: AlwaysBlock) {
+  const statement = body.type === 'block' && body.statements.length === 1 ? body.statements[0] : body;
+  if (statement.type !== 'if' || !resetSignal) return;
+  const { condition } = statement;
+  if (resetActiveLow && condition.type === 'unary' && condition.op === '!' &&
+      condition.operand.type === 'ident' && condition.operand.name === resetSignal) return statement;
+  if (!resetActiveLow && condition.type === 'ident' && condition.name === resetSignal) return statement;
+}
+
+function formatTrafficNote(value: number): string {
+  const lights = [value & 4 ? '红灯' : '', value & 2 ? '黄灯' : '', value & 1 ? '绿灯' : ''].filter(Boolean);
+  return `(${lights.join('+') || '全灭'})`;
 }
 
 export class CompiledNetlist {
-  private readonly nodes: InternalNode[];
-  private readonly edges: InternalEdge[];
-  private readonly maxLevel: number;
-
-  constructor(nodes: InternalNode[], edges: InternalEdge[], maxLevel: number) {
-    this.nodes = nodes;
-    this.edges = edges;
-    this.maxLevel = maxLevel;
-  }
+  constructor(private readonly nodes: InternalNode[], private readonly edges: InternalEdge[], private readonly maxLevel: number) {}
 
   evaluate(snapshot: SignalSnapshot): NetlistGraph {
-    const nodeMap = new Map<string, NetlistNode>();
-    const outNodes: NetlistNode[] = this.nodes.map((n) => {
-      const sig = n.boundSignal;
-      const value = sig !== undefined ? (snapshot.current[sig] ?? 0) : 0;
-      const prev = sig !== undefined ? (snapshot.previous[sig] ?? 0) : 0;
-      const node: NetlistNode = {
-        id: n.id,
-        label: n.label,
-        kind: n.kind,
-        width: n.width,
-        level: n.level,
-        value,
-        changed: value !== prev,
-        sourceLine: n.sourceLine,
-      };
-      nodeMap.set(n.id, node);
-      return node;
-    });
-
-    // Propagate changed flag to intermediate logic gates whose boundSignal didn't differ
-    // but an upstream input changed and downstream changed.
-    const outEdges: NetlistEdge[] = this.edges.map((e) => {
-      const fromNode = nodeMap.get(e.from);
-      const sig = e.boundSignal;
-      const value =
-        sig !== undefined ? (snapshot.current[sig] ?? 0) : (fromNode?.value ?? 0);
-      const prev =
-        sig !== undefined ? (snapshot.previous[sig] ?? 0) : (fromNode?.value ?? 0);
-      const changed =
-        sig !== undefined ? value !== prev : Boolean(fromNode?.changed);
-      return {
-        id: e.id,
-        from: e.from,
-        to: e.to,
-        signalName: e.signalName,
-        value,
-        changed,
-      };
-    });
-
-    const narration = this.buildNarration(outNodes);
-    return {
-      nodes: outNodes,
-      edges: outEdges,
-      maxLevel: this.maxLevel,
-      narration,
+    const current = new Map(Object.entries(snapshot.current));
+    const previous = new Map(Object.entries(snapshot.previous));
+    const sample = (read: ReadValue) => {
+      const value = read(current);
+      return { value: value ?? 0, sampled: value !== undefined, changed: value !== read(previous) };
     };
+    const nodes = this.nodes.map(({ read, ...node }) => ({ ...node, ...sample(read) }));
+    const edges = this.edges.map(({ read, ...edge }, index) => ({ ...edge, id: `e_${index}`, ...sample(read) }));
+    return { nodes, edges, maxLevel: this.maxLevel, narration: this.buildNarration(nodes) };
   }
 
   private buildNarration(nodes: NetlistNode[]): string {
-    const changedNodes = nodes
-      .filter((n) => n.changed)
-      .sort((a, b) => a.level - b.level);
-
-    if (changedNodes.length === 0) {
-      return '当前拍信号保持稳态，无逻辑跳变';
-    }
-
-    const inputs = changedNodes.filter((n) => n.kind === 'INPUT');
-    const outputs = changedNodes.filter((n) => n.kind === 'OUTPUT');
-    const mids = changedNodes.filter((n) => n.kind !== 'INPUT' && n.kind !== 'OUTPUT');
-
-    // Prioritize interactive inputs (KEY/SW) over RST_N when multiple inputs toggle
-    const sortedInputs = [...inputs].sort((a, b) =>
-      a.id === 'in_rst_n' ? 1 : b.id === 'in_rst_n' ? -1 : 0
-    );
-    const pickedInputs = sortedInputs.slice(0, 1);
-
-    // Pick up to 2 representative mid-level nodes (distinct levels, preferring DFF/MUX)
-    const pickedMids: NetlistNode[] = [];
-    const seenMidLevels = new Set<number>();
-    for (const m of mids) {
-      if (!seenMidLevels.has(m.level)) {
-        pickedMids.push(m);
-        seenMidLevels.add(m.level);
-      }
-      if (pickedMids.length >= 2) break;
-    }
-
-    // Prioritize TRAFFIC -> LED -> SEG so headline board outputs always appear
-    const outOrder = (id: string) =>
-      id === 'out_traffic' ? 0 : id === 'out_led' ? 1 : id === 'out_seg' ? 2 : 3;
-    const pickedOutputs = [...outputs]
-      .sort((a, b) => outOrder(a.id) - outOrder(b.id))
-      .slice(0, 2);
-
-    const picked = [...pickedInputs, ...pickedMids, ...pickedOutputs];
-
-    const segments = picked.map((n) => {
-      if (n.label === 'TRAFFIC[2:0]') {
-        return `${n.label}=${n.value}${formatTrafficNote(n.value)}`;
-      }
-      if (n.kind === 'INPUT' || n.kind === 'OUTPUT' || n.kind === 'DFF') {
-        return `${n.label}=${n.value}`;
-      }
-      return n.label;
-    });
-
-    return segments.join(' → ');
+    const changed = nodes.filter((node) => node.changed).sort((a, b) => a.level - b.level);
+    if (!changed.length) return '当前拍信号保持稳态，无逻辑跳变';
+    const inputs = changed.filter((node) => node.kind === 'INPUT');
+    const input = inputs.find((node) => node.id !== 'in_rst_n') ?? inputs[0];
+    const middle = changed.filter((node) => !['INPUT', 'OUTPUT', 'BUS', 'CONST'].includes(node.kind));
+    const outputs = ['out_traffic', 'out_led', 'out_seg'].flatMap((id) => changed.filter((node) => node.id === id));
+    return [...input ? [input] : [], ...middle.slice(0, 2), ...outputs.slice(0, 2)].map((node) => {
+      if (node.id === 'out_traffic') return `${node.label}=${node.value}${formatTrafficNote(node.value)}`;
+      if (['INPUT', 'OUTPUT', 'DFF'].includes(node.kind)) return `${node.label}=${node.value}`;
+      return node.label;
+    }).join(' → ') || '当前拍内部信号有变化';
   }
 }
 
-export function buildNetlist(elaborated: ElaboratedModule): CompiledNetlist {
-  const { ast, signals } = elaborated;
-  const knownSignals = new Set(signals.keys());
-
+export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModule): CompiledNetlist {
   const nodes: InternalNode[] = [];
-  const nodeById = new Map<string, InternalNode>();
   const edges: InternalEdge[] = [];
-  const edgeKeys = new Set<string>();
-  const signalDriverNode = new Map<string, string>();
+  const drivers = new Map<string, Source>();
+  const pending: Array<{ source: Source; to: string; toPin?: string; activeLow?: boolean }> = [];
+  const empty: Frame = new Map();
+  const evaluate = (expr: Expr, frame = empty) => evalExpr(expr, frame, signals, params);
+  const isConstant = (expr: Expr) => dependencies(expr).every((name) => params.has(name));
+  const hasVariableWidth = (expr: Expr): boolean =>
+    (expr.type === 'slice' && (!isConstant(expr.msb) || !isConstant(expr.lsb))) ||
+    (expr.type === 'repeat' && !isConstant(expr.count)) || operands(expr).some(hasVariableWidth);
+  const signal = (name: string): Source => ({ name, signal: name, width: signals.get(name)?.width ?? 1, read: (frame) => frame.get(name) });
+  const connect = (source: Source, to: string, toPin?: string, activeLow?: boolean) => pending.push({ source, to, toPin, activeLow });
 
-  const addNode = (node: InternalNode): InternalNode => {
-    const existing = nodeById.get(node.id);
-    if (existing) return existing;
-    nodes.push(node);
-    nodeById.set(node.id, node);
-    return node;
-  };
-
-  const addEdge = (from: string, to: string, signalName: string, boundSignal?: string): void => {
-    if (from === to) return;
-    const key = `${from}->${to}:${signalName}`;
-    if (edgeKeys.has(key)) return;
-    edgeKeys.add(key);
-    edges.push({
-      id: `e_${edges.length}`,
-      from,
-      to,
-      signalName,
-      boundSignal,
-    });
-  };
-
-  // 1. Create INPUT port nodes (skip clk; DFFs implicitly clock on clk)
-  for (const [name, meta] of signals) {
-    if (meta.isPort && meta.direction === 'input' && name !== 'clk') {
-      const id = `in_${name}`;
-      addNode({
-        id,
-        label: BOARD_INPUT_LABELS[name] ?? name.toUpperCase(),
-        kind: 'INPUT',
-        width: meta.width,
-        level: 0,
-        boundSignal: name,
-      });
-      signalDriverNode.set(name, id);
-    }
+  function addNode(kind: GateKind, name: string, width: number, read: ReadValue, loc?: SourceLoc, operator?: string, id = `logic_${nodes.length}`): Source {
+    nodes.push({ id, label: name, kind, width, level: 0, read, sourceLine: loc?.line, operator });
+    return { node: id, name, width, read };
   }
 
-  // 2. Pre-create DFF nodes for all signals written in sequential always blocks
-  const seqTargets = new Set<string>();
-  for (const block of ast.alwaysBlocks) {
-    if (block.sensitivity !== 'seq') continue;
-    const reads = new Set<string>();
-    const writes = new Set<string>();
-    const ops = new Set<GateKind>();
-    collectStmtIO(block.body, knownSignals, reads, writes, ops);
-    for (const w of writes) {
-      seqTargets.add(w);
-      const meta = signals.get(w);
-      const dffId = `dff_${w}`;
-      addNode({
-        id: dffId,
-        label: `DFF_${w}`,
-        kind: 'DFF',
-        width: meta?.width ?? 1,
-        level: 1,
-        sourceLine: block.loc.line,
-        boundSignal: w,
-      });
-      signalDriverNode.set(w, dffId);
+  const constants = new Map<string, Source>();
+  function constant(value: number, width: number): Source {
+    const name = `${width}'h${value.toString(16).toUpperCase()}`;
+    let source = constants.get(name);
+    if (!source) {
+      source = addNode('CONST', name, width, () => value);
+      source.constant = value;
+      constants.set(name, source);
     }
+    return source;
   }
 
-  // 3. Create combinational logic nodes for wireInits, assigns, and comb always blocks
-  const pendingConnections: Array<{ targetNodeId: string; readSignals: string[] }> = [];
-
-  const registerCombLogic = (
-    targetName: string,
-    kind: GateKind,
-    readSignals: Set<string>,
-    sourceLine: number
-  ) => {
-    const meta = signals.get(targetName);
-    const gateId = `gate_${targetName}`;
-    addNode({
-      id: gateId,
-      label: `${kind}_${targetName}`,
-      kind,
-      width: meta?.width ?? 1,
-      level: 1,
-      sourceLine,
-      boundSignal: targetName,
-    });
-    if (!signalDriverNode.has(targetName)) {
-      signalDriverNode.set(targetName, gateId);
+  function bundle(parts: Source[], name: string, loc?: SourceLoc): Source {
+    const width = Math.min(32, parts.reduce((total, part) => total + part.width, 0));
+    const read: ReadValue = (frame) => {
+      let value = 0;
+      for (const part of parts) {
+        const bits = part.read(frame);
+        if (bits === undefined) return;
+        value = part.width >= 32 ? bits : (value << part.width) | bits;
+      }
+      return maskWidth(value, width);
+    };
+    const output = addNode('BUS', name, width, read, loc, '拼接');
+    let high = parts.reduce((total, part) => total + part.width, 0) - 1;
+    for (const part of parts) {
+      const low = high - part.width + 1;
+      connect(part, output.node!, high === low ? `[${high}]` : `[${high}:${low}]`);
+      high = low - 1;
     }
-    pendingConnections.push({
-      targetNodeId: gateId,
-      readSignals: Array.from(readSignals),
-    });
-  };
-
-  for (const wi of elaborated.wireInits) {
-    const reads = new Set<string>();
-    collectExprSignals(wi.value, knownSignals, reads);
-    const kind = classifyExprGate(wi.value);
-    registerCombLogic(wi.name, kind, reads, wi.value.loc.line);
+    return { ...output, parts };
   }
 
-  for (const a of ast.assigns) {
-    const targets = new Set<string>();
-    collectLValueNames(a.target, targets);
-    const reads = new Set<string>();
-    collectExprSignals(a.value, knownSignals, reads);
-    const kind = classifyExprGate(a.value);
-    for (const t of targets) {
-      registerCombLogic(t, kind, reads, a.loc.line);
+  const splitters = new Map<string, Source>();
+  function tap(source: Source, offset: number, width: number): Source {
+    if (offset === 0 && width === source.width) return source;
+    if (offset < 0 || offset >= 32) return constant(0, width);
+    if (source.constant !== undefined) return constant(maskWidth(source.constant >>> offset, width), width);
+    if (source.slice && offset + width <= source.width) {
+      return tap(source.slice.source, source.slice.offset + offset, width);
     }
-  }
-
-  for (const block of ast.alwaysBlocks) {
-    if (block.sensitivity !== 'comb') continue;
-    const reads = new Set<string>();
-    const writes = new Set<string>();
-    const ops = new Set<GateKind>();
-    collectStmtIO(block.body, knownSignals, reads, writes, ops);
-    const primaryKind: GateKind = ops.has('MUX')
-      ? 'MUX'
-      : ops.values().next().value ?? 'MUX';
-    for (const w of writes) {
-      registerCombLogic(w, primaryKind, reads, block.loc.line);
-    }
-  }
-
-  // 4. Create next-state logic nodes feeding each sequential DFF
-  for (const block of ast.alwaysBlocks) {
-    if (block.sensitivity !== 'seq') continue;
-    const reads = new Set<string>();
-    const writes = new Set<string>();
-    const ops = new Set<GateKind>();
-    collectStmtIO(block.body, knownSignals, reads, writes, ops);
-
-    const logicKind: GateKind = ops.has('MUX')
-      ? 'MUX'
-      : ops.has('ADD')
-        ? 'ADD'
-        : ops.has('CMP')
-          ? 'CMP'
-          : 'MUX';
-
-    for (const w of writes) {
-      const meta = signals.get(w);
-      const dffId = `dff_${w}`;
-      const filteredReads = Array.from(reads).filter((r) => r !== 'clk');
-      if (filteredReads.length > 0) {
-        const logicId = `next_${w}`;
-        addNode({
-          id: logicId,
-          label: `${logicKind}_${w}`,
-          kind: logicKind,
-          width: meta?.width ?? 1,
-          level: 1,
-          sourceLine: block.loc.line,
-          boundSignal: w,
-        });
-        pendingConnections.push({
-          targetNodeId: logicId,
-          readSignals: filteredReads,
-        });
-        addEdge(logicId, dffId, `${w}_next`, w);
+    if (source.parts && offset + width <= source.width) {
+      let end = 0;
+      for (const part of source.parts.toReversed()) {
+        if (offset >= end && offset + width <= end + part.width) return tap(part, offset - end, width);
+        end += part.width;
       }
     }
-  }
-
-  // 5. Wire all signal read dependencies to their resolved driver nodes
-  for (const conn of pendingConnections) {
-    for (const sigName of conn.readSignals) {
-      if (sigName === 'clk') continue;
-      const driverId = signalDriverNode.get(sigName);
-      if (driverId) {
-        addEdge(driverId, conn.targetNodeId, sigName, sigName);
-      }
+    const key = source.signal ?? source.node!;
+    let splitter = splitters.get(key);
+    if (!splitter) {
+      splitter = addNode('BUS', `${source.name} 分线`, source.width, source.read, undefined, '分线');
+      connect(source, splitter.node!);
+      splitters.set(key, splitter);
     }
+    const low = offset + (signals.get(source.signal ?? '')?.lsb ?? 0);
+    const pin = width === 1 ? `[${low}]` : `[${low + width - 1}:${low}]`;
+    return {
+      node: splitter.node, pin, name: `${source.name}${pin}`, width, slice: { source, offset },
+      read: (frame) => {
+        const bits = source.read(frame);
+        return bits === undefined ? undefined : maskWidth(bits >>> offset, width);
+      },
+    };
   }
 
-  // 6. Create OUTPUT port nodes and connect their drivers
-  for (const [name, meta] of signals) {
-    if (meta.isPort && meta.direction === 'output') {
-      const outId = `out_${name}`;
-      addNode({
-        id: outId,
-        label: BOARD_OUTPUT_LABELS[name] ?? name.toUpperCase(),
-        kind: 'OUTPUT',
-        width: meta.width,
-        level: 2,
-        boundSignal: name,
-      });
-      const driverId = signalDriverNode.get(name);
-      if (driverId && driverId !== outId) {
-        addEdge(driverId, outId, name, name);
-      }
+  function resize(source: Source, width: number, name: string, loc?: SourceLoc): Source {
+    if (source.width === width) return source;
+    if (source.constant !== undefined) return constant(maskWidth(source.constant, width), width);
+    if (source.width > width) return tap(source, 0, width);
+    return bundle([constant(0, width - source.width), source], name, loc);
+  }
+
+  function ripple(left: Source, right: Source, width: number, name: string, loc: SourceLoc): Source {
+    function gate(kind: 'AND' | 'OR' | 'XOR', a: Source, b: Source, label: string): Source {
+      const read: ReadValue = (frame) => {
+        const first = a.read(frame);
+        const second = b.read(frame);
+        if (first === undefined || second === undefined) return;
+        if (kind === 'AND') return first & second;
+        if (kind === 'OR') return first | second;
+        return first ^ second;
+      };
+      const output = addNode(kind, label, 1, read, loc);
+      connect(a, output.node!, 'A');
+      connect(b, output.node!, 'B');
+      return output;
     }
-  }
-
-  // 7. Compute topological levels (DFF breaks combinational feedback loops)
-  const levelMap = new Map<string, number>();
-  for (const n of nodes) {
-    levelMap.set(n.id, n.kind === 'INPUT' ? 0 : 1);
-  }
-
-  // Relax levels up to nodes.length passes, ignoring self/DFF feedback cycles
-  const maxPasses = Math.max(1, nodes.length);
-  for (let pass = 0; pass < maxPasses; pass++) {
-    let updated = false;
-    for (const e of edges) {
-      const fromNode = nodeById.get(e.from);
-      const toNode = nodeById.get(e.to);
-      if (!fromNode || !toNode) continue;
-      // Break feedback from DFF back into next-state logic so DAG levels remain finite
-      if (fromNode.kind === 'DFF' && toNode.id.startsWith('next_')) continue;
-      if (fromNode.kind === 'DFF' && toNode.kind === 'MUX' && toNode.id.startsWith('gate_')) {
-        // Allow DFF -> output comb logic, but cap growth if cyclic
-        const curFrom = levelMap.get(e.from) ?? 0;
-        const curTo = levelMap.get(e.to) ?? 1;
-        if (curFrom + 1 > curTo && curFrom + 1 <= maxPasses) {
-          levelMap.set(e.to, curFrom + 1);
-          updated = true;
-        }
+    const sum: Source[] = [];
+    let carry = constant(0, 1);
+    for (let bit = 0; bit < width; bit++) {
+      const a = bit < left.width ? tap(left, bit, 1) : constant(0, 1);
+      const b = bit < right.width ? tap(right, bit, 1) : constant(0, 1);
+      if (a.constant === 0 && b.constant === 0) {
+        sum.unshift(carry);
+        carry = constant(0, 1);
         continue;
       }
-      const curFrom = levelMap.get(e.from) ?? 0;
-      const curTo = levelMap.get(e.to) ?? 1;
-      if (curFrom + 1 > curTo && curFrom + 1 <= maxPasses) {
-        levelMap.set(e.to, curFrom + 1);
-        updated = true;
+      const propagate = a.constant === 0 ? b : b.constant === 0 ? a : gate('XOR', a, b, carry.constant === 0 ? `S${bit}` : `P${bit}`);
+      sum.unshift(carry.constant === 0 ? propagate : gate('XOR', propagate, carry, `S${bit}`));
+      if (bit === width - 1) break;
+      const carryName = `C${bit + 1}`;
+      const generate = a.constant === 0 || b.constant === 0 ? constant(0, 1) : gate('AND', a, b, carry.constant === 0 ? carryName : `G${bit}`);
+      if (carry.constant === 0) carry = generate;
+      else if (generate.constant === 0) carry = gate('AND', propagate, carry, carryName);
+      else carry = gate('OR', generate, gate('AND', propagate, carry, `T${bit}`), carryName);
+    }
+    return width === 1 ? sum[0] : bundle(sum, name, loc);
+  }
+
+  const expressions = new WeakMap<Expr, Source>();
+  function expression(expr: Expr, name?: string): Source {
+    const existing = expressions.get(expr);
+    if (existing) return existing;
+    const source = lowerExpression(expr, name);
+    expressions.set(expr, source);
+    return source;
+  }
+
+  function lowerExpression(expr: Expr, name?: string): Source {
+    const { width, value } = evaluate(expr);
+    const read: ReadValue = (frame) => evaluate(expr, frame).value;
+    if (isConstant(expr)) return constant(value, width);
+    if (expr.type === 'ident') return signal(expr.name);
+    if (expr.type === 'sysfn') return expression(expr.arg, name);
+    if (expr.type === 'concat') return bundle(expr.items.map((part) => expression(part)), name ?? '总线', expr.loc);
+    if (expr.type === 'index' && isConstant(expr.index) || expr.type === 'slice' && isConstant(expr.msb) && isConstant(expr.lsb)) {
+      const target = expression(expr.target);
+      const low = expr.type === 'index' ? evaluate(expr.index).value | 0 : Math.min(evaluate(expr.msb).value | 0, evaluate(expr.lsb).value | 0);
+      const base = expr.target.type === 'ident' ? signals.get(expr.target.name)?.lsb ?? 0 : 0;
+      return tap(target, low - base, width);
+    }
+    if (expr.type === 'ternary') {
+      const output = addNode('MUX', name ?? '选择', width, read, expr.loc);
+      connect(resize(expression(expr.elseExpr), width, '输入 0', expr.loc), output.node!, '0');
+      connect(resize(expression(expr.thenExpr), width, '输入 1', expr.loc), output.node!, '1');
+      const condition = expression(expr.condition);
+      if (condition.width === 1) connect(condition, output.node!, 'S');
+      else {
+        const truth = addNode('RTL', '非零检测', 1, (frame) => Number(Boolean(condition.read(frame))), expr.loc, '≠0');
+        connect(condition, truth.node!);
+        connect(truth, output.node!, 'S');
+      }
+      return output;
+    }
+    if (expr.type === 'binary' || expr.type === 'unary') {
+      const operands = expr.type === 'binary' ? [expression(expr.left), expression(expr.right)] : [expression(expr.operand)];
+      const [left, right] = operands;
+      const op = expr.op;
+      if (expr.type === 'unary' && op === '+') return left;
+      if (expr.type === 'binary' && op === '+' && width <= 5) return ripple(left, right, width, name ?? '和', expr.loc);
+      const bitwise: Record<string, GateKind> = { '&': 'AND', '|': 'OR', '^': 'XOR', '~': 'NOT' };
+      let kind: GateKind = 'RTL';
+      if ((expr.type === 'binary' && bitwise[op]) || op === '~') kind = bitwise[op];
+      else if (op === '!' && left.width === 1) kind = 'NOT';
+      else if ((op === '&&' || op === '||') && left.width === 1 && right.width === 1) kind = op === '&&' ? 'AND' : 'OR';
+      else if (op === '+' || op === '-') kind = 'ADD';
+      else if (['==', '!=', '<', '<=', '>', '>='].includes(op)) kind = 'CMP';
+      const output = addNode(kind, name ?? op, width, read, expr.loc, op);
+      operands.forEach((operand, index) => {
+        const input = expr.type === 'binary' && bitwise[op] ? resize(operand, width, operand.name, expr.loc) : operand;
+        connect(input, output.node!, index === 0 ? 'A' : 'B');
+      });
+      return output;
+    }
+    const output = addNode('RTL', name ?? '总线取位', width, read, expr.loc, expr.type === 'repeat' ? '复制' : '取位');
+    for (const input of new Set(dependencies(expr))) if (signals.has(input)) connect(signal(input), output.node!);
+    return output;
+  }
+
+  for (const { name, isPort, direction, width } of signals.values()) {
+    if (!isPort || direction !== 'input') continue;
+    const read = name === 'clk' ? () => undefined : signal(name).read;
+    drivers.set(name, addNode('INPUT', BOARD_LABELS[name] ?? name.toUpperCase(), width, read, undefined, undefined, `in_${name}`));
+  }
+
+  const blocks = ast.alwaysBlocks.map((block) => ({ block, writes: assignments(block.body) }));
+  for (const { block, writes } of blocks) {
+    if (block.sensitivity !== 'seq') continue;
+    for (const name of new Set(writes.flatMap((item) => targetNames(item.target)))) {
+      const { width, read } = signal(name);
+      drivers.set(name, addNode('DFF', name, width, read, block.loc, undefined, `dff_${name}`));
+    }
+  }
+
+  function assigned(value: Expr, width: number, name: string): Source {
+    if (!hasVariableWidth(value)) return resize(expression(value, name), width, name, value.loc);
+    const source = addNode('RTL', name, width, (frame) => maskWidth(evaluate(value, frame).value, width), value.loc, 'RTL');
+    for (const input of new Set(dependencies(value))) if (signals.has(input)) connect(signal(input), source.node!);
+    return source;
+  }
+
+  function drive(name: string, value: Expr) {
+    drivers.set(name, assigned(value, signal(name).width, name));
+  }
+
+  for (const { name, value } of wireInits) drive(name, value);
+  const partialDrivers = new Map<string, Source>();
+  for (const { target, value, loc } of ast.assigns) {
+    if (target.type === 'ident' && !partialDrivers.has(target.name)) {
+      drive(target.name, value);
+      continue;
+    }
+    const source = hasVariableWidth(value) ? assigned(value, 32, '位赋值') : expression(value);
+    for (const name of new Set(targetNames(target))) {
+      let driver = partialDrivers.get(name);
+      if (!driver) {
+        const { width, read } = signal(name);
+        driver = addNode('RTL', name, width, read, loc, '位赋值');
+        const other = drivers.get(name);
+        if (other && other.signal !== name) connect(other, driver.node!);
+        partialDrivers.set(name, driver);
+        drivers.set(name, driver);
+      }
+      connect(source, driver.node!);
+    }
+  }
+
+  for (const { block, writes } of blocks) {
+    const sequential = block.sensitivity === 'seq';
+    const names = new Set(writes.flatMap((item) => targetNames(item.target)));
+    const reset = sequential ? resetBranch(block) : undefined;
+    for (const name of names) {
+      const wholeWrites = writes.every((item) =>
+        (!sequential || item.kind === 'nonblocking') && (item.target.type === 'ident' || !targetNames(item.target).includes(name)));
+      const { width, read } = signal(name);
+      const previous: Expr | undefined = sequential ? { type: 'ident', name, loc: block.loc } : undefined;
+      const initial = reset && wholeWrites && !containsCase(reset.thenBranch) ? nextExpression(reset.thenBranch, name, undefined) : undefined;
+      const clear = initial && isConstant(initial) && maskWidth(evaluate(initial).value, width) === 0;
+      const body = clear ? reset?.elseBranch : block.body;
+      const reads = new Set(body ? statementInputs(body, name) : []);
+      const simple = wholeWrites && (!body || !containsCase(body)) && (sequential || ![...reads].some((dep) => names.has(dep)));
+      const value = simple ? nextExpression(body, name, previous) : undefined;
+      let source: Source;
+      if (value) source = assigned(value, width, sequential ? `${name} D` : name);
+      else {
+        source = addNode('RTL', sequential ? `${name} D` : name, width, sequential ? () => undefined : read, block.loc, 'RTL');
+        for (const input of reads) if (signals.has(input)) connect(signal(input), source.node!);
+      }
+      if (sequential) {
+        const id = `dff_${name}`;
+        connect(source, id, 'D');
+        if (block.clockSignal) connect(signal(block.clockSignal), id, 'CLK', block.clockFalling);
+        if (clear && block.resetSignal) connect(signal(block.resetSignal), id, 'CLR', block.resetActiveLow);
+      } else {
+        drivers.set(name, source);
       }
     }
-    if (!updated) break;
   }
 
-  let maxLevel = 0;
-  for (const n of nodes) {
-    n.level = levelMap.get(n.id) ?? 0;
-    if (n.level > maxLevel) maxLevel = n.level;
+  for (const [name, meta] of signals) {
+    if (!meta.isPort || meta.direction !== 'output') continue;
+    const { width, read } = signal(name);
+    const output = addNode('OUTPUT', BOARD_LABELS[name] ?? name.toUpperCase(), width, read, undefined, undefined, `out_${name}`);
+    connect(signal(name), output.node!);
   }
 
-  // Ensure OUTPUT nodes sit on the rightmost boundary when they have predecessors
-  for (const n of nodes) {
-    if (n.kind === 'OUTPUT') {
-      let maxPred = 0;
-      for (const e of edges) {
-        if (e.to === n.id) {
-          maxPred = Math.max(maxPred, levelMap.get(e.from) ?? 0);
-        }
-      }
-      n.level = Math.max(n.level, maxPred + 1);
-      if (n.level > maxLevel) maxLevel = n.level;
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  for (const { source, to, toPin, activeLow } of pending) {
+    let driver: Source | undefined = source;
+    const visited = new Set<string>();
+    while (driver?.signal && !visited.has(driver.signal)) {
+      visited.add(driver.signal);
+      driver = drivers.get(driver.signal);
     }
+    if (!driver?.node) continue;
+    const from = driver.node;
+    edges.push({
+      from, to, width: source.width, fromPin: driver.pin, toPin, activeLow,
+      signalName: source.signal && driver.pin === undefined ? source.signal : driver.name,
+      read: driver.read,
+    });
   }
 
-  return new CompiledNetlist(nodes, edges, maxLevel);
+  const live = new Set(nodes.filter((node) => node.kind === 'OUTPUT' || node.kind === 'DFF').map((node) => node.id));
+  for (let count = 0; count < nodes.length; count++) {
+    const size = live.size;
+    for (const edge of edges) if (live.has(edge.to)) live.add(edge.from);
+    if (live.size === size) break;
+  }
+  const shownNodes = nodes.filter((node) => live.has(node.id));
+  const shownEdges = edges.filter((edge) => live.has(edge.to));
+  for (const node of shownNodes) node.level = node.kind === 'INPUT' || node.kind === 'CONST' ? 0 : 1;
+  for (let pass = 0; pass < shownNodes.length; pass++) {
+    let changed = false;
+    for (const edge of shownEdges) {
+      const from = nodeById.get(edge.from)!;
+      const to = nodeById.get(edge.to)!;
+      if (to.kind === 'DFF' || to.level >= from.level + 1 || from.level + 1 > shownNodes.length) continue;
+      to.level = from.level + 1;
+      changed = true;
+    }
+    if (!changed) break;
+  }
+  return new CompiledNetlist(shownNodes, shownEdges, Math.max(0, ...shownNodes.map((node) => node.level)));
 }

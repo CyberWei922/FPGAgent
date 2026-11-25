@@ -336,25 +336,23 @@ export function HistoryPanel({
             </div>
             <div className="history-actions">
               <button type="button" className="outline-button compact-btn" onClick={() => onRestore(entry)}>
-                <Play size={12} /> 载入工作台
+                <Play size={12} /> 载入
               </button>
               <button
                 type="button"
-                className="icon-button"
-                title={`导出 ${entry.filename}`}
-                aria-label={`导出 ${entry.filename}`}
+                className="outline-button compact-btn"
+                title={`下载 ${entry.filename}`}
                 onClick={() => onDownload(entry)}
               >
-                <Download size={14} />
+                <Download size={12} /> 下载
               </button>
               <button
                 type="button"
-                className="icon-button"
+                className="outline-button compact-btn danger-btn"
                 title="删除记录"
-                aria-label="删除记录"
                 onClick={() => onDelete(entry.id)}
               >
-                <Trash2 size={14} />
+                <Trash2 size={12} /> 删除
               </button>
             </div>
           </article>

@@ -15,6 +15,29 @@ const MIN_ZOOM = 75;
 const MAX_ZOOM = 500;
 const RESISTANCE = .42;
 const BOUNCE_LENGTH = 190;
+const ZOOM_RESISTANCE = .38;
+const ZOOM_BOUNCE_LOG = .42;
+const WHEEL_BOUNCE_DELAY_MS = 140;
+
+function clampZoom(zoom: number): number {
+  return Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, zoom));
+}
+
+function rubberBandZoom(rawZoom: number): number {
+  const edge = clampZoom(rawZoom);
+  if (rawZoom === edge) return rawZoom;
+  const excess = Math.log(rawZoom / edge);
+  const damped = (excess * ZOOM_RESISTANCE) / (1 + Math.abs(excess) / ZOOM_BOUNCE_LOG);
+  return edge * Math.exp(damped);
+}
+
+function undoRubberBandZoom(zoom: number): number {
+  const edge = clampZoom(zoom);
+  if (zoom === edge) return zoom;
+  const damped = Math.log(zoom / edge);
+  const denom = Math.max(.02, ZOOM_RESISTANCE - Math.abs(damped) / ZOOM_BOUNCE_LOG);
+  return edge * Math.exp(damped / denom);
+}
 
 function travel(viewport: number, fitted: number, zoom: number): number {
   return Math.max(0, fitted * (zoom / 100 - 1) / 2) + Math.min(48, viewport * .13);
@@ -36,8 +59,14 @@ function undoRubberBand(value: number, limit: number): number {
   return edge + excess / Math.max(.02, RESISTANCE - Math.abs(excess) / BOUNCE_LENGTH);
 }
 
-function anchorZoom(camera: Camera, requestedZoom: number, start: Offset, end: Offset = start): Camera {
-  const zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, requestedZoom));
+function anchorZoom(
+  camera: Camera,
+  requestedZoom: number,
+  start: Offset,
+  end: Offset = start,
+  constrainZoom: (zoom: number) => number = clampZoom,
+): Camera {
+  const zoom = constrainZoom(requestedZoom);
   const ratio = zoom / camera.zoom;
   return {
     zoom,
@@ -69,6 +98,10 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
   const [spring, setSpring] = useState(false);
   const cameraRef = useRef(FIT_CAMERA);
   const springRef = useRef(false);
+  const wheelTimerRef = useRef<number | null>(null);
+  const wheelRawZoomRef = useRef<number | null>(null);
+  const wheelAnchorRef = useRef<Offset>(CENTER);
+  const pinchAnchorRef = useRef<Offset>(CENTER);
   const { zoom, offset: pan } = camera;
 
   useLayoutEffect(() => {
@@ -87,11 +120,23 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
   const fit = Math.max(.02, Math.min((size.width - 32) / layout.width, (size.height - 58) / layout.height, 1.35));
   const fittedWidth = layout.width * fit;
   const fittedHeight = layout.height * fit;
-  const drawing = { width: fittedWidth * zoom / 100, height: fittedHeight * zoom / 100 };
+  const baseZoom = clampZoom(zoom);
+  const overscrollScale = zoom / baseZoom;
+  const drawing = { width: fittedWidth * baseZoom / 100, height: fittedHeight * baseZoom / 100 };
   const limitsAt = useCallback((atZoom: number) => ({
     x: travel(size.width, fittedWidth, atZoom),
     y: travel(size.height, fittedHeight, atZoom),
   }), [size.width, size.height, fittedWidth, fittedHeight]);
+
+  const cancelWheelBounce = useCallback(() => {
+    if (wheelTimerRef.current !== null) {
+      window.clearTimeout(wheelTimerRef.current);
+      wheelTimerRef.current = null;
+    }
+    wheelRawZoomRef.current = null;
+  }, []);
+
+  useEffect(() => cancelWheelBounce, [cancelWheelBounce]);
 
   const position = useCallback((next: Camera, animate = false) => {
     cameraRef.current = next;
@@ -105,17 +150,27 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
     const transform = springRef.current && world.current && getComputedStyle(world.current).transform;
     if (!transform || transform === 'none') return current;
     const matrix = new DOMMatrixReadOnly(transform);
-    return { zoom: current.zoom, offset: { x: matrix.m41, y: matrix.m42 } };
+    const scale = Math.hypot(matrix.a, matrix.b) || 1;
+    return { zoom: clampZoom(current.zoom) * scale, offset: { x: matrix.m41, y: matrix.m42 } };
   }, []);
 
   const constrain = useCallback((next: Camera, constrainAxis = bounded): Camera => {
-    const limit = limitsAt(next.zoom);
+    const limit = limitsAt(clampZoom(next.zoom));
     return { zoom: next.zoom, offset: { x: constrainAxis(next.offset.x, limit.x), y: constrainAxis(next.offset.y, limit.y) } };
   }, [limitsAt]);
 
+  const settleCamera = useCallback((current: Camera, anchor: Offset = CENTER): Camera => {
+    const zoomed = current.zoom !== clampZoom(current.zoom)
+      ? anchorZoom(current, current.zoom, anchor, anchor, clampZoom)
+      : current;
+    return constrain(zoomed, bounded);
+  }, [constrain]);
+
   useLayoutEffect(() => {
-    if (!fingers.current.size) position(constrain(cameraRef.current));
-  }, [constrain, position]);
+    if (!fingers.current.size && wheelTimerRef.current === null) {
+      position(settleCamera(cameraRef.current));
+    }
+  }, [position, settleCamera]);
 
   useEffect(() => {
     const element = viewport.current;
@@ -123,25 +178,65 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
     function wheel(event: WheelEvent) {
       if (!event.deltaY || fingers.current.size) return;
       event.preventDefault();
+      if (wheelTimerRef.current !== null) {
+        window.clearTimeout(wheelTimerRef.current);
+        wheelTimerRef.current = null;
+      }
       const scale = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16 : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? size.height : 1;
       const delta = Math.max(-160, Math.min(160, event.deltaY * scale));
       const current = visualCamera();
       const point = localPoint(element!, { x: event.clientX, y: event.clientY });
-      position(constrain(anchorZoom(current, current.zoom * Math.exp(-delta * .0025), point)));
+      wheelAnchorRef.current = point;
+
+      const baseRaw = wheelRawZoomRef.current ?? undoRubberBandZoom(current.zoom);
+      const rawZoom = Math.max(MIN_ZOOM * 0.25, Math.min(MAX_ZOOM * 4, baseRaw * Math.exp(-delta * .0025)));
+      wheelRawZoomRef.current = rawZoom;
+
+      const zoomed = anchorZoom(current, rawZoom, point, point, rubberBandZoom);
+      const overscrolledZoom = zoomed.zoom !== clampZoom(zoomed.zoom);
+      const next = constrain(zoomed, overscrolledZoom ? rubberBand : bounded);
+      position(next);
+
+      const settled = settleCamera(next, point);
+      const needsBounce =
+        Math.abs(settled.zoom - next.zoom) > 0.01 ||
+        Math.abs(settled.offset.x - next.offset.x) > 0.5 ||
+        Math.abs(settled.offset.y - next.offset.y) > 0.5;
+
+      if (needsBounce) {
+        wheelTimerRef.current = window.setTimeout(() => {
+          wheelTimerRef.current = null;
+          wheelRawZoomRef.current = null;
+          const active = cameraRef.current;
+          const target = settleCamera(active, wheelAnchorRef.current);
+          const changed =
+            Math.abs(target.zoom - active.zoom) > 0.01 ||
+            Math.abs(target.offset.x - active.offset.x) > 0.5 ||
+            Math.abs(target.offset.y - active.offset.y) > 0.5;
+          position(target, changed);
+        }, WHEEL_BOUNCE_DELAY_MS);
+      } else {
+        wheelRawZoomRef.current = null;
+      }
     }
     element.addEventListener('wheel', wheel, { passive: false });
     return () => element.removeEventListener('wheel', wheel);
-  }, [constrain, position, size.height, visualCamera]);
+  }, [constrain, position, settleCamera, size.height, visualCamera]);
 
   function resetGesture(element: HTMLElement, current: Camera) {
     const contact = gestureGeometry(element, fingers.current);
-    gesture.current = contact ? { ...contact, camera: constrain(current, undoRubberBand) } : null;
+    const unbanded: Camera = {
+      zoom: undoRubberBandZoom(current.zoom),
+      offset: constrain(current, undoRubberBand).offset,
+    };
+    gesture.current = contact ? { ...contact, camera: unbanded } : null;
   }
 
   function begin(event: PointerEvent<HTMLDivElement>) {
     const active = fingers.current;
     if (event.button !== 0 || active.size >= 2 || active.has(event.pointerId)) return;
     if (active.size && (event.pointerType !== 'touch' || active.values().next().value?.type !== 'touch')) return;
+    cancelWheelBounce();
     if (!active.size) event.currentTarget.focus({ preventScroll: true });
     event.currentTarget.setPointerCapture(event.pointerId);
     const current = visualCamera();
@@ -157,8 +252,9 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
     fingers.current.set(event.pointerId, { x: event.clientX, y: event.clientY, type: event.pointerType });
     const contact = gestureGeometry(event.currentTarget, fingers.current);
     if (!contact) return;
+    pinchAnchorRef.current = contact.center;
     const ratio = start.distance ? contact.distance / start.distance : 1;
-    position(constrain(anchorZoom(start.camera, start.camera.zoom * ratio, start.center, contact.center), rubberBand));
+    position(constrain(anchorZoom(start.camera, start.camera.zoom * ratio, start.center, contact.center, rubberBandZoom), rubberBand));
   }
 
   function finish(event: PointerEvent<HTMLDivElement>) {
@@ -167,16 +263,22 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
     resetGesture(event.currentTarget, current);
     if (fingers.current.size) return;
     setMoving(false);
-    const next = constrain(current);
-    position(next, next.offset.x !== current.offset.x || next.offset.y !== current.offset.y);
+    const next = settleCamera(current, pinchAnchorRef.current);
+    const shouldSpring =
+      Math.abs(next.zoom - current.zoom) > 0.01 ||
+      Math.abs(next.offset.x - current.offset.x) > 0.5 ||
+      Math.abs(next.offset.y - current.offset.y) > 0.5;
+    position(next, shouldSpring);
   }
 
   function zoomBy(delta: number) {
-    const current = visualCamera();
+    cancelWheelBounce();
+    const current = settleCamera(visualCamera());
     position(constrain(anchorZoom(current, current.zoom + delta, CENTER)));
   }
 
   function fitToScreen() {
+    cancelWheelBounce();
     position(FIT_CAMERA);
   }
 
@@ -191,8 +293,9 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
       fitToScreen();
     } else if (directions[event.key]) {
       event.preventDefault();
+      cancelWheelBounce();
       const { x, y } = directions[event.key];
-      const current = visualCamera();
+      const current = settleCamera(visualCamera());
       position(constrain({ zoom: current.zoom, offset: { x: current.offset.x + x, y: current.offset.y + y } }));
     }
   }
@@ -203,15 +306,30 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
     <div className="gate-area">
       <div ref={viewport} className="gate-viewport" data-moving={moving} tabIndex={0} role="region" aria-label="门级图画布，可拖动、滚轮缩放或双指缩放"
         onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={finish} onKeyDown={keyboardPan}>
-        <div ref={world} className="gate-world" data-spring={spring} style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}>
+        <div
+          ref={world}
+          className="gate-world"
+          data-spring={spring}
+          style={{
+            transform: overscrollScale === 1
+              ? `translate(${pan.x}px, ${pan.y}px)`
+              : `translate(${pan.x}px, ${pan.y}px) scale(${overscrollScale})`,
+          }}
+          onTransitionEnd={(event) => {
+            if (event.target === event.currentTarget && event.propertyName === 'transform') {
+              springRef.current = false;
+              setSpring(false);
+            }
+          }}
+        >
           <svg className="gate-chart" width={drawing.width} height={drawing.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label="电路门级网表">
             {layout.wires.map((wire) => {
               const edges = wire.edgeIds.flatMap((id) => edgeById.get(id) ?? []);
               const signal = edges[0];
-              const high = (signal?.value ?? 0) > 0;
-              return <g key={wire.id} className={high ? 'wire-high' : undefined} data-signal={signal?.signalName}>
+              const high = signal?.sampled !== false && (signal?.value ?? 0) > 0;
+              return <g key={wire.id} className={high ? 'wire-high' : undefined} data-signal={signal?.signalName} data-edge-ids={wire.edgeIds.join(' ')}>
                 <path d={wire.path} className={`gate-wire${wire.width > 1 ? ' gate-bus' : ''}`}>
-                  {signal && <title>{signal.signalName} = {signalValue(signal.value, wire.width)}</title>}
+                  {signal && <title>{signal.sampled === false ? signal.signalName : `${signal.signalName} = ${signalValue(signal.value, wire.width)}`}</title>}
                 </path>
                 {high && edges.some((edge) => edge.changed) && <path d={wire.path} className="gate-wire wire-pulse" />}
                 {wire.junctions.map(({ x, y }) => <circle className="gate-junction" key={`${x},${y}`} cx={x} cy={y} r={wire.width > 1 ? 3.4 : 2.8} />)}
