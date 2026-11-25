@@ -87,6 +87,20 @@
   --wave-bus-stroke: #46523c;
   --wave-bus-text: #e6efe0;
   --switch-knob-off: #ffffff;
+
+  /* Verilog syntax highlight tokens (dark mode, accent-linked) */
+  --tok-keyword: var(--accent-ink);
+  --tok-type: #5ccfe6;
+  --tok-port: color-mix(in srgb, var(--accent) 68%, #ffffff);
+  --tok-number: var(--warn);
+  --tok-string: #ffd173;
+  --tok-comment: var(--subtle);
+  --tok-directive: #d4a6ff;
+  --tok-attribute: #f28779;
+  --tok-sysfn: color-mix(in srgb, var(--accent) 55%, #73d0ff);
+  --tok-operator: var(--muted);
+  --tok-punctuation: #8c9487;
+  --tok-identifier: var(--ink);
   --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.35);
   --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.52);
   --shadow-dialog: 0 12px 32px rgba(0, 0, 0, 0.82);
@@ -153,6 +167,20 @@
   --wave-bus-stroke: #a5bf86;
   --wave-bus-text: #1c2416;
   --switch-knob-off: #ffffff;
+
+  /* Verilog syntax highlight tokens (light mode, accent-linked) */
+  --tok-keyword: var(--accent-dark);
+  --tok-type: #0f6292;
+  --tok-port: color-mix(in srgb, var(--accent-dark) 82%, #000000);
+  --tok-number: var(--warn);
+  --tok-string: #9a5b00;
+  --tok-comment: var(--subtle);
+  --tok-directive: #6f3bb8;
+  --tok-attribute: #b43c2f;
+  --tok-sysfn: #0d7377;
+  --tok-operator: var(--muted);
+  --tok-punctuation: #6b7366;
+  --tok-identifier: var(--ink);
   --shadow-sm: 0 1px 3px rgba(17, 24, 14, 0.06);
   --shadow-md: 0 4px 12px rgba(17, 24, 14, 0.1);
   --shadow-dialog: 0 12px 28px rgba(17, 24, 14, 0.22);
@@ -2125,17 +2153,18 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   display: grid;
   grid-template-columns: 46px minmax(0, 1fr);
   background: var(--surface);
-  overflow: auto;
+  overflow: hidden;
 }
 .code-gutter {
   padding: 12px 8px 12px 0;
   text-align: right;
-  font: 12px/1.65 var(--mono);
+  font: 12.5px/1.65 var(--mono);
   color: var(--subtle);
   border-right: 1px solid var(--line);
   user-select: none;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .code-gutter .hl {
   background: var(--warn-bg);
@@ -2144,19 +2173,68 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   padding-right: 4px;
   border-radius: 1px;
 }
+.code-editor-stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.code-highlight,
 .code-textarea {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  min-height: 100%;
+  height: 100%;
+  margin: 0;
   padding: 12px 14px;
   border: 0;
-  resize: none;
-  background: transparent;
-  color: var(--ink);
   font: 12.5px/1.65 var(--mono);
-  outline: none;
+  tab-size: 4;
   white-space: pre;
   overflow: auto;
 }
+.code-highlight {
+  pointer-events: none;
+  color: var(--tok-identifier);
+  overflow: hidden;
+}
+.code-line {
+  display: block;
+  min-height: 1.65em;
+}
+.code-line.hl {
+  background: var(--warn-bg);
+  margin: 0 -14px;
+  padding: 0 14px;
+}
+.code-textarea {
+  resize: none;
+  background: transparent;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  caret-color: var(--ink);
+  outline: none;
+}
+.code-textarea::placeholder {
+  color: var(--subtle);
+  -webkit-text-fill-color: var(--subtle);
+}
+.code-textarea::selection {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+.tok-keyword { color: var(--tok-keyword); font-weight: 600; }
+.tok-type { color: var(--tok-type); font-weight: 600; }
+.tok-port { color: var(--tok-port); font-weight: 600; }
+.tok-number { color: var(--tok-number); }
+.tok-string { color: var(--tok-string); }
+.tok-comment { color: var(--tok-comment); font-style: italic; }
+.tok-directive { color: var(--tok-directive); font-weight: 600; }
+.tok-attribute { color: var(--tok-attribute); }
+.tok-sysfn { color: var(--tok-sysfn); }
+.tok-operator { color: var(--tok-operator); }
+.tok-punctuation { color: var(--tok-punctuation); }
+.tok-identifier { color: var(--tok-identifier); }
 
 /* Verify View */
 .verify-banner {

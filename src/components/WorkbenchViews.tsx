@@ -10,7 +10,8 @@ import {
   Play,
   XCircle,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { tokenizeVerilogForHighlight } from '../engine';
 import type {
   AgentBlueprint,
   HarnessTraceEvent,
@@ -96,7 +97,20 @@ export function VerilogView({
   onExportTestbench: () => void;
 }) {
   const [copied, setCopied] = useState(false);
-  const lineCount = Math.max(1, code.split('\n').length);
+  const gutterRef = useRef<HTMLDivElement>(null);
+  const preRef = useRef<HTMLPreElement>(null);
+  const highlightedLines = useMemo(() => tokenizeVerilogForHighlight(code), [code]);
+  const lineCount = Math.max(1, highlightedLines.length);
+
+  function syncScroll(target: HTMLTextAreaElement) {
+    if (preRef.current) {
+      preRef.current.scrollTop = target.scrollTop;
+      preRef.current.scrollLeft = target.scrollLeft;
+    }
+    if (gutterRef.current) {
+      gutterRef.current.scrollTop = target.scrollTop;
+    }
+  }
 
   async function copySource() {
     try {
@@ -149,22 +163,47 @@ export function VerilogView({
       )}
 
       <div className="code-editor-wrap">
-        <div className="code-gutter" aria-hidden="true">
+        <div ref={gutterRef} className="code-gutter" aria-hidden="true">
           {Array.from({ length: lineCount }, (_, i) => (
             <span key={i} className={highlightLine === i + 1 ? 'hl' : undefined}>
               {i + 1}
             </span>
           ))}
         </div>
-        <textarea
-          aria-label="Verilog 源码编辑器"
-          className="code-textarea"
-          value={code}
-          readOnly={!canCompile}
-          spellCheck={false}
-          placeholder="暂无 Verilog 源码，先在左侧输入电路需求或选择一个预置案例。"
-          onChange={(event) => onCodeChange(event.target.value)}
-        />
+        <div className="code-editor-stage">
+          <pre ref={preRef} className="code-highlight" aria-hidden="true">
+            {highlightedLines.map((row) => (
+              <span
+                key={row.line}
+                className={highlightLine === row.line ? 'code-line hl' : 'code-line'}
+              >
+                {row.tokens.length === 0 ? (
+                  '\u200b'
+                ) : (
+                  row.tokens.map((tok, idx) =>
+                    tok.kind === 'plain' ? (
+                      tok.value
+                    ) : (
+                      <span key={idx} className={`tok-${tok.kind}`}>
+                        {tok.value}
+                      </span>
+                    ),
+                  )
+                )}
+              </span>
+            ))}
+          </pre>
+          <textarea
+            aria-label="Verilog 源码编辑器"
+            className="code-textarea"
+            value={code}
+            readOnly={!canCompile}
+            spellCheck={false}
+            placeholder="暂无 Verilog 源码，先在左侧输入电路需求或选择一个预置案例。"
+            onScroll={(event) => syncScroll(event.currentTarget)}
+            onChange={(event) => onCodeChange(event.target.value)}
+          />
+        </div>
       </div>
     </div>
   );
