@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   DiagnoseInput,
   DiagnosisResponse,
+  HarnessPreviousContext,
   LLMCallOptions,
   LintIssue,
   PinMapping,
@@ -87,7 +88,8 @@ ${JSON_ONLY}
 额外要求：
 - 蓝图必须与虚拟板卡接口一致，不要发明新端口或新外设；
 - 时序逻辑至少包含一个状态或计数器，并在蓝图行为中写清复位值；
-- testVectors 的 expect 只使用 led/traffic/seg 三个字段。`,
+- testVectors 的 expect 只使用 led/traffic/seg 三个字段；
+- 若提供已有电路与多轮修改上下文，必须在保留既有行为与已通过断言的前提下增量演进，不要推翻重写。`,
   generate: `你是 VibeFPGA Lab 的 Verilog 生成智能体，负责根据设计蓝图和自测向量写出可综合代码。
 
 ${BOARD_PORT_SPEC}
@@ -102,7 +104,8 @@ ${JSON_ONLY}
 - 代码必须逐字使用上面的顶层端口声明，模块名必须是 top；
 - 必须满足给定 testVectors 的每一拍 expect（自测会在浏览器内执行）；
 - 代码保持精简可读（一般 30-80 行），关键寄存器命名使用英文小写下划线；
-- 不要引用未定义的信号，不要留下悬空输出。`,
+- 不要引用未定义的信号，不要留下悬空输出；
+- 若提供上一版代码，请在其基础上做最小改动；若提供联网参考资料，只采纳与可综合教学子集兼容的要点。`,
   repair: `你是 VibeFPGA Lab 的 Verilog 修复智能体。你会收到当前代码、Lint 告警或仿真首个反例波形，请做最小改动修复问题。
 
 ${BOARD_PORT_SPEC}
@@ -166,22 +169,61 @@ ${JSON_ONLY}
 // 各动作的 User Message 构造
 // ============================================================
 
-export function buildPlanMessages(prompt: string): ChatMessage[] {
+export interface PlanMessageOptions {
+  previousContext?: HarnessPreviousContext;
+  researchNotes?: string;
+}
+
+export function buildPlanMessages(prompt: string, options: PlanMessageOptions = {}): ChatMessage[] {
+  const blocks: string[] = [];
+  const context = options.previousContext;
+  if (context) {
+    const history = (context.history ?? []).slice(-8);
+    blocks.push(
+      `多轮修改上下文（保留既有行为与已通过断言，只做增量演进）：\n${JSON.stringify(
+        {
+          blueprint: context.blueprint,
+          verilogCode: context.verilogCode,
+          testVectors: context.testVectors,
+          history,
+        },
+        null,
+        2,
+      )}`,
+    );
+  }
+  if (options.researchNotes) blocks.push(options.researchNotes);
+  const extra = blocks.length > 0 ? `\n\n${blocks.join('\n\n')}` : '';
   return [
     { role: 'system', content: ACTION_SYSTEM_PROMPTS.plan },
     {
       role: 'user',
-      content: `硬件需求：\n${prompt.trim()}\n\n请按 Schema 输出严格 JSON（不要 Markdown 代码围栏）。`,
+      content: `硬件需求：\n${prompt.trim()}${extra}\n\n请按 Schema 输出严格 JSON（不要 Markdown 代码围栏）。`,
     },
   ];
 }
 
-export function buildGenerateMessages(blueprint: AgentBlueprint, testVectors: TestVectorStep[]): ChatMessage[] {
+export interface GenerateMessageExtras {
+  previousCode?: string;
+  researchNotes?: string;
+}
+
+export function buildGenerateMessages(
+  blueprint: AgentBlueprint,
+  testVectors: TestVectorStep[],
+  extras: GenerateMessageExtras = {},
+): ChatMessage[] {
+  const blocks: string[] = [];
+  if (extras.previousCode) {
+    blocks.push(`上一版可运行代码（在其基础上增量修改）：\n\`\`\`verilog\n${extras.previousCode}\n\`\`\``);
+  }
+  if (extras.researchNotes) blocks.push(extras.researchNotes);
+  const extra = blocks.length > 0 ? `\n\n${blocks.join('\n\n')}` : '';
   return [
     { role: 'system', content: ACTION_SYSTEM_PROMPTS.generate },
     {
       role: 'user',
-      content: `设计蓝图与自测向量：\n${JSON.stringify({ blueprint, testVectors }, null, 2)}\n\n请输出 {"code": "..."}。`,
+      content: `设计蓝图与自测向量：\n${JSON.stringify({ blueprint, testVectors }, null, 2)}${extra}\n\n请输出 {"code": "..."}。`,
     },
   ];
 }
@@ -193,6 +235,7 @@ export interface RepairContext {
   blueprint: AgentBlueprint;
   testVectors: TestVectorStep[];
   waveformSlice?: SignalSample[];
+  researchNotes?: string;
 }
 
 export function buildRepairMessages(ctx: RepairContext): ChatMessage[] {
@@ -214,6 +257,7 @@ export function buildRepairMessages(ctx: RepairContext): ChatMessage[] {
         }
       : undefined,
     failureWaveform: ctx.waveformSlice,
+    researchNotes: ctx.researchNotes,
   };
   return [
     { role: 'system', content: ACTION_SYSTEM_PROMPTS.repair },
@@ -267,11 +311,20 @@ function asStringList(value: unknown): string[] {
   return Array.isArray(value) ? value.map(asString).filter((v): v is string => v !== undefined) : [];
 }
 
+/** 剥离推理模型（DeepSeek-R1 等）输出的  thinking... 思考段。 */
+export function stripReasoning(text: string): string {
+  return text
+    .replace(/<\s*think\s*>[\s\S]*?<\s*\/\s*think\s*>/gi, '')
+    .replace(/<\s*think\s*>[\s\S]*$/i, '')
+    .replace(/<\s*\/?\s*think\s*>/gi, '')
+    .trim();
+}
+
 /**
  * 兼容三种模型输出：纯 JSON、```json 围栏、前后夹带解释文字的 JSON。
  */
 export function extractJson(text: string): unknown {
-  const trimmed = text.trim();
+  const trimmed = stripReasoning(text);
   const attempts: string[] = [trimmed];
   for (const match of trimmed.matchAll(/```(?:json|JSON)?\s*([\s\S]*?)```/g)) {
     attempts.push(match[1].trim());
@@ -387,10 +440,11 @@ export function parsePlanResponse(text: string): PlanResponse {
 }
 
 function stripCodeFences(text: string): string {
-  const fenced = [...text.matchAll(/```(?:verilog|v|systemverilog|sv)?\s*([\s\S]*?)```/gi)].map((m) => m[1].trim());
+  const clean = stripReasoning(text);
+  const fenced = [...clean.matchAll(/```(?:verilog|v|systemverilog|sv)?\s*([\s\S]*?)```/gi)].map((m) => m[1].trim());
   const candidate = fenced.find((block) => /module\s+/i.test(block)) ?? fenced[0];
   if (candidate) return candidate;
-  return text
+  return clean
     .replace(/^```[a-z]*\s*/i, '')
     .replace(/```\s*$/, '')
     .trim();
