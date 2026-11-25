@@ -1575,10 +1575,10 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   flex: 1;
   min-height: 260px;
   background-color: var(--canvas-bg);
-  background-image: radial-gradient(var(--canvas-dot) 0.9px, transparent 1px);
-  background-size: 18px 18px;
 }
 .gate-blank {
+  background-image: radial-gradient(var(--canvas-dot) 0.9px, transparent 1px);
+  background-size: 18px 18px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1589,8 +1589,22 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
 }
 .gate-blank svg { color: var(--accent); opacity: 0.75; }
 
-.gate-viewport { position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: none; user-select: none; }
+.gate-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  background-image: radial-gradient(var(--canvas-dot) 0.9px, transparent 1px);
+  background-size: 18px 18px;
+}
 .gate-viewport[data-moving="true"] { cursor: grabbing; }
+.gate-viewport[data-spring="true"] {
+  transition:
+    background-position 360ms cubic-bezier(.2, .72, .32, 1.17),
+    background-size 360ms cubic-bezier(.2, .72, .32, 1.17);
+}
 .gate-viewport:focus-visible { outline-offset: -3px; }
 .gate-world { position: absolute; inset: 0; }
 .gate-world[data-spring="true"] { transition: transform 360ms cubic-bezier(.2, .72, .32, 1.17); }

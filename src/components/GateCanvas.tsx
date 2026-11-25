@@ -11,6 +11,7 @@ interface Gesture { camera: Camera; center: Offset; distance: number }
 
 const CENTER: Offset = { x: 0, y: 0 };
 const FIT_CAMERA: Camera = { zoom: 100, offset: CENTER };
+const GRID_STEP = 18;
 const MIN_ZOOM = 75;
 const MAX_ZOOM = 500;
 const RESISTANCE = .42;
@@ -302,9 +303,21 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
 
   const edgeById = new Map(netlist.edges.map((edge) => [edge.id, edge]));
   const nodeById = new Map(netlist.nodes.map((node) => [node.id, node]));
+  const gridStep = GRID_STEP * zoom / 100;
   return (
     <div className="gate-area">
-      <div ref={viewport} className="gate-viewport" data-moving={moving} tabIndex={0} role="region" aria-label="门级图画布，可拖动、滚轮缩放或双指缩放"
+      <div
+        ref={viewport}
+        className="gate-viewport"
+        data-moving={moving}
+        data-spring={spring}
+        style={{
+          backgroundSize: `${gridStep}px ${gridStep}px`,
+          backgroundPosition: `${size.width / 2 + pan.x - gridStep / 2}px ${size.height / 2 + pan.y - gridStep / 2}px`,
+        }}
+        tabIndex={0}
+        role="region"
+        aria-label="门级图画布，可拖动、滚轮缩放或双指缩放"
         onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={finish} onKeyDown={keyboardPan}>
         <div
           ref={world}
