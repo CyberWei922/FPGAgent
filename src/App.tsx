@@ -50,13 +50,17 @@ import {
 } from './services/streamPlayback';
 import {
   createBrowserLLMClient,
-  fetchRemainingQuota,
+  fetchQuotaStatus,
+  fetchSiteModels,
   getProviderPreset,
   getSuggestedModelOptions,
   loadAppPreferences,
   loadByokConfig,
+  loadSiteModel,
   saveAppPreferences,
   saveByokConfig,
+  saveSiteModel,
+  SITE_DEFAULT_MODELS,
   type AppPreferences,
   type ByokConfig,
 } from './services/llmClient';
@@ -248,7 +252,10 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<'api' | 'appearance'>('api');
+  const [siteModels, setSiteModels] = useState<LLMModelOption[]>(SITE_DEFAULT_MODELS);
+  const [siteModel, setSiteModel] = useState<string>(loadSiteModel);
   const [remainingQuota, setRemainingQuota] = useState<number | undefined>();
+  const [dailyQuotaLimit, setDailyQuotaLimit] = useState<number | undefined>();
   const [homeGreeting, setHomeGreeting] = useState<string>(() => pickHomeGreeting());
 
   // Navigation & Browser History State
@@ -405,8 +412,14 @@ export default function App() {
   useEffect(() => {
     if (api) return;
     let active = true;
-    void fetchRemainingQuota().then((quota) => {
-      if (active && quota !== undefined) setRemainingQuota(quota);
+    void fetchQuotaStatus().then((status) => {
+      if (!active || !status) return;
+      setRemainingQuota(status.remainingQuota);
+      setDailyQuotaLimit(status.dailyLimit);
+    });
+    void fetchSiteModels().then((models) => {
+      if (!active || models.length === 0) return;
+      setSiteModels(models);
     });
     return () => { active = false; };
   }, [api]);
@@ -493,9 +506,9 @@ export default function App() {
     setSettingsOpen(true);
   }
 
-  // Model selector state derived from BYOK config
+  // Model selector state derived from BYOK config or site-default model list
   const availableModels: LLMModelOption[] = useMemo(() => {
-    if (!api) return [{ id: 'site-default', label: '站点默认' }];
+    if (!api) return siteModels;
     const base = api.cachedModels?.length
       ? api.cachedModels
       : getSuggestedModelOptions(api.providerId, api.model);
@@ -503,15 +516,26 @@ export default function App() {
       return [{ id: api.model }, ...base];
     }
     return base;
-  }, [api]);
+  }, [api, siteModels]);
 
-  const selectedModel = api ? api.model : 'site-default';
+  const selectedModel = api
+    ? api.model
+    : siteModels.some((m) => m.id === siteModel)
+      ? siteModel
+      : siteModels[0]?.id ?? 'qwen3.8-flash';
   const providerLabel = api
     ? getProviderPreset(api.providerId)?.name ?? '自定义 API'
     : '站点默认';
+  const siteQuotaNotice = !api ? { remaining: remainingQuota, limit: dailyQuotaLimit } : undefined;
 
   function handleSelectModel(modelId: string) {
-    if (!api || modelId === api.model) return;
+    if (!api) {
+      if (modelId === selectedModel) return;
+      setSiteModel(modelId);
+      saveSiteModel(modelId);
+      return;
+    }
+    if (modelId === api.model) return;
     const next: ByokConfig = { ...api, model: modelId };
     setApi(next);
     try {
@@ -1179,7 +1203,7 @@ export default function App() {
             lastReasoningUpdate = nowTs;
             updateStepReasoning(stage, reasoning, round);
           },
-          model: api ? selectedModel : undefined,
+          model: selectedModel,
           enableWebResearch: prefs.enableWebResearch,
           previousContext: previous
             ? {
@@ -1323,6 +1347,9 @@ export default function App() {
       setCodeStreamState(undefined);
       setRecommendedTab(null);
       const errCode = isLLMError(error) ? error.code : undefined;
+      if (errCode === 'QUOTA_EXCEEDED' && !api) {
+        setRemainingQuota(0);
+      }
       const rawMessage = isLLMError(error) ? error.message.trim() : '';
       const baseText = errCode ? LLM_ERROR_TEXT[errCode] : '生成未完成，请重试。';
       const detail =
@@ -1396,7 +1423,7 @@ export default function App() {
     if (!code || injectingBug) return;
     setInjectingBug(true);
     try {
-      const bug = await runtime.injectBug(code, { model: api ? selectedModel : undefined });
+      const bug = await runtime.injectBug(code, { model: selectedModel });
       injectPresetBug(bug);
     } catch (error) {
       const detail = isLLMError(error) ? LLM_ERROR_TEXT[error.code] : 'AI 故障注入失败，可先尝试下方的内置故障关卡。';
@@ -1547,11 +1574,10 @@ export default function App() {
           ? '本地版本历史'
           : blueprint?.title ?? '新电路对话';
 
+  const activeSiteModelLabel = availableModels.find((m) => m.id === selectedModel)?.label ?? selectedModel;
   const quotaOrModelPill = api
     ? `${providerLabel} · ${api.model}`
-    : remainingQuota !== undefined
-      ? `默认额度 ${remainingQuota}/20`
-      : '站点默认';
+    : `站点默认 · ${activeSiteModelLabel}`;
 
   const wbTitleVersion = applied.current?.version ?? version;
 
@@ -1613,6 +1639,7 @@ export default function App() {
           theme={theme}
           prefs={prefs}
           remainingQuota={remainingQuota}
+          dailyQuotaLimit={dailyQuotaLimit}
           initialSection={settingsSection}
           onSaveApi={setApi}
           onThemeChange={handleThemeChange}
@@ -1682,6 +1709,7 @@ export default function App() {
                 models={availableModels}
                 selectedModel={selectedModel}
                 providerLabel={providerLabel}
+                quotaNotice={siteQuotaNotice}
                 onSelectModel={handleSelectModel}
                 onOpenSettings={() => openSettings('api')}
                 enableWebResearch={prefs.enableWebResearch}
@@ -1791,6 +1819,7 @@ export default function App() {
                       models={availableModels}
                       selectedModel={selectedModel}
                       providerLabel={providerLabel}
+                      quotaNotice={siteQuotaNotice}
                       onSelectModel={handleSelectModel}
                       onOpenSettings={() => openSettings('api')}
                       enableWebResearch={prefs.enableWebResearch}

@@ -58,6 +58,7 @@ export function ApiSettings({
   theme,
   prefs,
   remainingQuota,
+  dailyQuotaLimit,
   initialSection = 'api',
   onSaveApi,
   onThemeChange,
@@ -68,6 +69,7 @@ export function ApiSettings({
   theme: ThemePreferences;
   prefs: AppPreferences;
   remainingQuota?: number;
+  dailyQuotaLimit?: number;
   initialSection?: SettingsSection;
   onSaveApi: (config: ByokConfig | null) => void;
   onThemeChange: (next: ThemePreferences) => void;
@@ -537,7 +539,7 @@ export function ApiSettings({
                         className="text-input"
                         value={model}
                         onChange={(event) => setModel(event.target.value)}
-                        placeholder="例如 deepseek-chat / glm-4.5-air / qwen-plus"
+                        placeholder="例如 qwen3.8-flash / deepseek-chat / glm-4.5-air"
                         autoComplete="off"
                         required
                       />
@@ -557,7 +559,12 @@ export function ApiSettings({
               ) : (
                 <div className="info-card">
                   <p className="info-card-title">
-                    站点默认代理{remainingQuota !== undefined ? ` · 今日剩余 ${remainingQuota} 次` : ''}
+                    站点默认代理
+                    {remainingQuota !== undefined
+                      ? dailyQuotaLimit !== undefined
+                        ? ` · 今日剩余 ${remainingQuota} / ${dailyQuotaLimit} 次`
+                        : ` · 今日剩余 ${remainingQuota} 次`
+                      : ''}
                   </p>
                   <p className="field-help">
                     无需填写密钥即可体验自由输入与多轮修改。若需更高并发或切换 DeepSeek、GLM、通义千问等特定模型，请在上方选择对应服务商。保存此选项会清除本地自定义 Key。

@@ -258,6 +258,7 @@ export type LLMProviderId =
   | 'deepseek'
   | 'zhipu-glm'
   | 'dashscope-qwen'
+  | 'amd-radeon'
   | 'siliconflow'
   | 'moonshot-kimi'
   | 'local-gateway'

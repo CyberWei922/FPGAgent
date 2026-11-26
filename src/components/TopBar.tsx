@@ -28,6 +28,7 @@ export function PromptComposer({
   models,
   selectedModel,
   providerLabel,
+  quotaNotice,
   onSelectModel,
   onOpenSettings,
   enableWebResearch,
@@ -46,6 +47,7 @@ export function PromptComposer({
   models: LLMModelOption[];
   selectedModel: string;
   providerLabel: string;
+  quotaNotice?: { remaining?: number; limit?: number };
   onSelectModel: (modelId: string) => void;
   onOpenSettings: () => void;
   enableWebResearch: boolean;
@@ -109,7 +111,7 @@ export function PromptComposer({
 
       <div className="composer-foot">
         <div className="composer-tools">
-          {models.length > 1 ? (
+          {models.length > 1 || Boolean(quotaNotice) ? (
             <CustomModelSelect
               ariaLabel="切换对话模型"
               variant="inline"
@@ -117,6 +119,7 @@ export function PromptComposer({
               value={selectedModel}
               onChange={onSelectModel}
               title={`当前服务商：${providerLabel} · ${selectedModel}`}
+              quotaNotice={quotaNotice}
               footerAction={{ label: '管理 API 与模型…', onClick: onOpenSettings }}
             />
           ) : (

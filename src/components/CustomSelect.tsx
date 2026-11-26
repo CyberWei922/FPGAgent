@@ -19,6 +19,7 @@ export function CustomModelSelect({
   variant = 'field',
   placeholder = '选择模型',
   title,
+  quotaNotice,
   footerAction,
 }: {
   id?: string;
@@ -29,6 +30,7 @@ export function CustomModelSelect({
   variant?: 'field' | 'inline';
   placeholder?: string;
   title?: string;
+  quotaNotice?: { remaining?: number; limit?: number };
   footerAction?: { label: string; onClick: () => void };
 }) {
   const [open, setOpen] = useState(false);
@@ -165,6 +167,24 @@ export function CustomModelSelect({
             width: pos.width,
           }}
         >
+          {quotaNotice && (
+            <div
+              className={`custom-select-quota${quotaNotice.remaining === 0 ? ' exhausted' : ''}`}
+              role="status"
+            >
+              <span className="custom-select-quota-label">今日剩余次数</span>
+              <strong className="custom-select-quota-value">
+                {quotaNotice.remaining !== undefined
+                  ? quotaNotice.limit !== undefined
+                    ? `${quotaNotice.remaining} / ${quotaNotice.limit} 次`
+                    : `${quotaNotice.remaining} 次`
+                  : quotaNotice.limit !== undefined
+                    ? `限 ${quotaNotice.limit} 次/日`
+                    : '站点默认'}
+              </strong>
+            </div>
+          )}
+
           {showSearch && (
             <div className="custom-select-search">
               <Search size={13} />

@@ -36,8 +36,139 @@ export const MODELS_ENDPOINT = '/functions/v1/app/models';
 export const LOCAL_GATEWAY_PROXY_ENDPOINT = '/__local_gateway_proxy';
 const BYOK_STORAGE_KEY = 'vibefpga.byok';
 const PREFS_STORAGE_KEY = 'fpgagent.prefs';
+const SITE_MODEL_STORAGE_KEY = 'fpgagent.siteModel';
+const BROWSER_ID_STORAGE_KEY = 'fpgagent.browserId';
+const BROWSER_QUOTA_STORAGE_KEY = 'fpgagent.browserQuota';
+const DEFAULT_SITE_DAILY_LIMIT = 8;
 const DEFAULT_NODE_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-const DEFAULT_NODE_MODEL = 'qwen-plus';
+const DEFAULT_NODE_MODEL = 'qwen3.8-flash';
+
+export const SITE_DEFAULT_MODELS: LLMModelOption[] = [
+  { id: 'qwen3.8-flash', label: 'Qwen 3.8 Flash', ownedBy: '站点默认 · 推荐' },
+  { id: 'deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash', ownedBy: '站点默认' },
+];
+
+export interface QuotaStatus {
+  remainingQuota: number;
+  dailyLimit: number;
+}
+
+function shanghaiDay(now = Date.now()): string {
+  return new Date(now + 8 * 3600_000).toISOString().slice(0, 10);
+}
+
+function getSafeLocalStorage(): Storage | null {
+  try {
+    return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined'
+      ? window.localStorage
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getBrowserId(): string | undefined {
+  const storage = getSafeLocalStorage();
+  if (!storage) return undefined;
+  try {
+    const existing = storage.getItem(BROWSER_ID_STORAGE_KEY)?.trim();
+    if (existing && /^[a-zA-Z0-9_-]{8,64}$/.test(existing)) return existing;
+    const generated =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `bid-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+    storage.setItem(BROWSER_ID_STORAGE_KEY, generated);
+    return generated;
+  } catch {
+    return undefined;
+  }
+}
+
+interface LocalBrowserQuotaState {
+  day: string;
+  used: number;
+  limit?: number;
+}
+
+function readLocalBrowserQuota(now = Date.now()): LocalBrowserQuotaState | null {
+  const storage = getSafeLocalStorage();
+  if (!storage) return null;
+  const today = shanghaiDay(now);
+  try {
+    const raw = storage.getItem(BROWSER_QUOTA_STORAGE_KEY);
+    if (!raw) return { day: today, used: 0 };
+    const parsed = JSON.parse(raw) as Partial<LocalBrowserQuotaState>;
+    if (parsed.day !== today) {
+      return {
+        day: today,
+        used: 0,
+        ...(typeof parsed.limit === 'number' && parsed.limit > 0 ? { limit: parsed.limit } : {}),
+      };
+    }
+    return {
+      day: today,
+      used: typeof parsed.used === 'number' && parsed.used >= 0 ? Math.floor(parsed.used) : 0,
+      ...(typeof parsed.limit === 'number' && parsed.limit > 0 ? { limit: Math.floor(parsed.limit) } : {}),
+    };
+  } catch {
+    return { day: today, used: 0 };
+  }
+}
+
+function writeLocalBrowserQuota(state: LocalBrowserQuotaState): void {
+  const storage = getSafeLocalStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(BROWSER_QUOTA_STORAGE_KEY, JSON.stringify(state));
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function reconcileQuotaStatus(serverRemaining: number, serverLimit?: number): QuotaStatus {
+  const local = readLocalBrowserQuota();
+  const dailyLimit =
+    typeof serverLimit === 'number' && serverLimit > 0
+      ? Math.floor(serverLimit)
+      : local?.limit ?? DEFAULT_SITE_DAILY_LIMIT;
+  if (!local) {
+    return { remainingQuota: Math.max(0, serverRemaining), dailyLimit };
+  }
+  const effectiveRemaining = Math.min(Math.max(0, serverRemaining), Math.max(0, dailyLimit - local.used));
+  writeLocalBrowserQuota({ day: local.day, used: local.used, limit: dailyLimit });
+  return { remainingQuota: effectiveRemaining, dailyLimit };
+}
+
+function recordLocalBrowserUsage(serverRemaining?: number): number | undefined {
+  const local = readLocalBrowserQuota();
+  if (!local) return serverRemaining;
+  const nextUsed = local.used + 1;
+  writeLocalBrowserQuota({
+    day: local.day,
+    used: nextUsed,
+    ...(local.limit ? { limit: local.limit } : {}),
+  });
+  if (typeof serverRemaining !== 'number') return undefined;
+  if (local.limit) {
+    return Math.min(Math.max(0, serverRemaining), Math.max(0, local.limit - nextUsed));
+  }
+  return Math.max(0, serverRemaining);
+}
+
+function markLocalQuotaExhausted(serverLimit?: number): void {
+  const local = readLocalBrowserQuota();
+  if (!local) return;
+  const limit =
+    typeof serverLimit === 'number' && serverLimit > 0
+      ? Math.floor(serverLimit)
+      : local.limit ?? DEFAULT_SITE_DAILY_LIMIT;
+  writeLocalBrowserQuota({ day: local.day, used: Math.max(local.used, limit), limit });
+}
+
+function browserQuotaHeaders(): Record<string, string> {
+  const id = getBrowserId();
+  return id ? { 'X-Browser-Id': id } : {};
+}
 
 export const PROVIDER_PRESETS: LLMProviderPreset[] = [
   {
@@ -62,9 +193,18 @@ export const PROVIDER_PRESETS: LLMProviderPreset[] = [
     id: 'dashscope-qwen',
     name: '通义千问',
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    defaultModel: 'qwen-plus',
-    suggestedModels: ['qwen-plus', 'qwen-max', 'qwen-turbo', 'qwen3-coder-plus'],
+    defaultModel: 'qwen3.8-flash',
+    suggestedModels: ['qwen3.8-flash', 'qwen3.7-flash', 'qwen4-max', 'deepseek-v4.1-flash'],
     docsUrl: 'https://bailian.console.aliyun.com/',
+    supportsJsonMode: true,
+  },
+  {
+    id: 'amd-radeon',
+    name: 'AMD Radeon Cloud',
+    baseUrl: 'https://developer.amd.com.cn/radeon/api/v1',
+    defaultModel: 'Qwen3.8-Flash-Next',
+    suggestedModels: ['Qwen3.8-Flash-Next', 'DeepSeek-V4.1-Flash-1017', 'DeepSeek-V4-Flash-0731'],
+    docsUrl: 'https://developer.amd.com.cn/radeon/tokenfactory',
     supportsJsonMode: true,
   },
   {
@@ -416,6 +556,11 @@ function createDirectClient(cfg: ByokConfig, fetchImpl?: FetchImpl): LLMClient {
 function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMClient {
   return {
     async chat(options: LLMCallOptions) {
+      const localQuota = readLocalBrowserQuota();
+      if (localQuota?.limit !== undefined && localQuota.used >= localQuota.limit) {
+        throw new LLMError('QUOTA_EXCEEDED', '今日浏览器免费额度已用完，请明天再试或切换为自备 API Key', 429);
+      }
+
       const wantsStream = Boolean(options.onDelta || options.onReasoningDelta);
       let res: Response;
       try {
@@ -425,13 +570,15 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
           temperature: options.temperature,
           jsonMode: options.jsonMode,
         };
-        if (options.model?.trim()) payloadBody.model = options.model.trim();
+        const trimmedModel = options.model?.trim();
+        if (trimmedModel && trimmedModel !== 'site-default') payloadBody.model = trimmedModel;
         if (wantsStream) payloadBody.stream = true;
         res = await fetchImpl(endpoint, {
           method: 'POST',
           credentials: 'same-origin',
           headers: {
             'Content-Type': 'application/json',
+            ...browserQuotaHeaders(),
             ...(wantsStream ? { Accept: 'text/event-stream, application/json' } : {}),
           },
           body: JSON.stringify(payloadBody),
@@ -514,12 +661,19 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
         }
         return {
           text,
-          remainingQuota,
+          remainingQuota: recordLocalBrowserUsage(remainingQuota),
           ...(model ? { model } : {}),
         };
       }
 
-      let data: { ok?: boolean; text?: unknown; error?: unknown; remainingQuota?: unknown; model?: unknown };
+      let data: {
+        ok?: boolean;
+        text?: unknown;
+        error?: unknown;
+        remainingQuota?: unknown;
+        dailyLimit?: unknown;
+        model?: unknown;
+      };
       try {
         const payload: unknown = await res.json();
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
@@ -536,15 +690,21 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
 
       if (!res.ok || data.ok !== true) {
         const code = (typeof data.error === 'string' && SERVER_ERROR_MAP[data.error]) || 'UPSTREAM';
+        if (code === 'QUOTA_EXCEEDED') {
+          markLocalQuotaExhausted(typeof data.dailyLimit === 'number' ? data.dailyLimit : undefined);
+        }
         throw new LLMError(code, `云函数调用失败：${String(data.error ?? res.status)}`, res.status);
       }
       if (typeof data.text !== 'string') {
         throw new LLMError('BAD_RESPONSE', '云函数返回缺少 text 字段', res.status);
       }
       if (data.text) options.onDelta?.(data.text);
+      const reconciledRemaining = recordLocalBrowserUsage(
+        typeof data.remainingQuota === 'number' ? data.remainingQuota : undefined,
+      );
       return {
         text: data.text,
-        remainingQuota: typeof data.remainingQuota === 'number' ? data.remainingQuota : undefined,
+        remainingQuota: reconciledRemaining,
         ...(typeof data.model === 'string' ? { model: data.model } : {}),
       };
     },
@@ -556,13 +716,13 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
           credentials: 'same-origin',
           signal: options?.signal,
         });
-        if (!res.ok) return [{ id: 'site-default', label: '站点默认模型' }];
+        if (!res.ok) return SITE_DEFAULT_MODELS;
         const data = (await res.json()) as { ok?: boolean; models?: LLMModelOption[] };
         if (data.ok && Array.isArray(data.models) && data.models.length > 0) return data.models;
       } catch {
         // Local dev without edge proxy falls back gracefully.
       }
-      return [{ id: 'site-default', label: '站点默认模型' }];
+      return SITE_DEFAULT_MODELS;
     },
 
     async testConnection(options) {
@@ -570,15 +730,25 @@ function createProxyClient(endpoint: string, fetchImpl: FetchImpl = fetch): LLMC
       try {
         const res = await fetchImpl(QUOTA_ENDPOINT, {
           credentials: 'same-origin',
+          headers: browserQuotaHeaders(),
           signal: options?.signal,
         });
-        const data = (await res.json()) as { ok?: boolean; remainingQuota?: unknown };
+        const data = (await res.json()) as { ok?: boolean; remainingQuota?: unknown; dailyLimit?: unknown };
         if (res.ok && data.ok) {
+          const status =
+            typeof data.remainingQuota === 'number'
+              ? reconcileQuotaStatus(
+                  data.remainingQuota,
+                  typeof data.dailyLimit === 'number' ? data.dailyLimit : undefined,
+                )
+              : undefined;
           return {
             ok: true,
             latencyMs: Math.max(1, Date.now() - start),
             model: 'site-default',
-            message: typeof data.remainingQuota === 'number' ? `剩余免费额度 ${data.remainingQuota} 次` : '站点默认服务可用',
+            message: status
+              ? `今日剩余免费额度 ${status.remainingQuota} / ${status.dailyLimit} 次`
+              : '站点默认服务可用',
           };
         }
         return { ok: false, latencyMs: Math.max(1, Date.now() - start), message: '站点默认代理暂不可用，可切换自备 API Key' };
@@ -685,12 +855,52 @@ export function createBrowserLLMClient(): LLMClient {
   };
 }
 
-export async function fetchRemainingQuota(): Promise<number | undefined> {
+export function loadSiteModel(): string {
+  const storage = getSafeLocalStorage();
+  const saved = storage?.getItem(SITE_MODEL_STORAGE_KEY)?.trim();
+  return saved || SITE_DEFAULT_MODELS[0].id;
+}
+
+export function saveSiteModel(modelId: string): void {
+  const storage = getSafeLocalStorage();
+  if (!storage) return;
   try {
-    const res = await fetch(QUOTA_ENDPOINT, { credentials: 'same-origin' });
-    const data = (await res.json()) as { ok?: boolean; remainingQuota?: unknown };
-    return data.ok && typeof data.remainingQuota === 'number' ? data.remainingQuota : undefined;
+    storage.setItem(SITE_MODEL_STORAGE_KEY, modelId);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+export async function fetchSiteModels(fetchImpl: FetchImpl = fetch): Promise<LLMModelOption[]> {
+  try {
+    const res = await fetchImpl(MODELS_ENDPOINT, { method: 'GET', credentials: 'same-origin' });
+    if (!res.ok) return SITE_DEFAULT_MODELS;
+    const data = (await res.json()) as { ok?: boolean; models?: LLMModelOption[] };
+    if (data.ok && Array.isArray(data.models) && data.models.length > 0) return data.models;
+  } catch {
+    // Fall back to curated site-default models when running without edge function.
+  }
+  return SITE_DEFAULT_MODELS;
+}
+
+export async function fetchQuotaStatus(fetchImpl: FetchImpl = fetch): Promise<QuotaStatus | undefined> {
+  try {
+    const res = await fetchImpl(QUOTA_ENDPOINT, {
+      credentials: 'same-origin',
+      headers: browserQuotaHeaders(),
+    });
+    const data = (await res.json()) as { ok?: boolean; remainingQuota?: unknown; dailyLimit?: unknown };
+    if (!data.ok || typeof data.remainingQuota !== 'number') return undefined;
+    return reconcileQuotaStatus(
+      data.remainingQuota,
+      typeof data.dailyLimit === 'number' ? data.dailyLimit : undefined,
+    );
   } catch {
     return undefined;
   }
+}
+
+export async function fetchRemainingQuota(): Promise<number | undefined> {
+  const status = await fetchQuotaStatus();
+  return status?.remainingQuota;
 }
