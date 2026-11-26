@@ -12,20 +12,22 @@
 | [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) | 完整项目规划书（产品预期、系统架构、技术方案、三人分工、里程碑与提交清单） | 全体成员 |
 | [`docs/DATA_CONTRACTS.md`](docs/DATA_CONTRACTS.md) | 前后端/三模块统一的 TypeScript 数据契约（开发前先冻结） | 全体成员 |
 | [`docs/GIT_WORKFLOW.md`](docs/GIT_WORKFLOW.md) | 零冲突 Git 协同开发规范、分支命名与 PR 合并指南 | 全体成员（尤其无 Web 经验队友） |
-| [`docs/QODER_PROMPTS.md`](docs/QODER_PROMPTS.md) | 三位成员各自可直接粘贴进 Qoder 的首轮开工提示词 | 队长 / 队友 1 / 队友 2 |
+| [`docs/QODER_PROMPTS.md`](docs/QODER_PROMPTS.md) | 三位成员各自可直接粘贴进 Qoder 的第三轮（V3）开工提示词 | 队长 / 队友 1 / 队友 2 |
 | [`reference/fpga2026/`](reference/fpga2026/) | 往届 FPGA 赛题输入资产（设计报告、技能规范 `skill/`、踩坑库与参考思路） | 队友 1、队友 2 查阅提炼 |
 
 ---
 
-## 三人团队分工速览（第二轮 · V2 契约）
+## 三人团队分工速览（第三轮 · V3 契约）
+
+> 第二轮最终版（`baf3004`，217/217 项单测通过）与 V3 冻结契约均已合入 `main`。第三轮围绕 **16×8 字符/图块 OLED 大屏 + 蜂鸣器 + 左侧板卡配置 + 引擎寄存器数组与高速步进 + 每日 6 次按项目扣次限流** 展开三线并行升级。
 
 | 角色 | 负责范围 | 核心目录 | 接口与验收 |
 | --- | --- | --- | --- |
-| **队长（全栈统筹 + UI/布局 + 多服务商 API + 云端部署）** | 维护 V2 冻结契约、国内常用 API 预设与自动拉取模型列表、对话内切模型、设置面板与布局升级、逐级门级动画、故障诊所 UI、云端联网检索代理与 Qoder Sites 部署 | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/` | 提供 `LLMClient` 与 `WebResearchClient`，在工作台接入 `RtlEngine` 与 `AgentRuntime`。运行 `npm run build`、`npm run test:platform`。 |
-| **队友 1（硬件仿真引擎强化与广范围压测）** | 扩展网页端纯 TS Verilog 语法子集与异常容错、补齐逐级播报 `levelNarrations` / 电路元数据 / `tb_top.v` 导出、广范围跨电路与异常压测 | `src/engine/`、`tests/engine.test.ts` | 通过 `createRtlEngine()` 交付增强版引擎。运行 `npm run test:engine`，第二轮目标 ≥ 120 条回归与鲁棒性测试。 |
-| **队友 2（AI 智能体：多模型适配 + 联网查阅 + 多轮修改）** | 透传模型切换并适配国产模型输出、接入 `WebResearchClient` 联网搜索与网页读取（含降级）、多轮增量对话修改、真实模型评测与参赛文案 | `src/agent/`、`tests/agent.test.ts` | 通过 `createAgentRuntime({ llm, engine, research })` 交付升级版智能体。运行 `npm run test:agent`。 |
+| **队长（全栈统筹 + 板卡配置与大屏 UI + 按项目限流 + 部署）** | 维护 V3 冻结契约、云函数改为每 IP/浏览器每日 6 次且按 `runId` 单项目扣 1 次、左侧「诊所」重构为「板卡配置」、中间主视区 16×8 OLED Canvas 屏幕（可切回门级网表）与高速档位、Web Audio 蜂鸣器与 Qoder Sites 部署 | `src/types/`、`src/components/`、`src/services/`、`src/App.tsx`、`functions/` | 提供 `LLMClient`（含 `runId`）与 `WebResearchClient`，在工作台接入 `RtlEngine` 与 `AgentRuntime`。运行 `npm run build`、`npm run test:platform`。 |
+| **队友 1（硬件仿真引擎 V3：数组 + 显存/蜂鸣器外设 + 批量步进）** | 扩展纯 TS Verilog 解析与仿真支持 1D/2D 定长寄存器数组、接入 `tone`/`screen_*` 可选端口与 128 字节确定性显存、实现 `stepBatch` 高速步进、`expectTone`/`expectScreen` 自测断言、`MEM` 网表聚合与 `tb_top.v` 同步升级 | `src/engine/`、`tests/engine.test.ts` | 通过 `createRtlEngine()` 交付 V3 引擎（100% 兼容 V1/V2）。运行 `npm run test:engine`，第三轮目标 ≥ 160 条全量测试。 |
+| **队友 2（AI 智能体 V3：板卡感知 Prompt + 旗舰案例，`fzd1210-beep`）** | 保持核心闭环稳定，透传 `runId` 与 `boardProfile`、按板卡启用外设动态拼接屏幕/蜂鸣器协议与数组指南、升级向量清洗支持 `expectTone`/`expectScreen`、新增 2+ 个带屏/蜂鸣器零 Token 旗舰案例与真实模型评测 | `src/agent/`、`tests/agent.test.ts` | 通过 `createAgentRuntime({ llm, engine, research })` 交付 V3 智能体。运行 `npm run test:agent`。 |
 
-第二轮开发统一从最新 `main`（含 V2 冻结契约）切出或同步各自开发分支。公共入口和自测语义见 [冻结契约](src/types/contracts.ts) 与 [协作流程](docs/GIT_WORKFLOW.md)。
+第三轮开发统一从最新 `main`（含 V3 冻结契约）切出或同步各自开发分支。公共入口、屏幕图块/音阶编码和自测语义见 [冻结契约](src/types/contracts.ts)、[数据契约说明](docs/DATA_CONTRACTS.md) 与 [协作流程](docs/GIT_WORKFLOW.md)。
 
 ---
 

@@ -1,8 +1,25 @@
-// 冻结契约：字段变更须在群内同步，由队长统一修改本文件。
+// 冻结契约（V3 · 第三轮冻结版）：字段变更须在群内同步，由队长统一修改本文件。
+// V3 全部新增字段、类型与方法均保持可选或超集扩展，100% 向后兼容 V1/V2 代码与既有单测。
 
 // ============================================================
-// 1. 虚拟 FPGA 开发板硬件接口（队长 UI <-> 队友 1 仿真器）
+// 1. 虚拟 FPGA 开发板硬件接口与板卡配置（队长 UI <-> 队友 1 仿真器 <-> 队友 2 Agent）
 // ============================================================
+
+export type BoardPeripheralId = 'led' | 'traffic' | 'seg' | 'tone' | 'screen';
+
+export type BoardProfileId = 'classic' | 'display' | 'arcade' | 'custom';
+
+export interface BoardProfile {
+  id: BoardProfileId;
+  name: string;
+  description?: string;
+  peripherals: BoardPeripheralId[];
+  primaryView?: 'netlist' | 'screen'; // 有屏板卡默认在中间主视区优先展示屏幕，仍可切回门级网表
+}
+
+export const BOARD_SCREEN_COLS = 16;
+export const BOARD_SCREEN_ROWS = 8;
+export const BOARD_SCREEN_CELLS = BOARD_SCREEN_COLS * BOARD_SCREEN_ROWS; // 128 格（每格 8x8 像素，等效 128x64 OLED）
 
 export interface BoardInputs {
   rst_n: 0 | 1;        // 1=正常工作, 0=低电平复位
@@ -16,11 +33,28 @@ export interface BoardOutputs {
   seg: number;         // 16-bit, 4个4-bit BCD/Hex数码管（高位在左）
 }
 
+// V3 可选 16x8 屏幕单拍写/清指令端口快照（对应 Verilog 可选输出端口 screen_x/y/data/cmd）
+// screen_cmd: 2'b00=无操作, 2'b01=写入 (x,y)=data, 2'b10=整屏清屏, 2'b11=整屏清屏并立即写入 (x,y)=data
+// screen_data: 0x00=空白, 0x20..0x7E=ASCII 字符, 0x80..0x9F=内置 8x8 像素图块
+export interface ScreenPortOutputs {
+  x: number;           // 4-bit (0..15), 对应 screen_x
+  y: number;           // 3-bit (0..7),  对应 screen_y
+  data: number;        // 8-bit (0..255), 对应 screen_data
+  cmd: number;         // 2-bit (0..3),  对应 screen_cmd
+}
+
+export interface BoardExtendedOutputs {
+  tone?: number;              // 4-bit (0..15), 对应 tone：0=静音, 1..15=音阶/提示音编码
+  screen?: ScreenPortOutputs; // 16x8 字符/图块 OLED 屏幕指令端口
+}
+
 export interface SignalSample {
   cycle: number;
   inputs: BoardInputs;
   outputs: BoardOutputs;
   internals: Record<string, number>; // 关键内部寄存器/状态机当前值（供示波器展示）
+  extendedOutputs?: BoardExtendedOutputs; // V3：启用蜂鸣器/屏幕时返回
+  screenBuffer?: number[];                // V3：启用屏幕时返回长度 128 的扁平显存快照 (index = y * 16 + x)
 }
 
 // ============================================================
@@ -38,6 +72,7 @@ export type GateKind =
   | 'CMP'
   | 'ADD'
   | 'DFF'
+  | 'MEM'
   | 'CONST'
   | 'BUS'
   | 'RTL';
@@ -89,7 +124,8 @@ export type LintRuleCode =
   | 'INFERRED_LATCH'
   | 'UNDRIVEN_OR_UNASSIGNED'
   | 'MULTI_DRIVER'
-  | 'UNSIGNED_ARITH_SHIFT';
+  | 'UNSIGNED_ARITH_SHIFT'
+  | 'ARRAY_BOUNDS_OR_DIM';
 
 export interface LintIssue {
   code: LintRuleCode;
@@ -100,20 +136,31 @@ export interface LintIssue {
   hint: string;        // 修复建议
 }
 
+export interface ScreenCellExpectation {
+  x: number;           // 0..15
+  y: number;           // 0..7
+  code: number;        // 0x00 空白 / 0x20..0x7E ASCII / 0x80..0x9F 内置图块
+}
+
 // 自测语义：先 compile + reset，再按数组顺序每条执行一次 step(inputs)（一个上升沿），
-// 用该次 step 返回的 outputs 比对 expect。cycle 必须等于数组下标（从 0 开始），与 SignalSample.cycle 一致。
+// 用该次 step 返回的 outputs（及 V3 可选 tone / screenBuffer）比对断言。cycle 必须等于数组下标（从 0 开始）。
 export interface TestVectorStep {
   cycle: number;
   inputs: BoardInputs;
-  expect?: Partial<BoardOutputs>; // 只检查关心的输出字段
-  note?: string;                  // 该拍检查意图，如 "按下KEY0后应强制红灯亮"
+  expect?: Partial<BoardOutputs>;          // 只检查关心的经典板卡输出字段（led / traffic / seg）
+  expectTone?: number;                     // V3 可选：蜂鸣器音阶期望值 (0..15)
+  expectScreen?: ScreenCellExpectation[];  // V3 可选：16x8 显存指定坐标期望值
+  note?: string;                           // 该拍检查意图，如 "按下KEY0后应强制红灯亮"
 }
+
+export type SelfTestSignalKey = keyof BoardOutputs | 'tone' | 'screen';
 
 export interface SelfTestFailure {
   cycle: number;
-  signal: keyof BoardOutputs;
+  signal: SelfTestSignalKey;
   expected: number;
   actual: number;
+  screenCoord?: { x: number; y: number };  // V3：signal === 'screen' 时指明首个失配格子坐标
   note?: string;
 }
 
@@ -137,11 +184,18 @@ export interface SignalDescriptor {
   width: number;
 }
 
+export interface ArrayDescriptor {
+  name: string;
+  elementWidth: number;
+  dimensions: number[]; // 如 [16] 或 [8, 16]
+}
+
 export interface CircuitMetadata {
   moduleName: string;
   usedInputs: Array<'rst_n' | 'key' | 'sw'>;
-  usedOutputs: Array<'led' | 'traffic' | 'seg'>;
+  usedOutputs: BoardPeripheralId[];    // V3 扩展：支持 'led' | 'traffic' | 'seg' | 'tone' | 'screen'
   internalSignals: SignalDescriptor[]; // 内部关键寄存器/信号及位宽，供波形示波器自动展开
+  arrays?: ArrayDescriptor[];          // V3 可选：电路中声明的定长寄存器数组元数据
 }
 
 export interface CompileResult {
@@ -159,6 +213,15 @@ export interface RtlEngine {
   step(inputs: BoardInputs): {
     sample: SignalSample;
     netlist: NetlistGraph;
+  };
+  // V3 可选：单帧内连续步进多个周期（仅在末拍重算网表），用于带屏小游戏/高速刷屏提速
+  stepBatch?(
+    inputs: BoardInputs,
+    steps: number
+  ): {
+    sample: SignalSample;
+    netlist: NetlistGraph;
+    waveformDelta?: SignalSample[];
   };
   runSelfTest(
     code: string,
@@ -244,9 +307,11 @@ export interface PresetProject {
   verilogCode: string;
   testVectors: TestVectorStep[];
   bugs: BugClinicCase[];      // 该工程自带的故障诊所关卡
-  category?: string;          // 案例分类，如 "状态机" / "计数器" / "数字接口"
+  category?: string;          // 案例分类，如 "状态机" / "计数器" / "屏显互动" / "小游戏"
   difficulty?: 'beginner' | 'intermediate' | 'advanced';
-  boardHint?: 'traffic' | 'lock' | 'counter' | 'general';
+  boardHint?: 'traffic' | 'lock' | 'counter' | 'general' | 'display' | 'arcade';
+  boardProfileId?: BoardProfileId;           // V3 可选：推荐切换的板卡配置方案
+  requiredPeripherals?: BoardPeripheralId[]; // V3 可选：该案例实际依赖的板卡外设清单
 }
 
 // ============================================================
@@ -294,6 +359,7 @@ export interface LLMCallOptions {
   jsonMode?: boolean;
   signal?: AbortSignal;       // 用户取消或超时中断
   model?: string;             // 可选：单次请求覆盖当前模型（供对话内实时切换）
+  runId?: string;             // V3 可选：同一次项目生成/修改/诊断闭环共享 ID，云函数按项目扣 1 次额度
   onDelta?: (chunk: string) => void; // 可选：流式文本增量回调
   onReasoningDelta?: (chunk: string) => void; // 可选：推理模型思考过程流式回调
 }
@@ -384,6 +450,8 @@ export interface HarnessRunOptions {
   onReasoningDelta?: (stage: HarnessStage, reasoning: string, round?: number) => void;
   signal?: AbortSignal;
   model?: string;                  // 用户在对话中选中的模型
+  runId?: string;                  // V3 可选：透传给本轮所有 llm.chat 调用，实现整轮闭环只扣 1 次额度
+  boardProfile?: BoardProfile;     // V3 可选：当前板卡配置与启用外设，驱动动态 Prompt 与端口协议
   previousContext?: HarnessPreviousContext; // 多轮增量修改上下文
   enableWebResearch?: boolean;     // 是否允许在不确定或修复受阻时联网查阅
 }
@@ -414,6 +482,8 @@ export interface DiagnoseInput {
 export interface AgentActionOptions {
   signal?: AbortSignal;
   model?: string;
+  runId?: string;              // V3 可选：按次计费去重 ID
+  boardProfile?: BoardProfile; // V3 可选：当前启用板卡配置
 }
 
 export interface AgentRuntime {

@@ -129,68 +129,70 @@ module top (
 
 ---
 
-## 3. 第二轮（Round 2）三人团队分工责任书与零冲突协作
+## 3. 第三轮（Round 3 · V3 契约）升级计划与三人团队分工责任书
 
-> **开发基线说明**：第一轮（首版三端联调）已合入 `main` 并通过 108 项自动化测试。第二轮所有开发工作**统一基于当前 `main` 最新版本（含 V2 冻结契约）** 启动。
+> **开发基线说明**：第二轮全部三端开发、全链路 SSE 流式体验、NVIDIA 深浅主题、产品宣传页、双渠道容灾与双重额度保护已合入 `main` 最终版（`baf3004`），自动化单测达到 **217/217 全部通过**、`npm run build` 全绿。第三轮所有开发工作**统一基于当前 `main`（含 V3 冻结契约）** 启动。
 >
-> **零冲突铁律**：保持目录所有权不变——所有 Web 框架、页面布局、SVG 渲染、API 设置与云函数部署收拢到队长；队友 1 专注 `src/engine/` 与 `tests/engine.test.ts`；队友 2 专注 `src/agent/` 与 `tests/agent.test.ts`，不跨界修改他人业务代码。
+> **第三轮核心升级目标（V3）**：
+> 1. **可扩展虚拟板卡与大屏互动体验**：左侧导航栏原「诊所」升级为「板卡配置」（保留故障诊所入口），新增 **16×8 字符/图块混合屏幕（每格 8×8 像素，视觉等效 128×64 宽屏 OLED）** 与 **4-bit 板载蜂鸣器**；带屏电路自动在**中间最大主视区**渲染高清 Canvas 屏幕（同时保留随时切回「门级网表」Tab），让 FPGAgent 既能展示多行文字终端，又能流畅运行贪吃蛇、跑酷、打砖块等真实 Verilog 小游戏。
+> 2. **引擎 V3 硬件能力跃升**：补齐 **1D/2D 定长寄存器数组** 解析与仿真、128 字节确定性显存状态机、`stepBatch` 单帧多拍高速步进（彻底解决刷屏慢与小游戏卡顿）、`MEM` 网表聚合节点，以及 `expectTone`/`expectScreen` 自测断言。
+> 3. **站点体验与按项目扣次限流**：默认免费额度调整为 **每 IP / 每浏览器每日 6 次**，按 `runId` 对同一轮项目生成/修改/修复闭环只扣 **1 次**（不再按内部多次 `llm.chat` 重复扣次）。
+>
+> **零冲突铁律**：保持目录所有权不变——队长负责契约、云函数、服务层与全部前端 UI/大屏/音频；队友 1 专注 `src/engine/` 与 `tests/engine.test.ts`；队友 2（GitHub: `fzd1210-beep`）专注 `src/agent/` 与 `tests/agent.test.ts`，核心 Agent 编排保持稳定不大改，重点聚焦板卡感知提示词、断言清洗、透传与新旗舰案例。
 
-### 3.1 队长（全栈统筹 + 网页 UI/布局重构 + 多服务商 API/模型切换 + 云函数与部署）
-- **专属目录**：`src/types/contracts.ts`、`src/services/`、`src/components/`、`src/App.tsx`、`functions/`、`tests/platform.test.ts`、`vite.config.ts`
-- **第二轮工作清单**：
-  1. **冻结 V2 契约与服务层升级（`src/types/contracts.ts` + `src/services/`）**：
-     - 维护 V2 向后兼容契约，为队友 1 暴露 `levelNarrations`、`CircuitMetadata`、`exportTestbench`，为队友 2 暴露 `LLMProviderPreset`、`LLMModelOption`、`LLMClient.listModels/testConnection`、`WebResearchClient` 及多轮上下文/模型透传字段；
-     - 在 `src/services/` 内置国内常用 API 服务商预设（DeepSeek、智谱 GLM、通义千问 DashScope、硅基流动 SiliconFlow、月之暗面 Kimi、自定义 OpenAI 兼容 + 站点默认），支持自动拉取 `/models` 模型列表（失败时优雅回退到预设推荐模型）、一键测试连接耗时，并支持按次覆盖 `model` 参数；
-     - 实现浏览器端 `WebResearchClient`（经 Qoder Sites 云函数 `/research` 代理），注入 `createAgentRuntime({ llm, engine, research })`。
-  2. **设置面板与网页整体布局改版（`src/components/` + `src/App.tsx`）**：
-     - **设置面板重构**：提供服务商预设一键切换（免手填 Base URL）、API Key 输入、自动刷新并选择模型、一键测连反馈、站点默认剩余额度状态以及“联网查阅 Verilog 规范”开关；
-     - **对话内模型选择与切换**：在首页与工作台对话输入区直接提供模型下拉选择器与联网状态切换，切换模型后即时生效于下一轮生成、追问与诊断；
-     - **整体布局与第二轮核心功能补齐**：优化对话区、画布区、板卡/波形区的布局比例与操作流畅度；开放全部 5 个预置案例的按需选择入口；接通「故障诊所」完整闭环 UI（注入故障 → 观察板卡异常与波形标红 → 三档苏格拉底提示 → 一键修复复测）；将蓝图中的 Mermaid 状态图真正渲染为可视图形（非纯源码）；接入代码导出（`.v` + `tb_top.v`）。
-  3. **门级逐级动画与元数据联动**：
-     - 消费队友 1 的 `NetlistGraph.levelNarrations` 与拓扑层级 `level`/`changed`，在 `0.2x` 慢动作和单步模式下实现导线与逻辑门按层逐级发光与白话播报，并让波形光标与当前拍状态联动；
-     - 消费 `CompileResult.metadata`，动态突出当前电路实际使用的板卡外设并在示波器自动展开内部关键寄存器。
-  4. **云函数扩展与 Qoder Sites 公网交付（`functions/`）**：
-     - 扩展 `functions/` 支持 `/agent`（透传可选模型）、`/models`（辅助获取存在 CORS 限制的服务商模型列表）与 `/research`（联网检索 + 网页正文提取，带 SSRF 防护、域名/协议校验、正文截断与频率限流）；
-     - 完成 Qoder Sites 公网部署、服务端 Secret 配置，并在无痕浏览器验收“免 Key 跑预设 + 免 Key 生成新电路 + 自带国内 API 选模型对话”。
-- **队长验收标准**：`npm run build`、`npm run test:platform` 与 `npm test` 全部通过；浏览器验收设置面板预设切换、模型拉取与对话内切换、5 个案例与故障诊所、慢动作逐级信号流、公网无痕访问无报错。
+### 3.1 队长（契约与按项目限流 + 左侧板卡配置 + 中间主视区 16×8 屏幕与蜂鸣器 UI + 联调部署，`feat/ui-core`）
+- **专属目录**：`src/types/contracts.ts`、`src/services/`、`src/components/`、`src/App.tsx`、`functions/`、`tests/function.test.ts`、`tests/llmClient.test.ts`、`tests/streaming.test.ts`、`vite.config.ts`
+- **第三轮工作清单**：
+  1. **冻结 V3 契约与按项目扣次限流（`src/types/contracts.ts` + `functions/handler.ts` + `src/services/llmClient.ts`）**：
+     - 冻结 V3 向后兼容契约（`BoardProfile`、`BoardExtendedOutputs`、`SignalSample.screenBuffer`、`ScreenCellExpectation`、`RtlEngine.stepBatch`、`GateKind: 'MEM'`、`LLMCallOptions.runId` 等）；
+     - 调整站点默认额度为 **每 IP / 每浏览器每日 6 次**（`DAILY_LIMIT_PER_IP=6`、`DAILY_LIMIT_PER_BROWSER=6`）；前端为每轮生成/修改/诊断生成唯一 `runId`，云函数按 `(主体 Key, 北京时间当日, runId)` 去重计费，确保同一次项目闭环内的多次模型调用只扣 1 次额度（同时限制单 `runId` 最多 8 次子请求防滥用），前端下拉框与设置面板同步展示 `今日剩余 X / 6 次`。
+  2. **左侧「诊所」重构为「板卡配置」面板（`src/components/` + `src/App.tsx`）**：
+     - 替换左侧栏「诊所」主入口为「板卡配置」，提供「经典教学板」「屏显终端板」「游戏创客板」3 套预设及单外设勾选（LED、交通灯、数码管、16×8 屏幕、蜂鸣器），并将当前 `BoardProfile` 透传给 Agent；
+     - 保留原有故障诊所功能作为板卡配置内或工具区的二级入口，不丢失教学排错闭环。
+  3. **中间主视区 16×8 OLED Canvas 屏幕、蜂鸣器与高速仿真档（`src/components/` + `src/App.tsx`）**：
+     - 实现 16×8 字符/图块混合屏幕 Canvas 组件（8×8 点阵 ASCII 字库 + `0x80..0x8F` 全部 16 个内置图块，遵循 [DATA_CONTRACTS.md](DATA_CONTRACTS.md) 第 2.2 节），在桌面端与移动端均可流畅满帧渲染；
+     - 当电路使用 `screen` 外设或当前板卡启用屏幕时，中间主视区默认切换到「虚拟屏幕」大视图，保留一键切回「门级网表」Tab；提供键盘方向键/WASD 及触屏方向键直连 `key[3:0]`；
+     - 接入 Web Audio API 蜂鸣器发声（严格按契约 0..15 音阶/提示音表），提供静音开关；
+     - 时钟控制栏新增高速/游戏档位，优先调用 `engine.stepBatch(inputs, steps)` 批量推进，保障刷屏和小游戏丝滑无卡顿。
+  4. **三端联调与 Qoder Sites 公网发布**：
+     - 合并 `feat/engine`、`feat/agent` 与 `feat/ui-core` 联调验证，并在确认无误后发布至 Qoder Sites 公网验收。
+- **队长验收标准**：`npm run build`、`npm run test:platform` 与全量 `npm test` 全部通过；浏览器实测按项目扣次（同 `runId` 仅扣 1 次）、板卡配置切换、16×8 大屏与门级网表互切、高速档游戏操控及蜂鸣器开关无报错。
 
-### 3.2 队友 1（硬件仿真引擎完善 + 网页移植加固 + 广范围鲁棒性测试，`feat/engine`）
+### 3.2 队友 1（引擎 V3：1D/2D 寄存器数组 + 16×8 屏幕显存 & 蜂鸣器外设 + 高速批量步进与自测，`feat/engine`）
 - **专属目录**：`src/engine/`、`tests/engine.test.ts`
-- **接口交付**：保持 `src/engine/index.ts` 导出 `createRtlEngine: RtlEngineFactory`，在 V1 能力基础上补齐 V2 契约的 `levelNarrations`、`CompileResult.metadata` 与 `exportTestbench`。使用 `npm run test:engine` 独立验收。
-- **第二轮工作清单**：
-  1. **网页端编译与仿真子集扩展（防 AI 生成新代码触发异常）**：
-     - 盘点大模型生成全新 Verilog 时常见但首版可能报错的合法语法并完善移植，重点覆盖：块注释 `/* ... */` 与行内注释、多种合法模块端口声明风格（如 `output reg [7:0] led`、非 ANSI 声明等）、`localparam`/`parameter` 常量表达式运算、拼接重复 `{4{a}}`、单目归约运算符（`&` / `|` / `^` / `~&` / `~|` / `~^`）、`casez`/`casex`、有界静态 `for` 循环展开、有符号/无符号位宽截断与符号扩展、同步/异步混合复位写法；
-     - 加固浏览器端运行安全：对组合逻辑震荡环、超深嵌套、非法字面量、数组越界、未声明信号等异常输入做到 100% 不抛未捕获异常、不卡死页面主线程，统一输出准确行号与中文修复提示的 `LintIssue`。
-  2. **V2 契约能力补齐**：
-     - `src/engine/netlist.ts`：补充 `NetlistGraph.levelNarrations`（长度覆盖 `0..maxLevel`），每层给出简洁中文播报，确保交通灯 `KEY0 → 逻辑门 → 红灯` 等路径在慢动作/单步下可逐级讲清信号流向；
-     - `src/engine/index.ts` / `parser.ts`：在 `compile()` 返回 `CompileResult.metadata`（模块名、实际用到的 `usedInputs`/`usedOutputs` 以及 `internalSignals` 内部寄存器名与位宽）；
-     - `src/engine/selftest.ts`（或独立模块）：实现 `exportTestbench(code, vectors)`，输出规范的 `tb_top.v` 代码，方便用户下载到 Vivado / Icarus Verilog 复现验证。
-  3. **广范围跨电路与异常压测（`tests/engine.test.ts`）**：
-     - 将单元测试从首版扩充至 **≥ 120 条**，构建广覆盖电路回归库（至少 10+ 类 AI 容易生成的全新电路：流水灯、模 N/BCD 计数器、PWM/分频器、简易 ALU、移位寄存器、自动售货机状态机、按键消抖、奇偶校验、译码器/编码器、抢答器等）；
-     - 增补语法边界/异常代码模糊测试（残缺语句、非法运算符、组合环、位宽溢出、多驱动、多模块/注释干扰）以及大周期仿真性能测试，确保 AI 临场生成的全新代码在网页端跑得稳、报错准。
-- **队友 1 验收标准**：`npm run test:engine` 达到 **≥ 120 条全部通过**；5 个预置案例与新增 10+ 类电路的编译、仿真、`levelNarrations`、`metadata`、`exportTestbench` 与 Lint/自测无回退全部验收通过。
+- **接口交付**：保持 `src/engine/index.ts` 导出 `createRtlEngine: RtlEngineFactory`，100% 兼容 V1/V2 既有 129 条单测，补齐 V3 数组、外设显存、`stepBatch` 与自测断言。使用 `npm run test:engine` 独立验收。
+- **第三轮工作清单**：
+  1. **1D / 2D 定长寄存器数组支持（`ast.ts` / `parser.ts` / `simulator.ts` / `linter.ts` / `netlist.ts` / `index.ts`）**：
+     - 支持 `reg [W-1:0] arr [0:N-1]` 与 `reg [W-1:0] grid [0:R-1][0:C-1]` 声明（兼容正反向边界及 `localparam` 常量表达式边界）、动态下标读写、数组元素位选/切片及有界 `for` 循环清零/初始化（将有界 `for` 迭代上限合理放宽至 256，保留防死循环保护）；
+     - 适配 `linter.ts` 对数组读写和驱动分析（不误报未驱动/锁存器，越界或非法维度报 `ARRAY_BOUNDS_OR_DIM`）；
+     - 适配 `netlist.ts` 将数组折叠为单个 `kind: 'MEM'` 存储块节点并在 `CompileResult.metadata.arrays` 透出元数据。
+  2. **16×8 屏幕显存与蜂鸣器外设仿真（`linter.ts` / `simulator.ts` / `index.ts`）**：
+     - 在 `BOARD_PORT_SPECS` 登记可选输出端口：`tone[3:0]`、`screen_x[3:0]`、`screen_y[2:0]`、`screen_data[7:0]`、`screen_cmd[1:0]`，老模块不声明时 0 报错；
+     - 在 `SimulationSession` 内置 128 字节确定性显存（`reset()` 清零，每拍收敛后按 `screen_cmd` 00/01/10/11 更新显存），启用时在 `SignalSample` 填充 `extendedOutputs` 与 `screenBuffer`，在 `metadata.usedOutputs` 中标记 `'tone'` / `'screen'`。
+  3. **高速批量步进与 V3 自测/Testbench 升级（`simulator.ts` / `index.ts` / `selftest.ts`）**：
+     - 实现 `RtlEngine.stepBatch(inputs, steps)`：单次推进 1..256 个上升沿，仅在末拍重算网表；
+     - 升级 `selftest.ts` 支持 `TestVectorStep.expectTone` 与 `expectScreen`（逐格校验 `screenBuffer[y*16+x]`，失配时准确填充 `SelfTestFailure.signal` 与 `screenCoord: { x, y }`），同步升级 `exportTestbench()` 导出包含 `tone`/`screen_*` 端口的 `tb_top.v`。
+  4. **V3 专项与性能回归测试（`tests/engine.test.ts`）**：
+     - 扩充单测至 **≥ 160 条**，覆盖 1D/2D 数组、数组越界保护、`MEM` 网表聚合、16×8 屏幕四类指令、蜂鸣器、`stepBatch` 与逐拍一致性、屏幕/蜂鸣器自测定位以及带屏小游戏长周期仿真性能测试。
+- **队友 1 验收标准**：`npm run test:engine` 达到 **≥ 160 条全部通过**，原有 129 条零回退，`npm run build` 通过。
 
-### 3.3 队友 2（AI 智能体升级：多模型切换适配 + 联网检索/网页读取 + 多轮对话与评测，`feat/agent`）
-- **专属目录**：`src/agent/`、`tests/agent.test.ts`、参赛发帖文档与素材
-- **接口交付**：保持 `src/agent/index.ts` 导出 `createAgentRuntime: AgentRuntimeFactory`，升级消费 `AgentRuntimeDeps = { llm, engine, research? }`，按 V2 `AgentRuntime` 交付模型透传、多轮修改、联网检索引用与诊断/故障注入。离线测试用替身依赖运行 `npm run test:agent`，真实模型验证使用本地 `.env.local`。
-- **第二轮工作清单**：
-  1. **多模型切换透传与国产模型输出适配**：
-     - 在 `runHarness`、`diagnose`、`injectBug` 中接收 `options.model`，透传给本轮每一次 `llm.chat({ ..., model })`，并在 `HarnessTraceEvent.meta.model` 与 `HarnessResult.modelUsed` 回传实际执行的模型名，透传 `remainingQuota`；
-     - 强化 `src/agent/prompts.ts` 提示词与 JSON 容错解析，兼容 DeepSeek（包括推理模型 `<think>...</think>` 思考段）、智谱 GLM、通义千问、Kimi 等模型在不同 `jsonMode` 策略下的输出格式，确保跨模型切换时规划、生成、修复、诊断均稳定可解析。
-  2. **联网检索与网页读取闭环（`WebResearchClient`）**：
-     - 接入可选依赖 `research?: WebResearchClient` 与运行开关 `options.enableWebResearch`；
-     - 设计轻量可靠的触发策略：当用户输入包含模型不确定的算法/协议/外设名词、显式要求查阅规范/实例、或第 1 轮编译/自测修复受阻时，进入 `researching` 阶段，调用 `research.search(query)` 查找 Verilog 规范或参考实现，并择优调用 `research.fetchPage(url)` 提取正文关键片段，压缩为精简参考上下文注入规划或修复提示词；
-     - 在 `HarnessTraceEvent.meta.sources` 和 `HarnessResult.references` 中返回检索来源，便于前端在思考轨迹和回复卡片展示可核验链接；
-     - **优雅降级铁律**：当 `research` 未注入、`enableWebResearch === false`、无有效检索结果或联网请求超时/异常时，不得中止主流程，需发出清晰降级提示并继续完成本地验证闭环。
-  3. **多轮增量对话修改与内容打磨**：
-     - 消费 `options.previousContext`（已有蓝图、Verilog、测试向量与对话历史），支持用户在当前电路基础上持续提修改需求（如“加一个夜间黄灯闪烁模式”），优先增量演进并借助既有自测向量防回退；
-     - 生成通俗易懂的 `assistantSummary`（供左侧对话展示）和规范的 `suggestedFilename`（供一键下载 `.v`）；
-     - 完善 5 个预置案例的 `category`、`difficulty`、`boardHint` 分类元数据与故障诊所关卡文案，核验全部案例与故障关在真实 `RtlEngine` 下表现准确。
-  4. **真实模型评测、单元测试与参赛素材**：
-     - 在 `tests/agent.test.ts` 补充多模型透传、`<think>`/围栏 JSON 容错、联网检索触发/网页读取/降级兜底、多轮增量修改等自动化测试（全部使用 Mock 替身，保证 `npm run test:agent` 零成本快速通过）；
-     - 使用真实国产模型（如 DeepSeek / GLM）对代表性全新电路需求（计数器、序列检测器、多轮追问等）执行端到端评测，用独立断言核验生成电路是否真正符合原需求并针对性调优 Prompt；
-     - 整理天池参赛帖素材（5 步上手指南、Known Limitations、单测通过率证据与 Qoder 协作截图汇总）。
-- **队友 2 验收标准**：`npm run test:agent` 全部通过（Mock 下覆盖模型切换、联网搜索与降级、多轮修改及全部 5 案例/故障库校验）；完成真实模型实测记录并输出可复现的 Prompt 调优结论。
+### 3.3 队友 2（Agent V3：板卡感知动态 Prompt + V3 断言校验 + `runId` 透传 + 屏显/蜂鸣器旗舰案例，`feat/agent`，GitHub: `fzd1210-beep`）
+- **专属目录**：`src/agent/`、`tests/agent.test.ts`、参赛文档素材
+- **接口交付**：保持 `src/agent/index.ts` 导出 `createAgentRuntime: AgentRuntimeFactory`，**核心 Harness 闭环流程不大改**，按 V3 契约补齐 `runId`/`boardProfile` 透传、动态外设提示词、新向量解析与旗舰预置案例。使用 `npm run test:agent` 独立验收。
+- **第三轮工作清单**：
+  1. **轻量透传与屏幕失配诊断（`harness.ts` / `bugClinic.ts`）**：
+     - 接收并透传 `options.runId` 至本轮全部 `llm.chat` 调用，配合云函数按项目扣 1 次额度；
+     - 接收 `options.boardProfile` 传入 Prompt 构造器；在自测失败描述与修复上下文中展示 `tone` 与 `screen(x,y)`（消费 `SelfTestFailure.screenCoord`）失配详情。
+  2. **板卡感知动态 Prompt 与向量清洗升级（`prompts.ts`）**：
+     - 按 `boardProfile.peripherals` 动态拼接端口清单：经典板卡保持精简 8 端口模板不干扰一次通过率；启用 `tone` / `screen` 时动态注入 [DATA_CONTRACTS.md](DATA_CONTRACTS.md) 的音阶表、16×8 显存命令协议、`0x80..0x8F` 全部内置图块编码表，以及“善用定长 `reg` 数组 + 增量刷新减少全屏重绘”的编码规范；
+     - 升级 `normalizeTestVectors` 放行并严格校验 `expectTone`（0..15）与 `expectScreen`（`x: 0..15`、`y: 0..7`、`code: 0..255`）。
+  3. **新增 V3 带屏/蜂鸣器零 Token 旗舰案例（`presets.ts` / `mockPresets.ts` / `bugClinic.ts`）**：
+     - 为既有 5 个经典案例补齐 `boardProfileId: 'classic'` 并保持 100% 兼容；
+     - 新增至少 2 个带 16×8 屏幕 + 蜂鸣器的零 Token 旗舰演示案例（例如「像素跑酷 / 迷你贪吃蛇小游戏」与「交互式电子琴 / 文字状态终端」），配套完整蓝图、Verilog、V3 自测向量与故障诊所关卡，标注 `boardProfileId` 与 `requiredPeripherals`。
+  4. **离线单测、真实模型实测与参赛素材完善（`tests/agent.test.ts` + `docs/REAL_MODEL_EVAL.md`）**：
+     - 补充离线单测覆盖 `runId` 全程透传、不同 `boardProfile` 动态 Prompt 差异、`expectTone`/`expectScreen` 校验清洗、`screenCoord` 修复引导及新案例结构校验；
+     - 用真实模型实测文字显示与小游戏电路生成并打磨 Prompt，同步更新参赛展示素材。
+- **队友 2 验收标准**：`npm run test:agent` 全部离线通过；真实模型对文字看板与小游戏类需求的生成与自测收敛记录完整清晰。
 
 ---
 
@@ -198,11 +200,12 @@ module top (
 
 | 里程碑 | 状态 | 核心目标 | 参与人 | 验收出口 |
 | --- | --- | --- | --- | --- |
-| **R1（M0–M2）· 首版三端联调基线** | 已完成 | 完成骨架、引擎 V1、Agent V1、前端三栏工作台并合并到 `main`（`3433a06`） | 全体成员 | `npm test` 108/108 通过，`npm run build` 通过，本地两条预设与工作台跑通 |
-| **R2-0 · V2 契约与分工冻结** | 当前阶段 | 基于最新 `main` 升级 `src/types/contracts.ts`、契约文档、责任书与开工提示词并合并至 `main` | 队长 | V2 类型 100% 向后兼容，`npm test` 与 `npm run build` 保持全绿 |
-| **R2-1 · 第二轮三线并行开发** | 下一阶段 | 队长做 API 预设/自动拉模型/对话切模型/UI 布局与云端检索代理；队友 1 强化引擎子集、逐级播报、导出 TB 与 120+ 广范围压测；队友 2 接多模型透传、联网查阅/网页读取与多轮修改 | 三人并行 | 各自基于最新 `main` 在 `feat/ui-core`、`feat/engine`、`feat/agent` 通过独立模块验收 |
-| **R2-2 · 第二轮联调与真实模型验收** | 待开始 | 合并三分支到 `main`，真引擎 + 真模型（DeepSeek/GLM 等）+ 云端联网查阅 + 慢动作逐级动画 + 故障诊所全链路联调 | 全体成员 | 选国内 API 一键拉模型并对话切换；全新需求走通联网查阅/生成/自测修复/逐级亮灯；故障诊所闭环可用 |
-| **R2-3 · Qoder Sites 公网发布与参赛交付** | 待开始 | 公网部署 Qoder Sites，配置默认模型、限流与联网代理；无痕模式验收免 Key 体验；发天池论坛帖 | 队长主部署 + 队友 2 整文案 | 公网链接秒开、5 步内跑通、无痕免 Key 与 BYOK 均可用、论坛提交审核通过 |
+| **R1（M0–M2）· 首版三端联调基线** | 已完成 | 完成骨架、引擎 V1、Agent V1、前端三栏工作台并合并到 `main`（`3433a06`） | 全体成员 | `npm test` 108/108 通过，`npm run build` 通过 |
+| **R2（R2-0 ~ R2-2）· 第二轮最终版** | 已完成 | 完成 V2 契约、多服务商与双渠道容灾、全链路 SSE 流式、NVIDIA 深浅主题、产品宣传页、Verilog 语法高亮、129 条引擎单测与联网查阅，合入 `main`（`baf3004`） | 全体成员 | `npm test` 217/217 通过，`npm run build` 通过，本地浏览器全链路验收通过 |
+| **R3-0 · V3 契约与第三轮分工冻结** | 当前阶段 | 升级 `src/types/contracts.ts` 至 V3（100% 向后兼容），发布 V3 契约文档、升级计划与第三轮三人分工提示词并推送至 `main` | 队长 | V3 契约零破坏，`npm test` 217/217 与 `npm run build` 保持全绿 |
+| **R3-1 · 第三轮三线并行开发** | 下一阶段 | 队长做每日 6 次按项目扣次限流、左侧板卡配置、中间主视区 16×8 大屏与蜂鸣器；队友 1 做 1D/2D 数组、128B 显存/蜂鸣器外设与 `stepBatch`；队友 2 做 `runId`/板卡动态 Prompt、`expectTone`/`expectScreen` 与带屏旗舰案例 | 三人并行 | 各自基于最新 `main` 在 `feat/ui-core`、`feat/engine`、`feat/agent` 通过独立模块验收 |
+| **R3-2 · 第三轮联调与多设备/真模型验收** | 待开始 | 合并三分支到 `main`，验证经典板与带屏/游戏板全链路、桌面/移动端流畅度、真模型生成文字/小游戏与按项目扣次限流 | 全体成员 | 全量单测 ≥ 260 条通过；无痕模式与多设备运行流畅；带屏案例与自由生成小游戏均可玩可听 |
+| **R3-3 · Qoder Sites 最终公网发布与参赛交付** | 待开始 | 公网更新部署 Qoder Sites，配置双渠道 Secret 与每日 6 次限流；无痕模式验收并提交天池论坛帖 | 队长主部署 + 队友 2 整文案 | 公网链接秒开、5 步内跑通、免 Key 体验与 BYOK 均稳定、天池参赛帖提交通过 |
 
 ---
 
