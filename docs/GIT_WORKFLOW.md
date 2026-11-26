@@ -1,6 +1,6 @@
 # 团队 Git 协同开发指南（防冲突版）
 
-本仓库地址：`https://github.com/CyberWei922/qoderationability`
+本仓库地址：`https://github.com/CyberWei922/FPGAgent`
 
 ---
 
@@ -22,8 +22,8 @@
 
 ```bash
 # 首次克隆后进入仓库，安装依赖并验证 M0 基线
-git clone https://github.com/CyberWei922/qoderationability.git
-cd qoderationability
+git clone https://github.com/CyberWei922/FPGAgent.git
+cd FPGAgent
 npm ci
 npm test
 ```

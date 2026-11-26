@@ -3,7 +3,6 @@ import {
   ChevronRight,
   Copy,
   Download,
-  Info,
   LayoutGrid,
   LockKeyhole,
   Moon,
@@ -24,12 +23,12 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { createAgentRuntime } from './agent';
-import { AboutModal } from './components/AboutModal';
 import { ApiSettings } from './components/ApiSettings';
 import { BrandWordmark } from './components/BrandWordmark';
 import { ChatPane, stepKeyForTrace, type ChatTurn } from './components/ChatPane';
 import { GateCanvas } from './components/GateCanvas';
 import { NavRail, type RailTab } from './components/NavRail';
+import { ProductShowcase } from './components/ProductShowcase';
 import { BugClinicPanel, HistoryPanel, PresetsPanel } from './components/SidePanels';
 import { ClockControls, PromptComposer, SPEED_INTERVAL_MS, type ClockSpeed } from './components/TopBar';
 import { VirtualBoard } from './components/VirtualBoard';
@@ -141,7 +140,7 @@ const QUICK_PROMPTS = [
   { id: 'password-lock', prompt: '做一个四位密码锁', desc: 'SW 拨码输入 + KEY0 提交开锁', Icon: LockKeyhole },
 ];
 
-type AppView = 'home' | 'workbench';
+type AppView = 'home' | 'workbench' | 'showcase';
 type WorkbenchTab = 'canvas' | 'blueprint' | 'verilog' | 'verify';
 type Outcome = 'busy' | 'ready' | 'cancelled' | 'failed';
 
@@ -157,6 +156,9 @@ function parseRouteFromHash(hash: string): RouteState {
   const [pathPart, queryPart] = clean.split('?');
   const params = new URLSearchParams(queryPart ?? '');
   const segs = pathPart.split('/').filter(Boolean);
+  if (segs[0] === 'intro' || segs[0] === 'showcase' || segs[0] === 'about') {
+    return { view: 'showcase', railTab: 'chat', wbTab: 'canvas' };
+  }
   if (segs[0] === 'presets' || segs[0] === 'clinic' || segs[0] === 'history') {
     const wb = params.get('tab');
     const wbTab: WorkbenchTab =
@@ -176,6 +178,7 @@ function parseRouteFromHash(hash: string): RouteState {
 }
 
 function formatHashFromRoute(route: RouteState): string {
+  if (route.view === 'showcase') return '#/intro';
   if (route.view === 'home') return '#/';
   if (route.railTab !== 'chat') {
     return route.wbTab !== 'canvas' ? `#/${route.railTab}?tab=${route.wbTab}` : `#/${route.railTab}`;
@@ -245,7 +248,6 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<'api' | 'appearance'>('api');
-  const [aboutOpen, setAboutOpen] = useState(false);
   const [remainingQuota, setRemainingQuota] = useState<number | undefined>();
   const [homeGreeting, setHomeGreeting] = useState<string>(() => pickHomeGreeting());
 
@@ -269,8 +271,9 @@ export default function App() {
       const next: RouteState = { ...prev, ...patch };
       if (isSameRoute(prev, next)) return;
 
-      const prevHasSession = prev.view === 'workbench' || prev.railTab !== 'chat';
-      const nextHasSession = next.view === 'workbench' || next.railTab !== 'chat';
+      const crossingHomeAndWorkbench =
+        (prev.view === 'home' && next.view === 'workbench') ||
+        (prev.view === 'workbench' && next.view === 'home');
 
       const commit = () => {
         routeRef.current = next;
@@ -285,8 +288,8 @@ export default function App() {
         }
       };
 
-      if (!options.skipTransition && prevHasSession !== nextHasSession) {
-        startSpatialTransition(commit, nextHasSession ? 'enter-workbench' : 'return-home');
+      if (!options.skipTransition && crossingHomeAndWorkbench) {
+        startSpatialTransition(commit, next.view === 'workbench' ? 'enter-workbench' : 'return-home');
       } else {
         commit();
       }
@@ -300,7 +303,7 @@ export default function App() {
       const candidate = event.state as Partial<RouteState> | null;
       const next: RouteState =
         candidate &&
-        (candidate.view === 'home' || candidate.view === 'workbench') &&
+        (candidate.view === 'home' || candidate.view === 'workbench' || candidate.view === 'showcase') &&
         (candidate.railTab === 'chat' ||
           candidate.railTab === 'presets' ||
           candidate.railTab === 'clinic' ||
@@ -681,10 +684,9 @@ export default function App() {
     navigateTo({ view: 'home', railTab: 'chat', wbTab: 'canvas' });
   }
 
-  function goHome() {
+  function openShowcase() {
     setSidebarCollapsed(false);
-    setHomeGreeting((prev) => pickHomeGreeting(prev));
-    navigateTo({ view: 'home', railTab: 'chat' });
+    navigateTo({ view: 'showcase', railTab: 'chat' });
   }
 
   function updateAssistantTurn(turnId: string, updater: (prev: ChatTurn) => ChatTurn) {
@@ -1523,7 +1525,7 @@ export default function App() {
   const latest = history.at(-1);
   const lockActive = activePresetId === 'password-lock';
   const activePreset = runtime.presets.find((item) => item.id === activePresetId);
-  const hasSession = view === 'workbench' || railTab !== 'chat';
+  const hasSession = view === 'workbench';
 
   const statusBadge = useMemo(() => {
     if (!latest) return undefined;
@@ -1583,6 +1585,7 @@ export default function App() {
     >
       <NavRail
         activeTab={railTab}
+        isShowcase={view === 'showcase'}
         onSelectTab={(tab) => {
           setSidebarCollapsed(false);
           if (tab === 'chat') {
@@ -1595,7 +1598,7 @@ export default function App() {
             navigateTo({ view: 'workbench', railTab: tab });
           }
         }}
-        onGoHome={goHome}
+        onOpenShowcase={openShowcase}
         onNewChat={newChat}
         onOpenSettings={() => openSettings('api')}
         resolvedTheme={resolvedTheme}
@@ -1621,9 +1624,27 @@ export default function App() {
         />
       )}
 
-      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} />}
-
-      {!hasSession ? (
+      {view === 'showcase' ? (
+        <ProductShowcase
+          presets={runtime.presets}
+          hasActiveSession={turns.length > 0 || compiled}
+          resolvedTheme={resolvedTheme}
+          onToggleTheme={toggleLightDark}
+          onStartDesigning={() => {
+            setSidebarCollapsed(false);
+            navigateTo({ view: 'home', railTab: 'chat' });
+          }}
+          onReturnWorkbench={() => {
+            setSidebarCollapsed(false);
+            navigateTo({ view: 'workbench', railTab: 'chat' });
+          }}
+          onTryPreset={(preset) => void run(preset.prompt, preset)}
+          onOpenPresets={() => {
+            setSidebarCollapsed(false);
+            navigateTo({ view: 'workbench', railTab: 'presets' });
+          }}
+        />
+      ) : !hasSession ? (
         <main className="home-stage">
           <header className="home-topbar">
             <div className="home-brand">
@@ -1648,15 +1669,6 @@ export default function App() {
                 aria-label={resolvedTheme === 'dark' ? '切换浅色模式' : '切换深色模式'}
               >
                 {resolvedTheme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-              </button>
-              <button
-                type="button"
-                className="icon-button topbar-icon-btn"
-                onClick={() => setAboutOpen(true)}
-                title="关于 FPGAgent"
-                aria-label="关于 FPGAgent"
-              >
-                <Info size={16} />
               </button>
             </div>
           </header>

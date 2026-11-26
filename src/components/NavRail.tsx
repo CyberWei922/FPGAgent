@@ -21,8 +21,9 @@ const NAV_ITEMS: Array<{ id: RailTab; label: string; Icon: typeof MessageSquare 
 
 export function NavRail({
   activeTab,
+  isShowcase = false,
   onSelectTab,
-  onGoHome,
+  onOpenShowcase,
   onNewChat,
   onOpenSettings,
   resolvedTheme,
@@ -31,8 +32,9 @@ export function NavRail({
   hasActiveBug,
 }: {
   activeTab: RailTab;
+  isShowcase?: boolean;
   onSelectTab: (tab: RailTab) => void;
-  onGoHome: () => void;
+  onOpenShowcase: () => void;
   onNewChat: () => void;
   onOpenSettings: () => void;
   resolvedTheme: 'light' | 'dark';
@@ -44,10 +46,11 @@ export function NavRail({
     <aside className="nav-rail" aria-label="主导航">
       <button
         type="button"
-        className="rail-brand"
-        title="FPGAgent · 返回首页"
-        aria-label="FPGAgent 返回首页"
-        onClick={onGoHome}
+        className={`rail-brand${isShowcase ? ' active' : ''}`}
+        title="FPGAgent · 产品介绍"
+        aria-label="FPGAgent 产品介绍"
+        aria-current={isShowcase ? 'page' : undefined}
+        onClick={onOpenShowcase}
       >
         <CircuitBoard size={19} strokeWidth={2.1} />
       </button>
@@ -66,7 +69,7 @@ export function NavRail({
 
       <nav className="rail-nav" aria-label="功能分区">
         {NAV_ITEMS.map(({ id, label, Icon }) => {
-          const selected = activeTab === id;
+          const selected = !isShowcase && activeTab === id;
           return (
             <button
               key={id}

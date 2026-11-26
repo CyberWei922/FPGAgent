@@ -55,7 +55,7 @@ deno run --env-file=.env.local --allow-net --allow-env=LLM_API_KEY,LLM_BASE_URL,
 ## 仓库目录规划
 
 ```text
-qoderationability/
+FPGAgent/
 ├── docs/                   # 项目规划书、数据契约、Git 协同规范、Qoder 启动提示词
 ├── reference/fpga2026/     # 参考资料（仅供团队查阅提炼规则，决赛提交源码前可剥离）
 ├── src/

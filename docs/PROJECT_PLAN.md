@@ -2,7 +2,7 @@
 
 > 适用赛事：**2026 Qoder 高校创造力大赛**（天池地址：`https://tianchi.aliyun.com/competition/entrance/532536`）  
 > 参赛赛道：**StudyHack 学习科研**  
-> 协作仓库：`https://github.com/CyberWei922/qoderationability`
+> 协作仓库：`https://github.com/CyberWei922/FPGAgent`
 
 ---
 
