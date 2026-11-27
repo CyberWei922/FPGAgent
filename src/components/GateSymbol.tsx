@@ -1,3 +1,4 @@
+import { localizeGateText, useI18n } from '../services/i18n';
 import type { NetlistNode } from '../types/contracts';
 import type { SchematicNode, SchematicPin } from './schematicLayout';
 
@@ -6,7 +7,10 @@ export function signalValue(value: number, width: number): string {
 }
 
 export function GateSymbol({ node, sample }: { node: SchematicNode; sample?: NetlistNode }) {
-  const { width, height, bodyHeight, kind, pins, operator } = node;
+  const { locale } = useI18n();
+  const { width, height, bodyHeight, kind, pins } = node;
+  const rawLabel = localizeGateText(node.label, locale);
+  const operator = node.operator ? localizeGateText(node.operator, locale) : undefined;
   const left = 10;
   const right = width - 10;
   const top = 8;
@@ -17,7 +21,7 @@ export function GateSymbol({ node, sample }: { node: SchematicNode; sample?: Net
   const curved = kind === 'OR' || kind === 'XOR';
   const bow = 21;
   const textLimit = Math.floor(width / 6.1);
-  const label = node.label.length > textLimit ? `${node.label.slice(0, textLimit - 1)}…` : node.label;
+  const label = rawLabel.length > textLimit ? `${rawLabel.slice(0, textLimit - 1)}…` : rawLabel;
   const value = sample && sample.sampled !== false ? signalValue(sample.value, sample.width) : '–';
   let symbol;
 
@@ -71,7 +75,7 @@ export function GateSymbol({ node, sample }: { node: SchematicNode; sample?: Net
     return `M ${pin.x} ${pin.y} H ${contact}`;
   }
 
-  const title = kind === 'CONST' ? node.label : `${node.label} · ${kind}${value === '–' ? '' : ` = ${value}`}`;
+  const title = kind === 'CONST' ? rawLabel : `${rawLabel} · ${kind}${value === '–' ? '' : ` = ${value}`}`;
   return (
     <g className={`gate-node${sample && sample.value > 0 ? ' high' : ''}`} data-gate-kind={kind} data-gate-id={node.id} transform={`translate(${node.x} ${node.y})`}>
       <title>{title}</title>

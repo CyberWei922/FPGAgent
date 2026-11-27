@@ -11,6 +11,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useI18n } from '../services/i18n';
 import type { HarnessStage, HarnessTraceEvent, WebReference } from '../types/contracts';
 
 export interface ChatTurn {
@@ -142,6 +143,7 @@ function StepRow({
   turnRunning: boolean;
   onJumpToLine?: (line: number) => void;
 }) {
+  const { L } = useI18n();
   const hasDetails = Boolean(
     step.reasoning ||
       (step.checkpoints && step.checkpoints.length > 0) ||
@@ -204,7 +206,11 @@ function StepRow({
         >
           <span className="timeline-step-title">{step.title}</span>
           <span className="timeline-step-meta">
-            {step.codeLines !== undefined && <span className="step-meta-chip mono">{step.codeLines} 行</span>}
+            {step.codeLines !== undefined && (
+              <span className="step-meta-chip mono">
+                {L(`${step.codeLines} 行`, `${step.codeLines} lines`)}
+              </span>
+            )}
             {elapsedMs > 0 && <span className="step-elapsed mono">{formatDuration(elapsedMs)}</span>}
             {hasDetails && (
               <ChevronRight size={13} className={`step-chevron${expanded ? ' open' : ''}`} />
@@ -221,7 +227,7 @@ function StepRow({
                 {step.reasoning && (
                   <div className="step-reasoning-wrap">
                     <div className="step-sublabel">
-                      <Brain size={11} /> 思考过程
+                      <Brain size={11} /> {L('思考过程', 'Reasoning')}
                     </div>
                     <div ref={reasoningRef} className="step-reasoning-box">
                       {step.reasoning}
@@ -263,7 +269,7 @@ function StepRow({
                       onJumpToLine(step.highlightLine!);
                     }}
                   >
-                    定位至第 {step.highlightLine} 行
+                    {L(`定位至第 ${step.highlightLine} 行`, `Jump to line ${step.highlightLine}`)}
                   </button>
                 )}
               </div>
@@ -282,6 +288,7 @@ function TraceAccordion({
   turn: ChatTurn;
   onJumpToLine?: (line: number) => void;
 }) {
+  const { L } = useI18n();
   const isRunning = turn.status === 'running';
   const [expanded, setExpanded] = useState(isRunning);
   const [now, setNow] = useState(() => Date.now());
@@ -317,14 +324,20 @@ function TraceAccordion({
     ? now - firstStart
     : (turn.finishedAt ?? steps[steps.length - 1].endedAt ?? firstStart) - firstStart;
 
-  const checkText = turn.totalChecks !== undefined ? ` · 自测 ${turn.passedChecks ?? 0}/${turn.totalChecks}` : '';
+  const checkText =
+    turn.totalChecks !== undefined
+      ? L(` · 自测 ${turn.passedChecks ?? 0}/${turn.totalChecks}`, ` · Tests ${turn.passedChecks ?? 0}/${turn.totalChecks}`)
+      : '';
   const summaryLabel = isRunning
     ? `${activeStep.title}…`
     : turn.status === 'done'
-      ? `已完成 · ${steps.length} 个步骤 · 用时 ${formatDuration(totalMs)}${checkText}`
+      ? L(
+          `已完成 · ${steps.length} 个步骤 · 用时 ${formatDuration(totalMs)}${checkText}`,
+          `Completed · ${steps.length} steps · ${formatDuration(totalMs)}${checkText}`,
+        )
       : turn.status === 'cancelled'
-        ? `已停止 · 已执行 ${steps.length} 步`
-        : `执行中断 · ${activeStep.title}`;
+        ? L(`已停止 · 已执行 ${steps.length} 步`, `Stopped · ${steps.length} steps`)
+        : L(`执行中断 · ${activeStep.title}`, `Failed · ${activeStep.title}`);
 
   return (
     <div
@@ -387,6 +400,7 @@ export function ChatPane({
   onOpenSettings: () => void;
   onJumpToLine?: (line: number) => void;
 }) {
+  const { L } = useI18n();
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -394,7 +408,7 @@ export function ChatPane({
   }, [turns]);
 
   return (
-    <div className="chat-stream" role="log" aria-live="polite" aria-label="对话记录">
+    <div className="chat-stream" role="log" aria-live="polite" aria-label={L('对话记录', 'Chat transcript')}>
       {turns.map((turn) =>
         turn.role === 'user' ? (
           <div key={turn.id} className="msg-user">
@@ -416,7 +430,7 @@ export function ChatPane({
               )}
 
               {turn.references && turn.references.length > 0 && (
-                <div className="ref-list" aria-label="联网参考来源">
+                <div className="ref-list" aria-label={L('联网参考来源', 'Web references')}>
                   {turn.references.map((ref, idx) => (
                     <a
                       key={`${ref.url}-${idx}`}
@@ -442,7 +456,10 @@ export function ChatPane({
                     <div className="artifact-info">
                       <div className="artifact-name mono">{turn.filename}</div>
                       <div className="artifact-meta">
-                        V{turn.version ?? 1} · 门级网表已上板
+                        {L(
+                          `V${turn.version ?? 1} · 门级网表已上板`,
+                          `V${turn.version ?? 1} · Live on board`,
+                        )}
                         {turn.modelUsed ? ` · ${turn.modelUsed}` : ''}
                       </div>
                     </div>
@@ -453,7 +470,7 @@ export function ChatPane({
                       className="mini-btn"
                       onClick={() => onOpenCode(turn.code)}
                     >
-                      <Code2 size={12} /> 源码
+                      <Code2 size={12} /> {L('源码', 'Code')}
                     </button>
                     <button
                       type="button"
@@ -470,11 +487,11 @@ export function ChatPane({
                 <div className="fail-actions">
                   {(turn.errorCode === 'NOT_CONFIGURED' || turn.errorCode === 'QUOTA_EXCEEDED' || turn.errorCode === 'NETWORK') && (
                     <button type="button" className="mini-btn" onClick={onOpenSettings}>
-                      <Settings2 size={12} /> 检查 API 设置
+                      <Settings2 size={12} /> {L('检查 API 设置', 'Check API Settings')}
                     </button>
                   )}
                   <button type="button" className="mini-btn" onClick={onOpenVerify}>
-                    查看自测详情
+                    {L('查看自测详情', 'Inspect Self-Test')}
                   </button>
                 </div>
               )}

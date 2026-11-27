@@ -169,13 +169,37 @@ ${JSON_ONLY}
 // 各动作的 User Message 构造
 // ============================================================
 
+const EN_OUTPUT_DIRECTIVE =
+  '\n\nLANGUAGE REQUIREMENT: The user interface is currently set to English. Write ALL human-readable JSON fields (blueprint.title, blueprint.summary, blueprint.behaviors, blueprint.pinMappings[].role, testVectors[].note, explanation, and FSM transition labels) in clear, natural English. Keep Verilog code, module name "top", and standard port names unchanged.';
+
+function systemPromptFor(action: AgentAction, locale?: 'zh' | 'en'): string {
+  const base = ACTION_SYSTEM_PROMPTS[action];
+  return locale === 'en' ? `${base}${EN_OUTPUT_DIRECTIVE}` : base;
+}
+
+export const DEFAULT_CLOCK_INTERVAL_MS = 100;
+
+export function formatClockTimingNote(clockIntervalMs: number = DEFAULT_CLOCK_INTERVAL_MS): string {
+  const ms =
+    Number.isFinite(clockIntervalMs) && clockIntervalMs > 0
+      ? Math.round(clockIntervalMs)
+      : DEFAULT_CLOCK_INTERVAL_MS;
+  const cyclesPerSec = Number((1000 / ms).toFixed(2));
+  const modeLabel = ms >= 500 ? '慢动作档' : '实时默认档';
+  return `当前仿真时钟档位：${modeLabel}，每个时钟上升沿（1 拍）= ${ms}ms（约 ${cyclesPerSec} Hz，即 ${cyclesPerSec} 拍 = 1 秒）。
+- 仅当用户需求涉及现实时间（如“每秒跳一次”“1 秒倒计时”“秒表”“每隔 N 秒切换”）时，请按每拍 ${ms}ms 换算分频或显示精度（例如 100ms/拍时 10 拍 = 1 秒、秒表个位可代表 0.1 秒；500ms/拍时 2 拍 = 1 秒），并确保自测向量的周期数与分频逻辑严格一致。
+- 若用户需求未涉及现实时间（或已直接按“拍”描述节奏），无需强行增加时间分频，按逻辑拍数实现即可。`;
+}
+
 export interface PlanMessageOptions {
   previousContext?: HarnessPreviousContext;
   researchNotes?: string;
+  clockIntervalMs?: number;
+  locale?: 'zh' | 'en';
 }
 
 export function buildPlanMessages(prompt: string, options: PlanMessageOptions = {}): ChatMessage[] {
-  const blocks: string[] = [];
+  const blocks: string[] = [formatClockTimingNote(options.clockIntervalMs)];
   const context = options.previousContext;
   if (context) {
     const history = (context.history ?? []).slice(-8);
@@ -195,7 +219,7 @@ export function buildPlanMessages(prompt: string, options: PlanMessageOptions = 
   if (options.researchNotes) blocks.push(options.researchNotes);
   const extra = blocks.length > 0 ? `\n\n${blocks.join('\n\n')}` : '';
   return [
-    { role: 'system', content: ACTION_SYSTEM_PROMPTS.plan },
+    { role: 'system', content: systemPromptFor('plan', options.locale) },
     {
       role: 'user',
       content: `硬件需求：\n${prompt.trim()}${extra}\n\n请按 Schema 输出严格 JSON（不要 Markdown 代码围栏）。`,
@@ -206,6 +230,8 @@ export function buildPlanMessages(prompt: string, options: PlanMessageOptions = 
 export interface GenerateMessageExtras {
   previousCode?: string;
   researchNotes?: string;
+  clockIntervalMs?: number;
+  locale?: 'zh' | 'en';
 }
 
 export function buildGenerateMessages(
@@ -213,14 +239,14 @@ export function buildGenerateMessages(
   testVectors: TestVectorStep[],
   extras: GenerateMessageExtras = {},
 ): ChatMessage[] {
-  const blocks: string[] = [];
+  const blocks: string[] = [formatClockTimingNote(extras.clockIntervalMs)];
   if (extras.previousCode) {
     blocks.push(`上一版可运行代码（在其基础上增量修改）：\n\`\`\`verilog\n${extras.previousCode}\n\`\`\``);
   }
   if (extras.researchNotes) blocks.push(extras.researchNotes);
   const extra = blocks.length > 0 ? `\n\n${blocks.join('\n\n')}` : '';
   return [
-    { role: 'system', content: ACTION_SYSTEM_PROMPTS.generate },
+    { role: 'system', content: systemPromptFor('generate', extras.locale) },
     {
       role: 'user',
       content: `设计蓝图与自测向量：\n${JSON.stringify({ blueprint, testVectors }, null, 2)}${extra}\n\n请输出 {"code": "..."}。`,
@@ -236,11 +262,14 @@ export interface RepairContext {
   testVectors: TestVectorStep[];
   waveformSlice?: SignalSample[];
   researchNotes?: string;
+  clockIntervalMs?: number;
+  locale?: 'zh' | 'en';
 }
 
 export function buildRepairMessages(ctx: RepairContext): ChatMessage[] {
   const { selfTest } = ctx;
   const payload = {
+    clockTimingNote: formatClockTimingNote(ctx.clockIntervalMs),
     blueprint: ctx.blueprint,
     testVectors: ctx.testVectors,
     currentCode: ctx.code,
@@ -260,7 +289,7 @@ export function buildRepairMessages(ctx: RepairContext): ChatMessage[] {
     researchNotes: ctx.researchNotes,
   };
   return [
-    { role: 'system', content: ACTION_SYSTEM_PROMPTS.repair },
+    { role: 'system', content: systemPromptFor('repair', ctx.locale) },
     {
       role: 'user',
       content: `请修复下面的电路：\n${JSON.stringify(payload, null, 2)}\n\n请输出 {"code": "...", "explanation": "..."}。`,

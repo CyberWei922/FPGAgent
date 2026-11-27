@@ -452,8 +452,10 @@ export interface HarnessRunOptions {
   model?: string;                  // 用户在对话中选中的模型
   runId?: string;                  // V3 可选：透传给本轮所有 llm.chat 调用，实现整轮闭环只扣 1 次额度
   boardProfile?: BoardProfile;     // V3 可选：当前板卡配置与启用外设，驱动动态 Prompt 与端口协议
+  clockIntervalMs?: number;        // 当前仿真时钟每拍间隔（ms），默认 100ms（10Hz），慢动作 500ms（2Hz）
   previousContext?: HarnessPreviousContext; // 多轮增量修改上下文
   enableWebResearch?: boolean;     // 是否允许在不确定或修复受阻时联网查阅
+  locale?: 'zh' | 'en';            // 可选：界面语言，控制智能体提示词与过程文案语言
 }
 
 export interface HarnessResult {
@@ -484,6 +486,7 @@ export interface AgentActionOptions {
   model?: string;
   runId?: string;              // V3 可选：按次计费去重 ID
   boardProfile?: BoardProfile; // V3 可选：当前启用板卡配置
+  locale?: 'zh' | 'en';        // 可选：界面语言
 }
 
 export interface AgentRuntime {

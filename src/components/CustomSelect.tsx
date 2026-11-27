@@ -1,5 +1,6 @@
 import { Check, ChevronDown, Search, Settings2 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { localizeModelOwnedBy, useI18n } from '../services/i18n';
 import type { LLMModelOption } from '../types/contracts';
 
 interface PopoverPos {
@@ -17,7 +18,7 @@ export function CustomModelSelect({
   value,
   onChange,
   variant = 'field',
-  placeholder = '选择模型',
+  placeholder,
   title,
   quotaNotice,
   footerAction,
@@ -33,6 +34,8 @@ export function CustomModelSelect({
   quotaNotice?: { remaining?: number; limit?: number };
   footerAction?: { label: string; onClick: () => void };
 }) {
+  const { locale, L } = useI18n();
+  const resolvedPlaceholder = placeholder ?? L('选择模型', 'Select model');
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [pos, setPos] = useState<PopoverPos | null>(null);
@@ -46,7 +49,7 @@ export function CustomModelSelect({
     ? variant === 'field' && selectedOption.label && selectedOption.label !== selectedOption.id
       ? `${selectedOption.label} (${selectedOption.id})`
       : selectedOption.label ?? selectedOption.id
-    : value || placeholder;
+    : value || resolvedPlaceholder;
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -157,7 +160,7 @@ export function CustomModelSelect({
           ref={menuRef}
           className="custom-select-menu"
           role="listbox"
-          aria-label={ariaLabel ?? '模型列表'}
+          aria-label={ariaLabel ?? L('模型列表', 'Model list')}
           style={{
             position: 'fixed',
             top: pos.top,
@@ -171,15 +174,15 @@ export function CustomModelSelect({
               className={`custom-select-quota${quotaNotice.remaining === 0 ? ' exhausted' : ''}`}
               role="status"
             >
-              <span className="custom-select-quota-label">今日剩余次数</span>
+              <span className="custom-select-quota-label">{L('今日剩余次数', 'Remaining today')}</span>
               <strong className="custom-select-quota-value">
                 {quotaNotice.remaining !== undefined
                   ? quotaNotice.limit !== undefined
-                    ? `${quotaNotice.remaining} / ${quotaNotice.limit} 次`
-                    : `${quotaNotice.remaining} 次`
+                    ? L(`${quotaNotice.remaining} / ${quotaNotice.limit} 次`, `${quotaNotice.remaining} / ${quotaNotice.limit}`)
+                    : L(`${quotaNotice.remaining} 次`, `${quotaNotice.remaining}`)
                   : quotaNotice.limit !== undefined
-                    ? `限 ${quotaNotice.limit} 次/日`
-                    : '站点默认'}
+                    ? L(`限 ${quotaNotice.limit} 次/日`, `${quotaNotice.limit}/day`)
+                    : L('站点默认', 'Site Default')}
               </strong>
             </div>
           )}
@@ -192,20 +195,23 @@ export function CustomModelSelect({
                 type="text"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="筛选模型…"
-                aria-label="筛选模型"
+                placeholder={L('筛选模型…', 'Filter models…')}
+                aria-label={L('筛选模型', 'Filter models')}
               />
             </div>
           )}
 
           <div className="custom-select-list" style={{ maxHeight: pos.maxHeight }}>
             {filtered.length === 0 ? (
-              <div className="custom-select-empty">无匹配模型</div>
+              <div className="custom-select-empty">{L('无匹配模型', 'No matching models')}</div>
             ) : (
               filtered.map((item) => {
                 const selected = item.id === value;
                 const primary = item.label && item.label !== item.id ? item.label : item.id;
-                const secondary = item.label && item.label !== item.id ? item.id : item.ownedBy;
+                const secondary =
+                  item.label && item.label !== item.id
+                    ? item.id
+                    : localizeModelOwnedBy(item.ownedBy, locale);
                 return (
                   <button
                     key={item.id}

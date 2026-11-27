@@ -43,13 +43,13 @@ const TEMPERATURE = { plan: 0.3, generate: 0.2, repair: 0.2, diagnose: 0.5 } as 
 const RESEARCH_TRIGGER = /规范|标准|协议|手册|参考实现|示例电路|查阅|搜索|AXI|APB|AHB|SPI|I2C|UART|CDC|跨时钟/i;
 
 const FILENAME_HINTS: Array<[RegExp, string]> = [
-  [/交通|红绿|路口/, 'traffic_light'],
-  [/密码|锁/, 'password_lock'],
-  [/序列/, 'sequence_detector'],
-  [/秒表|计时/, 'stopwatch'],
-  [/抢答/, 'buzzer'],
-  [/计数器/, 'counter'],
-  [/分频/, 'clock_divider'],
+  [/交通|红绿|路口|traffic|intersection/i, 'traffic_light'],
+  [/密码|锁|password|lock/i, 'password_lock'],
+  [/序列|sequence|detector/i, 'sequence_detector'],
+  [/秒表|计时|stopwatch/i, 'stopwatch'],
+  [/抢答|buzzer|quiz/i, 'buzzer'],
+  [/计数器|counter/i, 'counter'],
+  [/分频|divider/i, 'clock_divider'],
   [/PWM/i, 'pwm'],
   [/ALU/i, 'alu'],
 ];
@@ -73,7 +73,15 @@ function sliceWaveform(waveform: SignalSample[], cycle: number): SignalSample[] 
   return waveform.filter((sample) => Math.abs(sample.cycle - cycle) <= WAVEFORM_RADIUS);
 }
 
-function describeSelfTest(result: SelfTestResult): string {
+function describeSelfTest(result: SelfTestResult, locale: 'zh' | 'en' = 'zh'): string {
+  if (locale === 'en') {
+    if (result.firstUnstableCycle !== undefined) {
+      return `Combinational logic unstable at cycle ${result.firstUnstableCycle}`;
+    }
+    const failure = result.firstFailure;
+    if (!failure) return `${result.passedChecks}/${result.totalChecks} assertions passed`;
+    return `${result.passedChecks}/${result.totalChecks} passed; first failure at cycle ${failure.cycle}: ${failure.signal} expected ${failure.expected}, got ${failure.actual}`;
+  }
   if (result.firstUnstableCycle !== undefined) return `第 ${result.firstUnstableCycle} 拍组合逻辑未收敛`;
   const failure = result.firstFailure;
   if (!failure) return `${result.passedChecks}/${result.totalChecks} 项断言通过`;
@@ -127,9 +135,36 @@ interface SummaryInput {
   references: WebReference[];
   modelUsed?: string;
   filename: string;
+  locale?: 'zh' | 'en';
 }
 
 function buildAssistantSummary(input: SummaryInput): string {
+  if (input.locale === 'en') {
+    const parts: string[] = [
+      `"${input.title}" ${input.ok ? 'passed local verification.' : 'did not pass all local checks.'}`,
+    ];
+    if (input.selfTest) {
+      parts.push(`${input.selfTest.passedChecks}/${input.selfTest.totalChecks} assertions passed.`);
+      const failure = input.selfTest.firstFailure;
+      if (failure) {
+        parts.push(
+          `First failure at cycle ${failure.cycle}: ${failure.signal} expected ${failure.expected}, got ${failure.actual}.`,
+        );
+      }
+      if (input.selfTest.firstUnstableCycle !== undefined) {
+        parts.push(`Combinational logic did not converge at cycle ${input.selfTest.firstUnstableCycle}.`);
+      }
+    } else {
+      const errors = input.issues.filter((issue) => issue.severity === 'error').length;
+      if (errors > 0) parts.push(`${errors} compile error(s) remaining.`);
+    }
+    if (input.repairRounds > 0) parts.push(`Auto-repaired in ${input.repairRounds} round(s).`);
+    if (input.references.length > 0) parts.push(`Referenced ${input.references.length} web source(s).`);
+    if (input.modelUsed) parts.push(`Model: ${input.modelUsed}.`);
+    parts.push(`Downloadable file: ${input.filename}.`);
+    return parts.join(' ');
+  }
+
   const parts: string[] = [`「${input.title}」${input.ok ? '已通过本地验证' : '尚未完全通过本地验证'}。`];
   if (input.selfTest) {
     parts.push(`断言 ${input.selfTest.passedChecks}/${input.selfTest.totalChecks} 项通过。`);
@@ -169,7 +204,10 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
       model,
       previousContext,
       enableWebResearch,
+      clockIntervalMs,
+      locale = 'zh',
     } = options;
+    const tr = (zh: string, en: string) => (locale === 'en' ? en : zh);
     const researchEnabled = Boolean(research) && enableWebResearch === true;
 
     let activeModel = model;
@@ -252,7 +290,7 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
     const runResearch = async (query: string, reason: string): Promise<void> => {
       if (!research || !researchEnabled || researchAttempted) return;
       researchAttempted = true;
-      emit('researching', 'running', '联网查阅', reason);
+      emit('researching', 'running', tr('联网查阅', 'Web Lookup'), reason);
       try {
         const found = await research.search(query, { limit: RESEARCH_LIMIT, signal });
         ensureNotAborted(signal);
@@ -260,7 +298,12 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
           .filter((reference) => typeof reference?.url === 'string' && reference.url.length > 0)
           .slice(0, RESEARCH_LIMIT);
         if (candidates.length === 0) {
-          emit('researching', 'fail', '联网查阅', '未检索到可用参考资料，继续纯本地闭环');
+          emit(
+            'researching',
+            'fail',
+            tr('联网查阅', 'Web Lookup'),
+            tr('未检索到可用参考资料，继续纯本地闭环', 'No usable web sources found — continuing locally'),
+          );
           return;
         }
         references = candidates;
@@ -284,28 +327,50 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
         emit(
           'researching',
           'pass',
-          '联网查阅',
-          `检索到 ${candidates.length} 条参考资料${excerpt ? '，已读取首个网页正文' : ''}`,
+          tr('联网查阅', 'Web Lookup'),
+          tr(
+            `检索到 ${candidates.length} 条参考资料${excerpt ? '，已读取首个网页正文' : ''}`,
+            `Found ${candidates.length} reference(s)${excerpt ? ' and fetched top page' : ''}`,
+          ),
           { sources: references },
         );
       } catch (error) {
         ensureNotAborted(signal);
         const message = error instanceof Error ? error.message : String(error);
-        emit('researching', 'fail', '联网查阅', `联网查阅不可用，已降级为纯模型闭环：${message}`);
+        emit(
+          'researching',
+          'fail',
+          tr('联网查阅', 'Web Lookup'),
+          tr(
+            `联网查阅不可用，已降级为纯模型闭环：${message}`,
+            `Web lookup unavailable, falling back to model only: ${message}`,
+          ),
+        );
       }
     };
 
     try {
       ensureNotAborted(signal);
       if (researchEnabled && RESEARCH_TRIGGER.test(prompt)) {
-        await runResearch(buildResearchQuery(prompt), '需求涉及规范或参考实现，先联网查阅资料');
+        await runResearch(
+          buildResearchQuery(prompt),
+          tr('需求涉及规范或参考实现，先联网查阅资料', 'Looking up Verilog reference specifications'),
+        );
         ensureNotAborted(signal);
       }
 
-      emit('planning', 'running', '规划电路蓝图', `分析需求「${prompt}」并拆解端口、状态机与自测向量`);
+      emit(
+        'planning',
+        'running',
+        tr('规划电路蓝图', 'Plan Circuit Blueprint'),
+        tr(
+          `分析需求「${prompt}」并拆解端口、状态机与自测向量`,
+          `Analyzing "${prompt}" into ports, FSM states, and test vectors`,
+        ),
+      );
       const planResponse = await callModel(
         'plan',
-        buildPlanMessages(prompt, { previousContext, researchNotes }),
+        buildPlanMessages(prompt, { previousContext, researchNotes, clockIntervalMs, locale }),
         TEMPERATURE.plan,
         { stage: 'planning' },
       );
@@ -314,25 +379,41 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
       onBlueprint?.(plan.blueprint);
       const planCheckpoints = [
         ...plan.blueprint.behaviors.slice(0, 4).map((b, i) => `${i + 1}. ${b}`),
-        `端口映射：${plan.blueprint.pinMappings.map((p) => p.port).slice(0, 5).join(' / ')}`,
+        tr(
+          `端口映射：${plan.blueprint.pinMappings.map((p) => p.port).slice(0, 5).join(' / ')}`,
+          `Pin map: ${plan.blueprint.pinMappings.map((p) => p.port).slice(0, 5).join(' / ')}`,
+        ),
       ];
       emit(
         'planning',
         'pass',
-        '规划电路蓝图',
-        `${plan.blueprint.behaviors.length} 条行为要点 · ${plan.blueprint.pinMappings.length} 个引脚映射 · ${plan.testVectors.length} 拍自测向量`,
+        tr('规划电路蓝图', 'Plan Circuit Blueprint'),
+        tr(
+          `${plan.blueprint.behaviors.length} 条行为要点 · ${plan.blueprint.pinMappings.length} 个引脚映射 · ${plan.testVectors.length} 拍自测向量`,
+          `${plan.blueprint.behaviors.length} behaviors · ${plan.blueprint.pinMappings.length} pin mappings · ${plan.testVectors.length} test cycles`,
+        ),
         {
           checkpoints: planCheckpoints,
           ...(planResponse.reasoning ? { reasoning: planResponse.reasoning } : {}),
         },
       );
 
-      emit('coding', 'running', '编写 Verilog 源码', '按蓝图规格与端口约束生成可综合 top 模块');
+      emit(
+        'coding',
+        'running',
+        tr('编写 Verilog 源码', 'Generate Verilog RTL'),
+        tr(
+          '按蓝图规格与端口约束生成可综合 top 模块',
+          'Generating synthesizable top module aligned to board ports',
+        ),
+      );
       const generateResponse = await callModel(
         'generate',
         buildGenerateMessages(plan.blueprint, plan.testVectors, {
           previousCode: previousContext?.verilogCode,
           researchNotes,
+          clockIntervalMs,
+          locale,
         }),
         TEMPERATURE.generate,
         { stage: 'coding', streamCode: true },
@@ -344,8 +425,11 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
       emit(
         'coding',
         'pass',
-        '编写 Verilog 源码',
-        `${generatedLines} 行可综合 Verilog${generated.explanation ? ` · ${generated.explanation}` : ''}`,
+        tr('编写 Verilog 源码', 'Generate Verilog RTL'),
+        tr(
+          `${generatedLines} 行可综合 Verilog${generated.explanation ? ` · ${generated.explanation}` : ''}`,
+          `${generatedLines} lines of synthesizable Verilog${generated.explanation ? ` · ${generated.explanation}` : ''}`,
+        ),
         {
           codeLines: generatedLines,
           ...(generated.explanation ? { checkpoints: [generated.explanation] } : {}),
@@ -373,18 +457,40 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
 
       for (let round = 0; ; round += 1) {
         ensureNotAborted(signal);
-        emit('linting', 'running', 'Lint 静态体检', `检查第 ${round + 1} 版代码（${countLines(currentCode)} 行）的语法与可综合规则`, { round });
+        emit(
+          'linting',
+          'running',
+          tr('Lint 静态体检', 'Static Lint Check'),
+          tr(
+            `检查第 ${round + 1} 版代码（${countLines(currentCode)} 行）的语法与可综合规则`,
+            `Checking v${round + 1} RTL (${countLines(currentCode)} lines) against synthesizable rules`,
+          ),
+          { round },
+        );
         const compiled = engine.compile(currentCode);
         const errorCount = compiled.issues.filter((issue) => issue.severity === 'error').length;
         const lintCheckpoints =
           compiled.issues.length === 0
-            ? ['端口声明与位宽对齐通过', '0 阻塞/非阻塞混用错误 · 0 推断锁存器告警']
-            : compiled.issues.slice(0, 4).map((issue) => `第 ${issue.line} 行 [${issue.code}] ${issue.message}`);
+            ? [
+                tr('端口声明与位宽对齐通过', 'Port declarations & bit-widths verified'),
+                tr(
+                  '0 阻塞/非阻塞混用错误 · 0 推断锁存器告警',
+                  '0 blocking/non-blocking mix-ups · 0 inferred latches',
+                ),
+              ]
+            : compiled.issues
+                .slice(0, 4)
+                .map((issue) => tr(`第 ${issue.line} 行 [${issue.code}] ${issue.message}`, `L${issue.line} [${issue.code}] ${issue.message}`));
         emit(
           'linting',
           compiled.ok ? 'pass' : 'fail',
-          'Lint 静态体检',
-          compiled.issues.length === 0 ? '0 错误 · 0 告警' : `${compiled.issues.length} 条告警（${errorCount} 条 error）`,
+          tr('Lint 静态体检', 'Static Lint Check'),
+          compiled.issues.length === 0
+            ? tr('0 错误 · 0 告警', '0 errors · 0 warnings')
+            : tr(
+                `${compiled.issues.length} 条告警（${errorCount} 条 error）`,
+                `${compiled.issues.length} issues (${errorCount} errors)`,
+              ),
           {
             round,
             checkpoints: lintCheckpoints,
@@ -394,7 +500,16 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
 
         let selfTest: SelfTestResult | undefined;
         if (compiled.ok) {
-          emit('simulating', 'running', '确定性仿真自测', `运行 ${plan.testVectors.length} 拍测试向量并校验板卡输出`, { round });
+          emit(
+            'simulating',
+            'running',
+            tr('确定性仿真自测', 'Deterministic Self-Test'),
+            tr(
+              `运行 ${plan.testVectors.length} 拍测试向量并校验板卡输出`,
+              `Executing ${plan.testVectors.length} test vectors and checking board outputs`,
+            ),
+            { round },
+          );
           selfTest = engine.runSelfTest(
             currentCode,
             plan.testVectors,
@@ -405,14 +520,29 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
             .slice(0, 4)
             .map((v) => {
               const failedHere = selfTest?.firstFailure?.cycle === v.cycle || selfTest?.firstUnstableCycle === v.cycle;
-              return `${failedHere ? '✕' : '✓'} 第 ${v.cycle} 拍 · ${v.note}`;
+              return tr(
+                `${failedHere ? '✕' : '✓'} 第 ${v.cycle} 拍 · ${v.note}`,
+                `${failedHere ? '✕' : '✓'} Cycle ${v.cycle} · ${v.note}`,
+              );
             });
-          emit('simulating', selfTest.passed ? 'pass' : 'fail', '确定性仿真自测', describeSelfTest(selfTest), {
-            round,
-            ...(simCheckpoints.length > 0 ? { checkpoints: simCheckpoints } : {}),
-          });
+          emit(
+            'simulating',
+            selfTest.passed ? 'pass' : 'fail',
+            tr('确定性仿真自测', 'Deterministic Self-Test'),
+            describeSelfTest(selfTest, locale),
+            {
+              round,
+              ...(simCheckpoints.length > 0 ? { checkpoints: simCheckpoints } : {}),
+            },
+          );
         } else {
-          emit('simulating', 'fail', '确定性仿真自测', '编译未通过，跳过仿真，直接进入修复', { round });
+          emit(
+            'simulating',
+            'fail',
+            tr('确定性仿真自测', 'Deterministic Self-Test'),
+            tr('编译未通过，跳过仿真，直接进入修复', 'Compile failed — skipping simulation and starting repair'),
+            { round },
+          );
         }
 
         const candidate: Candidate = { code: currentCode, issues: compiled.issues, compiledOk: compiled.ok, selfTest };
@@ -425,7 +555,7 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
         if (researchEnabled && !researchAttempted && round >= 1) {
           await runResearch(
             buildResearchQuery(prompt, describeFailureForResearch(selfTest, compiled.issues)),
-            '首轮修复受阻，联网查阅规范后再试',
+            tr('首轮修复受阻，联网查阅规范后再试', 'First repair stalled — looking up references online'),
           );
           ensureNotAborted(signal);
         }
@@ -435,10 +565,10 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
         emit(
           'repairing',
           'running',
-          `自动修复 #${repairRounds}`,
+          tr(`自动修复 #${repairRounds}`, `Auto-Repair #${repairRounds}`),
           selfTest
-            ? `按自测结果修复：${describeSelfTest(selfTest)}`
-            : `按 ${errorCount} 条 Lint error 修复`,
+            ? tr(`按自测结果修复：${describeSelfTest(selfTest, locale)}`, `Repairing from self-test: ${describeSelfTest(selfTest, locale)}`)
+            : tr(`按 ${errorCount} 条 Lint error 修复`, `Repairing ${errorCount} lint error(s)`),
           {
             round: repairRounds,
             ...(firstIssueLine ? { highlightLine: firstIssueLine } : {}),
@@ -455,6 +585,8 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
               testVectors: plan.testVectors,
               waveformSlice,
               researchNotes,
+              clockIntervalMs,
+              locale,
             }),
             TEMPERATURE.repair,
             { stage: 'repairing', round: repairRounds, streamCode: true },
@@ -467,8 +599,11 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
           emit(
             'repairing',
             'pass',
-            `自动修复 #${repairRounds}`,
-            `候选代码 ${repairedLines} 行${repaired.explanation ? ` · ${repaired.explanation}` : ''}`,
+            tr(`自动修复 #${repairRounds}`, `Auto-Repair #${repairRounds}`),
+            tr(
+              `候选代码 ${repairedLines} 行${repaired.explanation ? ` · ${repaired.explanation}` : ''}`,
+              `Candidate ${repairedLines} lines${repaired.explanation ? ` · ${repaired.explanation}` : ''}`,
+            ),
             {
               round: repairRounds,
               codeLines: repairedLines,
@@ -479,12 +614,18 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
         } catch (error) {
           ensureNotAborted(signal);
           if (!(error instanceof LLMError) || error.code === 'ABORTED') throw error;
-          emit('repairing', 'fail', `自动修复 #${repairRounds} 中断`, error.message, { round: repairRounds });
+          emit(
+            'repairing',
+            'fail',
+            tr(`自动修复 #${repairRounds} 中断`, `Auto-Repair #${repairRounds} Interrupted`),
+            error.message,
+            { round: repairRounds },
+          );
           break;
         }
       }
 
-      if (!best) throw new LLMError('BAD_RESPONSE', '闭环没有产生任何候选代码');
+      if (!best) throw new LLMError('BAD_RESPONSE', tr('闭环没有产生任何候选代码', 'No candidate RTL was produced'));
       const winner = best;
       const ok = winner.compiledOk && !!winner.selfTest?.passed;
       const filename = suggestFilename(plan.blueprint.title, prompt);
@@ -497,6 +638,7 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
         references,
         modelUsed: activeModel,
         filename,
+        locale,
       });
       if (onAssistantDelta) {
         for (const chunk of chunkText(summary)) onAssistantDelta(chunk);
@@ -504,12 +646,20 @@ export function createHarnessAgentRuntime({ llm, engine, research }: AgentRuntim
       emit(
         ok ? 'done' : 'failed',
         ok ? 'pass' : 'fail',
-        ok ? '验证通过，可上板' : '验证未通过',
+        ok ? tr('验证通过，可上板', 'Verified & Ready') : tr('验证未通过', 'Verification Failed'),
         ok
-          ? `${winner.selfTest?.passedChecks ?? 0}/${winner.selfTest?.totalChecks ?? 0} 项断言通过，共修复 ${repairRounds} 轮`
-          : `最佳候选剩余 ${winner.issues.length} 条告警、${
-              winner.selfTest ? winner.selfTest.totalChecks - winner.selfTest.passedChecks : plan.testVectors.length
-            } 项断言未通过`,
+          ? tr(
+              `${winner.selfTest?.passedChecks ?? 0}/${winner.selfTest?.totalChecks ?? 0} 项断言通过，共修复 ${repairRounds} 轮`,
+              `${winner.selfTest?.passedChecks ?? 0}/${winner.selfTest?.totalChecks ?? 0} assertions passed (${repairRounds} repair round(s))`,
+            )
+          : tr(
+              `最佳候选剩余 ${winner.issues.length} 条告警、${
+                winner.selfTest ? winner.selfTest.totalChecks - winner.selfTest.passedChecks : plan.testVectors.length
+              } 项断言未通过`,
+              `Best candidate has ${winner.issues.length} issue(s) and ${
+                winner.selfTest ? winner.selfTest.totalChecks - winner.selfTest.passedChecks : plan.testVectors.length
+              } failing assertion(s)`,
+            ),
         { round: repairRounds },
       );
 

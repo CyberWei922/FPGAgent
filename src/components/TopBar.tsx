@@ -8,14 +8,16 @@ import {
   Square,
 } from 'lucide-react';
 import { useRef, useState, type CSSProperties } from 'react';
+import { useI18n } from '../services/i18n';
 import type { LLMModelOption } from '../types/contracts';
 import { CustomModelSelect } from './CustomSelect';
 
-export type ClockSpeed = 'realtime' | 'slow' | 'step';
+export type ClockSpeed = 'fast' | 'realtime' | 'slow' | 'step';
 
 export const SPEED_INTERVAL_MS: Record<Exclude<ClockSpeed, 'step'>, number> = {
-  realtime: 500,
-  slow: 2500,
+  fast: 65,
+  realtime: 100,
+  slow: 500,
 };
 
 export function PromptComposer({
@@ -55,6 +57,7 @@ export function PromptComposer({
   autoSubmitting?: boolean;
   viewTransitionName?: string;
 }) {
+  const { L } = useI18n();
   const [internalPrompt, setInternalPrompt] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const controlled = draftValue !== undefined;
@@ -64,8 +67,14 @@ export function PromptComposer({
     else setInternalPrompt(next);
   };
   const placeholder = compact
-    ? '继续描述修改需求，例如"把红灯延长到 8 拍"…'
-    : '描述你想做的数字电路，例如"做一个带急停按键的十字路口交通灯"…';
+    ? L(
+        '继续描述修改需求，例如"把红灯延长到 8 拍"…',
+        'Describe your changes, e.g. "extend red light to 8 cycles"…',
+      )
+    : L(
+        '描述你想做的数字电路，例如"做一个带急停按键的十字路口交通灯"…',
+        'Describe the digital circuit you want, e.g. "a traffic light with emergency red key"…',
+      );
 
   function submit() {
     const text = prompt.trim();
@@ -85,7 +94,7 @@ export function PromptComposer({
     >
       <textarea
         ref={textareaRef}
-        aria-label={compact ? '继续修改当前电路' : '电路需求'}
+        aria-label={compact ? L('继续修改当前电路', 'Refine current circuit') : L('电路需求', 'Circuit prompt')}
         placeholder={placeholder}
         rows={compact ? 2 : 3}
         maxLength={2000}
@@ -109,17 +118,17 @@ export function PromptComposer({
         <div className="composer-tools">
           {models.length > 1 || Boolean(quotaNotice) ? (
             <CustomModelSelect
-              ariaLabel="切换对话模型"
+              ariaLabel={L('切换对话模型', 'Switch model')}
               variant="inline"
               options={models}
               value={selectedModel}
               onChange={onSelectModel}
-              title={`当前服务商：${providerLabel} · ${selectedModel}`}
+              title={L(`当前服务商：${providerLabel} · ${selectedModel}`, `Provider: ${providerLabel} · ${selectedModel}`)}
               quotaNotice={quotaNotice}
-              footerAction={{ label: '管理 API 与模型…', onClick: onOpenSettings }}
+              footerAction={{ label: L('管理 API 与模型…', 'Manage API & models…'), onClick: onOpenSettings }}
             />
           ) : (
-            <div className="model-select-wrap" title={`当前服务商：${providerLabel}`}>
+            <div className="model-select-wrap" title={L(`当前服务商：${providerLabel}`, `Provider: ${providerLabel}`)}>
               <button
                 type="button"
                 className="inline-model-trigger"
@@ -135,11 +144,15 @@ export function PromptComposer({
             type="button"
             className={`tool-chip${enableWebResearch ? ' active' : ''}`}
             aria-pressed={enableWebResearch}
-            title={enableWebResearch ? '联网查阅 Verilog 规范已开启' : '联网查阅已关闭'}
+            title={
+              enableWebResearch
+                ? L('联网查阅 Verilog 规范已开启', 'Web Verilog spec lookup enabled')
+                : L('联网查阅已关闭', 'Web lookup disabled')
+            }
             onClick={onToggleWebResearch}
           >
             <Globe size={13} />
-            <span>联网</span>
+            <span>{L('联网', 'Web')}</span>
           </button>
         </div>
 
@@ -149,19 +162,19 @@ export function PromptComposer({
             <button
               className="stop-button"
               type="button"
-              aria-label="停止生成"
-              title="停止生成"
+              aria-label={L('停止生成', 'Stop generation')}
+              title={L('停止生成', 'Stop generation')}
               onClick={onCancel}
             >
               <Square size={11} fill="currentColor" />
-              <span>停止</span>
+              <span>{L('停止', 'Stop')}</span>
             </button>
           ) : (
             <button
               className={`send-button${autoSubmitting ? ' sending' : ''}`}
               type="submit"
-              aria-label="发送需求"
-              title="发送需求 (Enter)"
+              aria-label={L('发送需求', 'Send prompt')}
+              title={L('发送需求 (Enter)', 'Send prompt (Enter)')}
               disabled={!prompt.trim() && !autoSubmitting}
             >
               <ArrowUp size={17} />
@@ -177,6 +190,7 @@ export function ClockControls({
   speed,
   running,
   disabled,
+  showFast = false,
   onSpeed,
   onToggle,
   onStep,
@@ -184,41 +198,56 @@ export function ClockControls({
   speed: ClockSpeed;
   running: boolean;
   disabled: boolean;
+  showFast?: boolean;
   onSpeed: (speed: ClockSpeed) => void;
   onToggle: () => void;
   onStep: () => void;
 }) {
+  const { L } = useI18n();
   return (
-    <div className="clock-controls" role="group" aria-label="时钟控制">
+    <div className="clock-controls" role="group" aria-label={L('时钟控制', 'Clock controls')}>
       <div className="clock-modes">
+        {showFast && (
+          <button
+            type="button"
+            disabled={disabled}
+            aria-pressed={speed === 'fast'}
+            title={L('高速（65ms/拍）', 'Fast (65ms/cycle)')}
+            onClick={() => onSpeed('fast')}
+          >
+            {L('高速', 'Fast')}
+          </button>
+        )}
         <button
           type="button"
           disabled={disabled}
           aria-pressed={speed === 'realtime'}
+          title={L('实时（100ms/拍 · 10 Hz）', 'Real-time (100ms/cycle · 10 Hz)')}
           onClick={() => onSpeed('realtime')}
         >
-          实时
+          {L('实时', '1×')}
         </button>
         <button
           type="button"
           disabled={disabled}
           aria-pressed={speed === 'slow'}
+          title={L('慢动作（500ms/拍 · 2 Hz）', 'Slow-mo (500ms/cycle · 2 Hz)')}
           onClick={() => onSpeed('slow')}
         >
           0.2×
         </button>
       </div>
       <button type="button" className="control-button" disabled={disabled} onClick={onStep}>
-        <SkipForward size={13} /> 单步
+        <SkipForward size={13} /> {L('单步', 'Step')}
       </button>
       <button type="button" className="control-button" disabled={disabled} onClick={onToggle}>
         {running && speed !== 'step' ? (
           <>
-            <Pause size={13} /> 暂停
+            <Pause size={13} /> {L('暂停', 'Pause')}
           </>
         ) : (
           <>
-            <Play size={13} /> 运行
+            <Play size={13} /> {L('运行', 'Run')}
           </>
         )}
       </button>

@@ -7,8 +7,9 @@ import {
   Download,
   FileCode2,
   FileText,
+  Gamepad2,
   LayoutGrid,
-  LockKeyhole,
+  Monitor,
   PanelLeftClose,
   PanelLeftOpen,
   Radio,
@@ -24,23 +25,35 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react';
 import { createAgentRuntime } from './agent';
-import { ApiSettings } from './components/ApiSettings';
+import { ApiSettings, type SettingsSection } from './components/ApiSettings';
 import { BrandWordmark } from './components/BrandWordmark';
 import { ChatPane, stepKeyForTrace, type ChatTurn } from './components/ChatPane';
 import { GateCanvas } from './components/GateCanvas';
 import { NavRail, type RailTab } from './components/NavRail';
 import { ProductShowcase } from './components/ProductShowcase';
-import { HistoryPanel, PresetsPanel } from './components/SidePanels';
+import { ScreenView, type ScreenKeyLayout } from './components/ScreenView';
+import { BoardPanel, HistoryPanel, PresetsPanel } from './components/SidePanels';
 import { ClockControls, PromptComposer, SPEED_INTERVAL_MS, type ClockSpeed } from './components/TopBar';
 import { VirtualBoard } from './components/VirtualBoard';
 import { Waveform } from './components/Waveform';
 import { BlueprintView, VerifyView, VerilogView, type CodeStreamState } from './components/WorkbenchViews';
 import { createRtlEngine } from './engine';
 import {
+  getBoardPresetById,
+  loadBoardProfile,
+  saveBoardProfile,
+} from './services/boardProfiles';
+import {
   buildFallbackTestbench,
   deriveVerilogFilename,
   downloadTextFile,
 } from './services/exportVerilog';
+import {
+  getLlmErrorText,
+  localizePreset,
+  localizeProviderName,
+  useI18n,
+} from './services/i18n';
 import {
   createLiveCodeStreamer,
   sleepAbortable,
@@ -83,9 +96,9 @@ import {
   isLLMError,
   type AgentBlueprint,
   type BoardInputs,
+  type BoardProfile,
   type HarnessTraceEvent,
   type LintIssue,
-  type LLMErrorCode,
   type LLMModelOption,
   type NetlistGraph,
   type PresetProject,
@@ -128,24 +141,27 @@ function loadLeftPaneWidth(): number {
   return clampLeftPaneWidth(defaultLeftPaneWidth());
 }
 
-const LLM_ERROR_TEXT: Record<LLMErrorCode, string> = {
-  QUOTA_EXCEEDED: '今日免费次数已用完。可体验预置案例，或在设置中切换 DeepSeek / GLM / 通义千问等自有 Key。',
-  NOT_CONFIGURED: '模型服务尚未配置或 Key 鉴权失败，请点击下方打开设置检查 API 配置。',
-  FORBIDDEN: '模型服务拒绝了请求，请检查站点权限或切换自定义 API。',
-  TIMEOUT: '模型响应超时，请稍后重试或切换更快的模型。',
-  NETWORK: '连接失败，请检查网络或确认所选接口支持浏览器跨域访问。',
-  UPSTREAM: '模型服务暂时不可用，请稍后重试。',
-  BAD_RESPONSE: '模型返回了无法解析的内容，建议重试或切换模型。',
-  ABORTED: '已停止本轮生成。',
-};
-
 const QUICK_PROMPTS = [
-  { id: 'traffic-light', prompt: '做一个智能交通灯', desc: '红绿黄倒计时 + KEY0 紧急全红', Icon: Radio },
-  { id: 'password-lock', prompt: '做一个四位密码锁', desc: 'SW 拨码输入 + KEY0 提交开锁', Icon: LockKeyhole },
+  {
+    id: 'traffic-light',
+    prompt: '做一个智能交通灯',
+    promptEn: 'Build a smart traffic light',
+    desc: '红绿黄倒计时 + KEY0 紧急全红',
+    descEn: 'R/G/Y timer + KEY0 emergency red',
+    Icon: Radio,
+  },
+  {
+    id: 'snake',
+    prompt: '做一个 OLED 贪吃蛇游戏',
+    promptEn: 'Build an OLED Snake game',
+    desc: '16×8 单色 OLED + WASD / 方向键控制',
+    descEn: '16×8 monochrome OLED + WASD / arrow keys',
+    Icon: Gamepad2,
+  },
 ];
 
 type AppView = 'home' | 'workbench' | 'showcase';
-type WorkbenchTab = 'canvas' | 'blueprint' | 'verilog' | 'verify';
+type WorkbenchTab = 'canvas' | 'screen' | 'blueprint' | 'verilog' | 'verify';
 type Outcome = 'busy' | 'ready' | 'cancelled' | 'failed';
 
 interface RouteState {
@@ -163,19 +179,19 @@ function parseRouteFromHash(hash: string): RouteState {
   if (segs[0] === 'intro' || segs[0] === 'showcase' || segs[0] === 'about') {
     return { view: 'showcase', railTab: 'chat', wbTab: 'canvas' };
   }
-  if (segs[0] === 'presets' || segs[0] === 'history') {
+  if (segs[0] === 'board' || segs[0] === 'presets' || segs[0] === 'history') {
     const wb = params.get('tab');
     const wbTab: WorkbenchTab =
-      wb === 'blueprint' || wb === 'verilog' || wb === 'verify' ? wb : 'canvas';
+      wb === 'screen' || wb === 'blueprint' || wb === 'verilog' || wb === 'verify' ? wb : 'canvas';
     return { view: 'workbench', railTab: segs[0], wbTab };
   }
   if (segs[0] === 'workbench') {
     const wb = segs[1];
     const wbTab: WorkbenchTab =
-      wb === 'blueprint' || wb === 'verilog' || wb === 'verify' ? wb : 'canvas';
+      wb === 'screen' || wb === 'blueprint' || wb === 'verilog' || wb === 'verify' ? wb : 'canvas';
     const panel = params.get('panel');
     const railTab: RailTab =
-      panel === 'presets' || panel === 'history' ? panel : 'chat';
+      panel === 'board' || panel === 'presets' || panel === 'history' ? panel : 'chat';
     return { view: 'workbench', railTab, wbTab };
   }
   return { view: 'home', railTab: 'chat', wbTab: 'canvas' };
@@ -199,6 +215,9 @@ function nextId(prefix: string): string {
 }
 
 export default function App() {
+  const { locale, L } = useI18n();
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
   const engineFactory = useMemo(() => createRtlEngine, []);
   const runtime = useMemo(
     () => createAgentRuntime({ llm: createBrowserLLMClient(), engine: engineFactory() }),
@@ -213,7 +232,7 @@ export default function App() {
     applyThemePreferences(loadThemePreferences()),
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<'api' | 'appearance'>('api');
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('api');
   const [siteModels, setSiteModels] = useState<LLMModelOption[]>(SITE_DEFAULT_MODELS);
   const [siteModel, setSiteModel] = useState<string>(loadSiteModel);
   const [remainingQuota, setRemainingQuota] = useState<number | undefined>();
@@ -273,9 +292,11 @@ export default function App() {
         candidate &&
         (candidate.view === 'home' || candidate.view === 'workbench' || candidate.view === 'showcase') &&
         (candidate.railTab === 'chat' ||
+          candidate.railTab === 'board' ||
           candidate.railTab === 'presets' ||
           candidate.railTab === 'history') &&
         (candidate.wbTab === 'canvas' ||
+          candidate.wbTab === 'screen' ||
           candidate.wbTab === 'blueprint' ||
           candidate.wbTab === 'verilog' ||
           candidate.wbTab === 'verify')
@@ -322,12 +343,20 @@ export default function App() {
   const prefillAbortRef = useRef<AbortController | null>(null);
 
   // Simulation State
+  const [boardProfile, setBoardProfile] = useState<BoardProfile>(loadBoardProfile);
+  const [screenKeyLayout, setScreenKeyLayout] = useState<ScreenKeyLayout>('dpad');
+  const [circuitUsesScreen, setCircuitUsesScreen] = useState(false);
   const [netlist, setNetlist] = useState<NetlistGraph>();
   const [history, setHistory] = useState<SignalSample[]>([]);
   const [inputs, setInputs] = useState<BoardInputs>(IDLE_INPUTS);
   const [speed, setSpeed] = useState<ClockSpeed>(() => loadAppPreferences().defaultClockSpeed);
   const [running, setRunning] = useState(true);
   const [compiled, setCompiled] = useState(false);
+
+  function handleSelectBoardProfile(next: BoardProfile) {
+    setBoardProfile(next);
+    saveBoardProfile(next);
+  }
 
   const simulation = useRef<RtlEngine['step'] | null>(null);
   const inputsRef = useRef(IDLE_INPUTS);
@@ -446,7 +475,7 @@ export default function App() {
     handleThemeChange({ ...theme, mode: nextMode });
   }, [resolvedTheme, theme, handleThemeChange]);
 
-  function openSettings(section: 'api' | 'appearance' = 'api') {
+  function openSettings(section: SettingsSection = 'api') {
     setSettingsSection(section);
     setSettingsOpen(true);
   }
@@ -469,8 +498,8 @@ export default function App() {
       ? siteModel
       : siteModels[0]?.id ?? 'qwen3.8-flash';
   const providerLabel = api
-    ? getProviderPreset(api.providerId)?.name ?? '自定义 API'
-    : '站点默认';
+    ? localizeProviderName(api.providerId, getProviderPreset(api.providerId)?.name ?? L('自定义 API', 'Custom API'), locale)
+    : L('站点默认', 'Site Default');
   const siteQuotaNotice = !api ? { remaining: remainingQuota, limit: dailyQuotaLimit } : undefined;
 
   function handleSelectModel(modelId: string) {
@@ -562,6 +591,7 @@ export default function App() {
     simulation.current = null;
     applied.current = undefined;
     setCompiled(false);
+    setCircuitUsesScreen(false);
     setBlueprint(undefined);
     setCode('');
     setVectors([]);
@@ -587,22 +617,26 @@ export default function App() {
     const verification = result.ok && checks.length ? verified ?? engine.runSelfTest(source, checks) : undefined;
     setSelfTest(verification);
 
-    if (!result.ok) return { ok: false, verification };
+    if (!result.ok) return { ok: false, verification, usesScreen: false };
     if (verification?.passed === false && !options.allowFailedSelfTest) {
-      return { ok: false, verification };
+      return { ok: false, verification, usesScreen: false };
     }
 
+    const usesScreen = Boolean(result.metadata?.usedOutputs.includes('screen'));
     engine.reset();
     const initial = engine.step({ ...IDLE_INPUTS, rst_n: 0 });
     simulation.current = (current) => engine.step(current);
     const ver = options.nextVersion ?? Math.max(1, version);
     applied.current = { source, title, version: ver };
     setActivePresetId(presetId);
+    setCircuitUsesScreen(usesScreen);
+    setSpeed((prev) => (usesScreen ? 'fast' : prev === 'fast' ? prefs.defaultClockSpeed : prev));
+    setRunning(true);
     resetInputs();
     setHistory([initial.sample]);
     setNetlist(initial.netlist);
     setCompiled(true);
-    return { ok: true, verification };
+    return { ok: true, verification, usesScreen };
   }
 
   useEffect(() => {
@@ -805,18 +839,35 @@ export default function App() {
     }
 
     try {
+      const runLocale = localeRef.current;
+      const tRun = (zh: string, en: string) => (runLocale === 'en' ? en : zh);
+
       if (preset) {
+        if (preset.boardProfileId) {
+          const targetBoard = getBoardPresetById(preset.boardProfileId);
+          if (targetBoard) handleSelectBoardProfile(targetBoard);
+        }
+        const lp = localizePreset(preset, runLocale);
         const planReasoning = [
-          `拆解目标：${preset.blueprint.summary}`,
-          `对齐顶层接口：${preset.blueprint.pinMappings.map((p) => p.port).join('、')}`,
-          `设计 ${preset.testVectors.length} 拍确定性验证序列，覆盖低电平复位与关键交互分支。`,
+          tRun(`拆解目标：${lp.blueprint.summary}`, `Goal: ${lp.blueprint.summary}`),
+          tRun(
+            `对齐顶层接口：${lp.blueprint.pinMappings.map((p) => p.port).join('、')}`,
+            `Align top-level ports: ${lp.blueprint.pinMappings.map((p) => p.port).join(', ')}`,
+          ),
+          tRun(
+            `设计 ${lp.testVectors.length} 拍确定性验证序列，覆盖低电平复位与关键交互分支。`,
+            `Design ${lp.testVectors.length}-cycle deterministic test sequence covering active-low reset and key interactions.`,
+          ),
         ].join('\n');
 
         pushTrace({
           stage: 'planning',
           status: 'running',
-          title: '规划电路蓝图',
-          detail: `分析需求「${prompt}」并拆解端口、状态机与自测向量`,
+          title: tRun('规划电路蓝图', 'Plan Circuit Blueprint'),
+          detail: tRun(
+            `分析需求「${prompt}」并拆解端口、状态机与自测向量`,
+            `Analyzing "${prompt}" into ports, FSM states, and test vectors`,
+          ),
           timestamp: Date.now(),
         });
 
@@ -829,17 +880,23 @@ export default function App() {
         if (!reasoned || !active()) return;
         if (!(await sleepAbortable(160, controller.signal)) || !active()) return;
 
-        setBlueprint(preset.blueprint);
+        setBlueprint(lp.blueprint);
         setPlanningBlueprint(false);
         const planCheckpoints = [
-          ...preset.blueprint.behaviors.slice(0, 4).map((b, i) => `${i + 1}. ${b}`),
-          `端口映射：${preset.blueprint.pinMappings.map((p) => p.port).slice(0, 5).join(' / ')}`,
+          ...lp.blueprint.behaviors.slice(0, 4).map((b, i) => `${i + 1}. ${b}`),
+          tRun(
+            `端口映射：${lp.blueprint.pinMappings.map((p) => p.port).slice(0, 5).join(' / ')}`,
+            `Pin map: ${lp.blueprint.pinMappings.map((p) => p.port).slice(0, 5).join(' / ')}`,
+          ),
         ];
         pushTrace({
           stage: 'planning',
           status: 'pass',
-          title: '规划电路蓝图',
-          detail: `${preset.blueprint.behaviors.length} 条行为要点 · ${preset.blueprint.pinMappings.length} 个引脚映射 · ${preset.testVectors.length} 拍自测向量`,
+          title: tRun('规划电路蓝图', 'Plan Circuit Blueprint'),
+          detail: tRun(
+            `${lp.blueprint.behaviors.length} 条行为要点 · ${lp.blueprint.pinMappings.length} 个引脚映射 · ${lp.testVectors.length} 拍自测向量`,
+            `${lp.blueprint.behaviors.length} behaviors · ${lp.blueprint.pinMappings.length} pin mappings · ${lp.testVectors.length} test cycles`,
+          ),
           timestamp: Date.now(),
           meta: { checkpoints: planCheckpoints, reasoning: planReasoning },
         });
@@ -852,21 +909,24 @@ export default function App() {
         setCodeStreamState({
           active: true,
           stage: 'coding',
-          statusText: '正在编写可综合 Verilog 源码…',
+          statusText: tRun('正在编写可综合 Verilog 源码…', 'Streaming synthesizable Verilog RTL…'),
         });
         pushTrace({
           stage: 'coding',
           status: 'running',
-          title: '编写 Verilog 源码',
-          detail: '按蓝图规格与端口约束生成可综合 top 模块',
+          title: tRun('编写 Verilog 源码', 'Generate Verilog RTL'),
+          detail: tRun(
+            '按蓝图规格与端口约束生成可综合 top 模块',
+            'Generating synthesizable top module aligned to board ports',
+          ),
           timestamp: Date.now(),
         });
 
-        const totalLines = preset.verilogCode.split('\n').length;
+        const totalLines = lp.verilogCode.split('\n').length;
         const codingDurationMs = Math.min(2550, Math.max(2050, totalLines * 26));
         let lastReportedLine = 0;
         const streamed = await streamVerilogTokens(
-          preset.verilogCode,
+          lp.verilogCode,
           codingDurationMs,
           (partial, lines) => {
             if (!active()) return;
@@ -880,17 +940,25 @@ export default function App() {
         );
         if (!streamed || !active()) return;
 
-        setCode(preset.verilogCode);
-        setVectors(preset.testVectors);
+        setCode(lp.verilogCode);
+        setVectors(lp.testVectors);
         pushTrace({
           stage: 'coding',
           status: 'pass',
-          title: '编写 Verilog 源码',
-          detail: `${totalLines} 行可综合 Verilog · 顶层端口与时序逻辑已生成`,
+          title: tRun('编写 Verilog 源码', 'Generate Verilog RTL'),
+          detail: tRun(
+            `${totalLines} 行可综合 Verilog · 顶层端口与时序逻辑已生成`,
+            `${totalLines} lines of synthesizable Verilog · top ports & sequential logic ready`,
+          ),
           timestamp: Date.now(),
           meta: {
             codeLines: totalLines,
-            checkpoints: [`模块 top 已对齐 clk / rst_n / key / sw / led / traffic / seg 端口规范`],
+            checkpoints: [
+              tRun(
+                `模块 top 已对齐 clk / rst_n / key / sw / led / traffic / seg 端口规范`,
+                `Module top aligned with clk / rst_n / key / sw / led / traffic / seg`,
+              ),
+            ],
           },
         });
 
@@ -898,36 +966,48 @@ export default function App() {
         setCodeStreamState({
           active: true,
           stage: 'linting',
-          statusText: 'Lint 静态语法与可综合规则体检中…',
+          statusText: tRun('Lint 静态语法与可综合规则体检中…', 'Running static Verilog lint & synthesis checks…'),
         });
         pushTrace({
           stage: 'linting',
           status: 'running',
-          title: 'Lint 静态体检',
-          detail: `检查第 1 版代码（${totalLines} 行）的语法与可综合规则`,
+          title: tRun('Lint 静态体检', 'Static Lint Check'),
+          detail: tRun(
+            `检查第 1 版代码（${totalLines} 行）的语法与可综合规则`,
+            `Checking v1 RTL (${totalLines} lines) against synthesizable rules`,
+          ),
           timestamp: Date.now(),
           meta: { round: 0 },
         });
 
         if (!(await sleepAbortable(340, controller.signal)) || !active()) return;
         const lintEngine = engineFactory();
-        const compiledCheck = lintEngine.compile(preset.verilogCode);
+        const compiledCheck = lintEngine.compile(lp.verilogCode);
         const errorCount = compiledCheck.issues.filter((i) => i.severity === 'error').length;
         pushTrace({
           stage: 'linting',
           status: compiledCheck.ok ? 'pass' : 'fail',
-          title: 'Lint 静态体检',
+          title: tRun('Lint 静态体检', 'Static Lint Check'),
           detail:
             compiledCheck.issues.length === 0
-              ? '0 错误 · 0 告警'
-              : `${compiledCheck.issues.length} 条告警（${errorCount} 条 error）`,
+              ? tRun('0 错误 · 0 告警', '0 errors · 0 warnings')
+              : tRun(
+                  `${compiledCheck.issues.length} 条告警（${errorCount} 条 error）`,
+                  `${compiledCheck.issues.length} issues (${errorCount} errors)`,
+                ),
           timestamp: Date.now(),
           meta: {
             round: 0,
             checkpoints:
               compiledCheck.issues.length === 0
-                ? ['端口声明与位宽对齐通过', '0 阻塞/非阻塞混用错误 · 0 推断锁存器告警']
-                : compiledCheck.issues.slice(0, 4).map((i) => `第 ${i.line} 行 [${i.code}] ${i.message}`),
+                ? [
+                    tRun('端口声明与位宽对齐通过', 'Port declarations & bit-widths verified'),
+                    tRun(
+                      '0 阻塞/非阻塞混用错误 · 0 推断锁存器告警',
+                      '0 blocking/non-blocking mix-ups · 0 inferred latches',
+                    ),
+                  ]
+                : compiledCheck.issues.slice(0, 4).map((i) => `L${i.line} [${i.code}] ${i.message}`),
           },
         });
 
@@ -935,24 +1015,30 @@ export default function App() {
         setCodeStreamState({
           active: true,
           stage: 'simulating',
-          statusText: `正在执行 ${preset.testVectors.length} 拍确定性仿真向量…`,
+          statusText: tRun(
+            `正在执行 ${lp.testVectors.length} 拍确定性仿真向量…`,
+            `Running ${lp.testVectors.length}-cycle deterministic simulation…`,
+          ),
         });
         pushTrace({
           stage: 'simulating',
           status: 'running',
-          title: '确定性仿真自测',
-          detail: `运行 ${preset.testVectors.length} 拍测试向量并校验板卡输出`,
+          title: tRun('确定性仿真自测', 'Deterministic Self-Test'),
+          detail: tRun(
+            `运行 ${lp.testVectors.length} 拍测试向量并校验板卡输出`,
+            `Executing ${lp.testVectors.length} test vectors and checking board outputs`,
+          ),
           timestamp: Date.now(),
           meta: { round: 0 },
         });
 
         if (!(await sleepAbortable(480, controller.signal)) || !active()) return;
 
-        const { ok, verification } = loadCircuit(
-          preset.verilogCode,
-          preset.testVectors,
-          preset.blueprint.title,
-          preset.id,
+        const { ok, verification, usesScreen } = loadCircuit(
+          lp.verilogCode,
+          lp.testVectors,
+          lp.blueprint.title,
+          lp.id,
           undefined,
           { nextVersion: nextVer },
         );
@@ -964,8 +1050,8 @@ export default function App() {
           pushTrace({
             stage: 'simulating',
             status: 'fail',
-            title: '确定性仿真自测',
-            detail: '部分测试向量未通过，请查看自测详情',
+            title: tRun('确定性仿真自测', 'Deterministic Self-Test'),
+            detail: tRun('部分测试向量未通过，请查看自测详情', 'Some test vectors failed — inspect Self-Test tab'),
             timestamp: Date.now(),
             meta: { round: 0 },
           });
@@ -973,21 +1059,27 @@ export default function App() {
             ...t,
             status: 'failed',
             finishedAt: Date.now(),
-            text: '生成的电路验证未通过，可在右侧「自测」页签查看失配周期与波形细节。',
+            text: tRun(
+              '生成的电路验证未通过，可在右侧「自测」页签查看失配周期与波形细节。',
+              'Verification failed. Check the Self-Test tab for mismatched cycles and waveforms.',
+            ),
           }));
           autoSwitchTab('verify');
           return;
         }
 
-        const simCheckpoints = preset.testVectors
+        const simCheckpoints = lp.testVectors
           .filter((v) => v.note)
           .slice(0, 4)
-          .map((v) => `✓ 第 ${v.cycle} 拍 · ${v.note}`);
+          .map((v) => tRun(`✓ 第 ${v.cycle} 拍 · ${v.note}`, `✓ Cycle ${v.cycle} · ${v.note}`));
         pushTrace({
           stage: 'simulating',
           status: 'pass',
-          title: '确定性仿真自测',
-          detail: `${verification?.passedChecks ?? preset.testVectors.length}/${verification?.totalChecks ?? preset.testVectors.length} 项断言全部通过`,
+          title: tRun('确定性仿真自测', 'Deterministic Self-Test'),
+          detail: tRun(
+            `${verification?.passedChecks ?? lp.testVectors.length}/${verification?.totalChecks ?? lp.testVectors.length} 项断言全部通过`,
+            `All ${verification?.passedChecks ?? lp.testVectors.length}/${verification?.totalChecks ?? lp.testVectors.length} assertions passed`,
+          ),
           timestamp: Date.now(),
           meta: { round: 0, checkpoints: simCheckpoints },
         });
@@ -996,30 +1088,39 @@ export default function App() {
         setCodeStreamState({
           active: true,
           stage: 'verified',
-          statusText: `全部 ${verification?.passedChecks ?? preset.testVectors.length}/${verification?.totalChecks ?? preset.testVectors.length} 项断言通过 · 正在上板加载仿真画布…`,
+          statusText: tRun(
+            `全部 ${verification?.passedChecks ?? lp.testVectors.length}/${verification?.totalChecks ?? lp.testVectors.length} 项断言通过 · 正在上板加载仿真画布…`,
+            `All ${verification?.passedChecks ?? lp.testVectors.length}/${verification?.totalChecks ?? lp.testVectors.length} checks passed · Loading live simulation canvas…`,
+          ),
         });
         if (!(await sleepAbortable(450, controller.signal)) || !active()) return;
 
-        const filename = deriveVerilogFilename(preset.verilogCode, preset.id);
+        const filename = deriveVerilogFilename(lp.verilogCode, lp.id);
         setCodeStreamState(undefined);
         setVersion(nextVer);
         setRecommendedTab(null);
-        autoSwitchTab('canvas');
+        autoSwitchTab(usesScreen ? 'screen' : 'canvas');
         pushTrace({
           stage: 'done',
           status: 'pass',
-          title: '验证通过，已上板仿真',
-          detail: `全部 ${verification?.totalChecks ?? preset.testVectors.length} 项断言通过`,
+          title: tRun('验证通过，已上板仿真', 'Verified & Loaded on Board'),
+          detail: tRun(
+            `全部 ${verification?.totalChecks ?? lp.testVectors.length} 项断言通过`,
+            `All ${verification?.totalChecks ?? lp.testVectors.length} assertions passed`,
+          ),
           timestamp: Date.now(),
         });
 
-        const finalSummary = `已完成「${preset.blueprint.title}」的蓝图规划、Verilog 编码与 ${verification?.totalChecks ?? preset.testVectors.length} 拍自测验证。${preset.blueprint.summary} 右侧已加载 V${nextVer} 门级原理图与虚拟开发板，可直接操作按键或拨码观察实时信号变化。`;
+        const finalSummary = tRun(
+          `已完成「${lp.blueprint.title}」的蓝图规划、Verilog 编码与 ${verification?.totalChecks ?? lp.testVectors.length} 拍自测验证。${lp.blueprint.summary} 右侧已加载 V${nextVer} 门级原理图与虚拟开发板，可直接操作按键或拨码观察实时信号变化。`,
+          `Completed blueprint planning, Verilog RTL generation, and ${verification?.totalChecks ?? lp.testVectors.length}-cycle verification for "${lp.blueprint.title}". ${lp.blueprint.summary} V${nextVer} gate schematic and virtual board are live on the right — press keys or toggle switches to observe real-time signals.`,
+        );
         const finishedAt = Date.now();
         updateAssistantTurn(aiTurnId, (t) => ({
           ...t,
           finishedAt,
           filename,
-          code: preset.verilogCode,
+          code: lp.verilogCode,
           passedChecks: verification?.passedChecks,
           totalChecks: verification?.totalChecks,
         }));
@@ -1044,14 +1145,14 @@ export default function App() {
 
         const saved = saveHistoryEntry({
           id: nextId('hist'),
-          title: preset.blueprint.title,
+          title: lp.blueprint.title,
           prompt,
           filename,
           version: nextVer,
-          code: preset.verilogCode,
-          vectors: preset.testVectors,
-          blueprint: preset.blueprint,
-          presetId: preset.id,
+          code: lp.verilogCode,
+          vectors: lp.testVectors,
+          blueprint: lp.blueprint,
+          presetId: lp.id,
           passedChecks: verification?.passedChecks,
           totalChecks: verification?.totalChecks,
           timestamp: Date.now(),
@@ -1093,19 +1194,19 @@ export default function App() {
             setCodeStreamState({
               active: true,
               stage: 'coding',
-              statusText: '正在实时编写可综合 Verilog 源码…',
+              statusText: tRun('正在实时编写可综合 Verilog 源码…', 'Streaming synthesizable Verilog RTL…'),
             });
           } else if (event.stage === 'linting' && event.status === 'running') {
             setCodeStreamState({
               active: true,
               stage: 'linting',
-              statusText: event.detail || 'Lint 静态体检中…',
+              statusText: event.detail || tRun('Lint 静态体检中…', 'Running static lint checks…'),
             });
           } else if (event.stage === 'simulating' && event.status === 'running') {
             setCodeStreamState({
               active: true,
               stage: 'simulating',
-              statusText: event.detail || '确定性仿真自测中…',
+              statusText: event.detail || tRun('确定性仿真自测中…', 'Running deterministic self-test…'),
             });
           } else if (event.stage === 'repairing' && event.status === 'running') {
             lastLiveLines = 0;
@@ -1120,8 +1221,16 @@ export default function App() {
           }
         };
 
+        const activeClockIntervalMs =
+          speed === 'realtime' || speed === 'slow'
+            ? SPEED_INTERVAL_MS[speed]
+            : SPEED_INTERVAL_MS[prefs.defaultClockSpeed];
+
         const result = await runtime.runHarness(prompt, {
           signal: controller.signal,
+          locale: runLocale,
+          boardProfile,
+          clockIntervalMs: activeClockIntervalMs,
           onTrace: handleHarnessTrace,
           onBlueprint: (bp) => {
             if (!active()) return;
@@ -1174,8 +1283,14 @@ export default function App() {
             text:
               result.assistantSummary ??
               (previous
-                ? '新候选验证未通过，右侧板卡仍保持上一版本运行。可在「自测」或「Verilog」页签排查。'
-                : '生成的候选代码未通过编译或自测，可在右侧「自测」页签查看具体失配拍与 Lint 提示。'),
+                ? tRun(
+                    '新候选验证未通过，右侧板卡仍保持上一版本运行。可在「自测」或「Verilog」页签排查。',
+                    'New candidate failed verification; previous version stays active on board. Inspect Self-Test or Verilog tab.',
+                  )
+                : tRun(
+                    '生成的候选代码未通过编译或自测，可在右侧「自测」页签查看具体失配拍与 Lint 提示。',
+                    'Generated RTL failed compile or self-test. Inspect mismatched cycles and lint hints in Self-Test.',
+                  )),
             passedChecks: result.selfTest?.passedChecks,
             totalChecks: result.selfTest?.totalChecks,
             modelUsed: result.modelUsed ?? (api ? selectedModel : undefined),
@@ -1185,7 +1300,7 @@ export default function App() {
           return;
         }
 
-        const { ok, verification } = loadCircuit(
+        const { ok, verification, usesScreen } = loadCircuit(
           result.verilogCode,
           result.testVectors,
           result.blueprint.title,
@@ -1202,7 +1317,10 @@ export default function App() {
             ...t,
             status: 'failed',
             finishedAt: Date.now(),
-            text: '上板验证未通过，请在右侧「自测」页签查看原因。',
+            text: tRun(
+              '上板验证未通过，请在右侧「自测」页签查看原因。',
+              'Board verification failed. Check the Self-Test tab for details.',
+            ),
           }));
           autoSwitchTab('verify');
           return;
@@ -1211,7 +1329,10 @@ export default function App() {
         setCodeStreamState({
           active: true,
           stage: 'verified',
-          statusText: `全部 ${verification?.passedChecks ?? 0}/${verification?.totalChecks ?? 0} 项断言通过 · 正在上板加载仿真画布…`,
+          statusText: tRun(
+            `全部 ${verification?.passedChecks ?? 0}/${verification?.totalChecks ?? 0} 项断言通过 · 正在上板加载仿真画布…`,
+            `All ${verification?.passedChecks ?? 0}/${verification?.totalChecks ?? 0} checks passed · Loading simulation canvas…`,
+          ),
         });
         if (!(await sleepAbortable(450, controller.signal)) || !active()) return;
 
@@ -1223,12 +1344,15 @@ export default function App() {
         const usedModel = result.modelUsed ?? (api ? selectedModel : undefined);
         const finalSummary =
           result.assistantSummary ??
-          `已完成「${result.blueprint.title}」并全部通过自测，右侧已刷新为 V${nextVer} 仿真视图。`;
+          tRun(
+            `已完成「${result.blueprint.title}」并全部通过自测，右侧已刷新为 V${nextVer} 仿真视图。`,
+            `Completed "${result.blueprint.title}" with all self-tests passing. Live V${nextVer} simulation is ready on the right.`,
+          );
 
         setCodeStreamState(undefined);
         setVersion(nextVer);
         setRecommendedTab(null);
-        autoSwitchTab('canvas');
+        autoSwitchTab(usesScreen ? 'screen' : 'canvas');
 
         updateAssistantTurn(aiTurnId, (t) => ({
           ...t,
@@ -1287,13 +1411,26 @@ export default function App() {
         setRemainingQuota(0);
       }
       const rawMessage = isLLMError(error) ? error.message.trim() : '';
-      const baseText = errCode ? LLM_ERROR_TEXT[errCode] : '生成未完成，请重试。';
+      const runLocale = localeRef.current;
+      const baseText = errCode
+        ? getLlmErrorText(errCode, runLocale)
+        : runLocale === 'en'
+          ? 'Generation failed. Please retry.'
+          : '生成未完成，请重试。';
       const detail =
         rawMessage && errCode !== 'ABORTED' && !baseText.includes(rawMessage)
-          ? `${baseText}（${rawMessage}）`
+          ? runLocale === 'en'
+            ? `${baseText} (${rawMessage})`
+            : `${baseText}（${rawMessage}）`
           : baseText;
       setOutcome('failed');
-      pushTrace({ stage: 'failed', status: 'fail', title: '执行失败', detail, timestamp: Date.now() });
+      pushTrace({
+        stage: 'failed',
+        status: 'fail',
+        title: runLocale === 'en' ? 'Execution Failed' : '执行失败',
+        detail,
+        timestamp: Date.now(),
+      });
       updateAssistantTurn(aiTurnId, (t) => ({
         ...t,
         status: 'failed',
@@ -1318,7 +1455,12 @@ export default function App() {
     setTurns((prev) =>
       prev.map((t) =>
         t.status === 'running'
-          ? { ...t, status: 'cancelled', finishedAt: Date.now(), text: '已停止本轮生成，可继续输入新需求。' }
+          ? {
+              ...t,
+              status: 'cancelled',
+              finishedAt: Date.now(),
+              text: L('已停止本轮生成，可继续输入新需求。', 'Generation stopped. Enter a new prompt to continue.'),
+            }
           : t,
       ),
     );
@@ -1330,7 +1472,7 @@ export default function App() {
     setCode(entry.code);
     setVectors(entry.vectors);
     setVersion(entry.version);
-    loadCircuit(entry.code, entry.vectors, entry.blueprint.title, entry.presetId, undefined, {
+    const restored = loadCircuit(entry.code, entry.vectors, entry.blueprint.title, entry.presetId, undefined, {
       nextVersion: entry.version,
     });
     setTurns([
@@ -1339,7 +1481,10 @@ export default function App() {
         id: nextId('ai'),
         role: 'assistant',
         status: 'done',
-        text: `已从本地历史恢复「${entry.title}」（V${entry.version}），右侧板卡与门级图已同步上板。`,
+        text: L(
+          `已从本地历史恢复「${entry.title}」（V${entry.version}），右侧板卡与门级图已同步上板。`,
+          `Restored "${entry.title}" (V${entry.version}) from local history. Board and gate schematic are live.`,
+        ),
         version: entry.version,
         filename: entry.filename,
         code: entry.code,
@@ -1348,7 +1493,7 @@ export default function App() {
         modelUsed: entry.modelUsed,
       },
     ]);
-    navigateTo({ view: 'workbench', railTab: 'chat', wbTab: 'canvas' });
+    navigateTo({ view: 'workbench', railTab: 'chat', wbTab: restored.usesScreen ? 'screen' : 'canvas' });
   }
 
   // Export & Copy helpers
@@ -1387,7 +1532,7 @@ export default function App() {
 
   function toggleRun() {
     if (speed === 'step') {
-      setSpeed('realtime');
+      setSpeed(circuitUsesScreen ? 'fast' : 'realtime');
       setRunning(true);
     } else {
       setRunning((value) => !value);
@@ -1401,34 +1546,34 @@ export default function App() {
 
   const busy = outcome === 'busy';
   const latest = history.at(-1);
-  const lockActive = activePresetId === 'password-lock';
   const hasSession = view === 'workbench';
 
   const statusBadge = useMemo(() => {
     if (!latest) return undefined;
-    if (lockActive) return latest.outputs.led & 1 ? '已开锁' : '已锁定';
     const traffic = latest.outputs.traffic;
-    if (traffic & 4) return '红灯亮';
-    if (traffic & 2) return '黄灯亮';
-    if (traffic & 1) return '绿灯亮';
+    if (traffic & 4) return L('红灯亮', 'RED ON');
+    if (traffic & 2) return L('黄灯亮', 'YELLOW ON');
+    if (traffic & 1) return L('绿灯亮', 'GREEN ON');
     if (latest.outputs.led) return `LED 0x${latest.outputs.led.toString(16).toUpperCase().padStart(2, '0')}`;
-    return running ? '仿真中' : '已暂停';
-  }, [latest, lockActive, running]);
+    return running ? L('仿真中', 'Running') : L('已暂停', 'Paused');
+  }, [latest, running, L]);
 
   const leftHeaderTitle =
-    railTab === 'presets'
-      ? '预置电路案例'
-      : railTab === 'history'
-        ? '本地版本历史'
-        : blueprint?.title ?? '新电路对话';
+    railTab === 'board'
+      ? L('开发板配置', 'Board Profile')
+      : railTab === 'presets'
+        ? L('预置电路案例', 'Built-in Circuit Demos')
+        : railTab === 'history'
+          ? L('本地版本历史', 'Local Version History')
+          : blueprint?.title ?? L('新电路对话', 'New Circuit Chat');
 
   const homeQuotaText = api
-    ? `自定义 API · ${providerLabel}`
+    ? L(`自定义 API · ${providerLabel}`, `Custom API · ${providerLabel}`)
     : remainingQuota !== undefined && dailyQuotaLimit !== undefined
-      ? `站点免费额度 · ${remainingQuota}/${dailyQuotaLimit}`
+      ? L(`站点免费额度 · ${remainingQuota}/${dailyQuotaLimit}`, `Free Quota · ${remainingQuota}/${dailyQuotaLimit}`)
       : remainingQuota !== undefined
-        ? `站点免费额度 · 剩 ${remainingQuota} 次`
-        : '站点免费额度';
+        ? L(`站点免费额度 · 剩 ${remainingQuota} 次`, `Free Quota · ${remainingQuota} left`)
+        : L('站点免费额度', 'Free Site Quota');
 
   const wbTitleVersion = applied.current?.version ?? version;
 
@@ -1474,8 +1619,10 @@ export default function App() {
           onSaveApi={setApi}
           onThemeChange={handleThemeChange}
           onPrefsChange={(next) => {
+            if (next.defaultClockSpeed !== prefs.defaultClockSpeed) {
+              setSpeed(next.defaultClockSpeed);
+            }
             setPrefs(next);
-            if (!compiled) setSpeed(next.defaultClockSpeed);
           }}
           onClose={() => setSettingsOpen(false)}
         />
@@ -1493,7 +1640,7 @@ export default function App() {
             setSidebarCollapsed(false);
             navigateTo({ view: 'workbench', railTab: 'chat' });
           }}
-          onTryPreset={(preset) => void run(preset.prompt, preset)}
+          onTryPreset={(preset) => void run(localizePreset(preset, locale).prompt, preset)}
           onOpenPresets={() => {
             setSidebarCollapsed(false);
             navigateTo({ view: 'workbench', railTab: 'presets' });
@@ -1504,14 +1651,14 @@ export default function App() {
           <header className="home-topbar">
             <div className="home-brand">
               <BrandWordmark className="home-brand-wordmark" />
-              <span>专注于 FPGA 的 AI Agent</span>
+              <span>{L('专注于 FPGA 的 AI Agent', 'The AI Agent Built for FPGA')}</span>
             </div>
             <div className="home-topbar-actions">
               <button
                 type="button"
                 className="home-quota-link mono"
                 onClick={() => openSettings('api')}
-                title={`${homeQuotaText} · 点击管理模型与 API 配置`}
+                title={L(`${homeQuotaText} · 点击管理模型与 API 配置`, `${homeQuotaText} · Click to manage models & API`)}
               >
                 <span className="status-dot" />
                 <span>{homeQuotaText}</span>
@@ -1521,7 +1668,9 @@ export default function App() {
 
           <div className="home-center">
             <div className="home-hero">
-              <h1 className="home-hero-heading">用自然语言编写并仿真数字电路</h1>
+              <h1 className="home-hero-heading">
+                {L('用自然语言编写并仿真数字电路', 'Design & Simulate Digital Circuits in Natural Language')}
+              </h1>
 
               <PromptComposer
                 onSend={(prompt) => void run(prompt)}
@@ -1541,7 +1690,7 @@ export default function App() {
 
               <section className="quick-prompts" aria-labelledby="quick-prompts-label">
                 <div className="quick-prompts-head">
-                  <h2 id="quick-prompts-label">试试快捷示例</h2>
+                  <h2 id="quick-prompts-label">{L('试试快捷示例', 'Try a Quick Demo')}</h2>
                   <button
                     type="button"
                     className="text-link"
@@ -1550,27 +1699,30 @@ export default function App() {
                       navigateTo({ view: 'workbench', railTab: 'presets' });
                     }}
                   >
-                    <LayoutGrid size={13} /> 全部 {runtime.presets.length} 个示例
+                    <LayoutGrid size={13} />{' '}
+                    {L(`全部 ${runtime.presets.length} 个示例`, `All ${runtime.presets.length} Demos`)}
                   </button>
                 </div>
 
                 <div className="quick-grid">
-                  {QUICK_PROMPTS.map(({ id, prompt, desc, Icon }) => {
+                  {QUICK_PROMPTS.map(({ id, prompt, promptEn, desc, descEn, Icon }) => {
                     const preset = runtime.presets.find((item) => item.id === id);
+                    const displayPrompt = L(prompt, promptEn);
+                    const displayDesc = L(desc, descEn);
                     return (
                       <button
                         key={id}
                         type="button"
                         className="quick-card"
                         disabled={!preset || autoSubmittingPreset}
-                        onClick={() => preset && void triggerHomeQuickPrompt(prompt, preset)}
+                        onClick={() => preset && void triggerHomeQuickPrompt(displayPrompt, preset)}
                       >
                         <span className="quick-card-icon">
                           <Icon size={17} />
                         </span>
                         <span className="quick-card-text">
-                          <strong>{prompt}</strong>
-                          <small>{desc}</small>
+                          <strong>{displayPrompt}</strong>
+                          <small>{displayDesc}</small>
                         </span>
                         <ChevronRight size={15} className="quick-card-arrow" />
                       </button>
@@ -1598,8 +1750,8 @@ export default function App() {
                   <button
                     type="button"
                     className="icon-button"
-                    title="收起左侧栏"
-                    aria-label="收起左侧栏"
+                    title={L('收起左侧栏', 'Collapse sidebar')}
+                    aria-label={L('收起左侧栏', 'Collapse sidebar')}
                     onClick={() => setSidebarCollapsed(true)}
                   >
                     <PanelLeftClose size={16} />
@@ -1634,11 +1786,23 @@ export default function App() {
                       onOpenSettings={() => openSettings('api')}
                       enableWebResearch={prefs.enableWebResearch}
                       onToggleWebResearch={handleToggleWebResearch}
-                      liveHint={busy && compiled ? `V${wbTitleVersion} 仿真可继续操作` : undefined}
+                      liveHint={
+                        busy && compiled
+                          ? L(`V${wbTitleVersion} 仿真可继续操作`, `V${wbTitleVersion} board stays interactive`)
+                          : undefined
+                      }
                       viewTransitionName={sidebarCollapsed ? undefined : 'main-composer'}
                     />
                   </div>
                 </>
+              )}
+
+              {railTab === 'board' && (
+                <BoardPanel
+                  profile={boardProfile}
+                  onSelectProfile={handleSelectBoardProfile}
+                  onOpenScreenTab={() => handleManualTabClick('screen')}
+                />
               )}
 
               {railTab === 'presets' && (
@@ -1646,7 +1810,7 @@ export default function App() {
                   presets={runtime.presets}
                   activePresetId={activePresetId}
                   busy={busy}
-                  onSelectPreset={(preset) => void run(preset.prompt, preset)}
+                  onSelectPreset={(preset) => void run(localizePreset(preset, locale).prompt, preset)}
                 />
               )}
 
@@ -1669,11 +1833,11 @@ export default function App() {
             role="separator"
             aria-orientation="vertical"
             aria-hidden={sidebarCollapsed || undefined}
-            aria-label="拖动调整左右面板宽度"
+            aria-label={L('拖动调整左右面板宽度', 'Drag to resize sidebar width')}
             aria-valuemin={LEFT_PANE_MIN}
             aria-valuemax={clampLeftPaneWidth(LEFT_PANE_MAX)}
             aria-valuenow={leftPaneWidth}
-            title="左右拖动调整面板宽度（双击恢复默认）"
+            title={L('左右拖动调整面板宽度（双击恢复默认）', 'Drag to resize (double-click to reset)')}
             tabIndex={sidebarCollapsed ? -1 : 0}
             onPointerDown={beginPaneResize}
             onPointerMove={movePaneResize}
@@ -1684,22 +1848,22 @@ export default function App() {
             onKeyDown={keyboardPaneResize}
           />
 
-          <main className="workbench-pane" aria-label="FPGA 可视化工作台">
+          <main className="workbench-pane" aria-label={L('FPGA 可视化工作台', 'FPGA Visual Workbench')}>
             <header className="wb-header">
               <div className="wb-header-left">
                 {sidebarCollapsed && (
                   <button
                     type="button"
                     className="icon-button wb-expand-btn"
-                    title="展开左侧栏"
-                    aria-label="展开左侧栏"
+                    title={L('展开左侧栏', 'Expand sidebar')}
+                    aria-label={L('展开左侧栏', 'Expand sidebar')}
                     onClick={() => setSidebarCollapsed(false)}
                   >
                     <PanelLeftOpen size={16} />
                   </button>
                 )}
 
-                <div className="wb-tabs" role="tablist" aria-label="工作台视图">
+                <div className="wb-tabs" role="tablist" aria-label={L('工作台视图', 'Workbench views')}>
                   <button
                     type="button"
                     role="tab"
@@ -1708,9 +1872,22 @@ export default function App() {
                     onClick={() => handleManualTabClick('canvas')}
                   >
                     <CircuitBoard size={13.5} className="wb-tab-icon" aria-hidden="true" />
-                    <span>仿真画布</span>
+                    <span>{L('仿真画布', 'Simulation')}</span>
                     {busy && recommendedTab === 'canvas' && wbTab !== 'canvas' && (
-                      <span className="tab-activity-dot" aria-label="后台就绪" />
+                      <span className="tab-activity-dot" aria-label={L('后台就绪', 'Ready in background')} />
+                    )}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={wbTab === 'screen'}
+                    className={wbTab === 'screen' ? 'active' : undefined}
+                    onClick={() => handleManualTabClick('screen')}
+                  >
+                    <Monitor size={13.5} className="wb-tab-icon" aria-hidden="true" />
+                    <span>{L('屏幕', 'Screen')}</span>
+                    {((busy && recommendedTab === 'screen') || (circuitUsesScreen && compiled)) && wbTab !== 'screen' && (
+                      <span className="tab-activity-dot" aria-label={L('OLED 活跃', 'OLED active')} />
                     )}
                   </button>
                   <button
@@ -1721,9 +1898,9 @@ export default function App() {
                     onClick={() => handleManualTabClick('blueprint')}
                   >
                     <FileText size={13.5} className="wb-tab-icon" aria-hidden="true" />
-                    <span>蓝图</span>
+                    <span>{L('蓝图', 'Blueprint')}</span>
                     {busy && recommendedTab === 'blueprint' && wbTab !== 'blueprint' && (
-                      <span className="tab-activity-dot" aria-label="规划中" />
+                      <span className="tab-activity-dot" aria-label={L('规划中', 'Planning')} />
                     )}
                   </button>
                   <button
@@ -1736,7 +1913,7 @@ export default function App() {
                     <FileCode2 size={13.5} className="wb-tab-icon" aria-hidden="true" />
                     <span>Verilog</span>
                     {busy && recommendedTab === 'verilog' && wbTab !== 'verilog' && (
-                      <span className="tab-activity-dot" aria-label="编码与验证中" />
+                      <span className="tab-activity-dot" aria-label={L('编码与验证中', 'Coding & verifying')} />
                     )}
                   </button>
                   <button
@@ -1747,14 +1924,14 @@ export default function App() {
                     onClick={() => handleManualTabClick('verify')}
                   >
                     <ClipboardCheck size={13.5} className="wb-tab-icon" aria-hidden="true" />
-                    <span>自测</span>
+                    <span>{L('自测', 'Self-Test')}</span>
                     {selfTest && (
                       <span className={`tab-count ${selfTest.passed ? 'ok' : 'fail'}`}>
                         {selfTest.passedChecks}/{selfTest.totalChecks}
                       </span>
                     )}
                     {busy && recommendedTab === 'verify' && wbTab !== 'verify' && (
-                      <span className="tab-activity-dot" aria-label="后台更新中" />
+                      <span className="tab-activity-dot" aria-label={L('后台更新中', 'Updating')} />
                     )}
                   </button>
                 </div>
@@ -1763,13 +1940,15 @@ export default function App() {
                   {compiled && wbTitleVersion > 0 && (
                     <span className="version-pill live">
                       <i />
-                      {running ? `V${wbTitleVersion} 运行中` : `V${wbTitleVersion} 已暂停`}
+                      {running
+                        ? L(`V${wbTitleVersion} 运行中`, `V${wbTitleVersion} Live`)
+                        : L(`V${wbTitleVersion} 已暂停`, `V${wbTitleVersion} Paused`)}
                     </span>
                   )}
                   {busy && (
                     <span className="version-pill testing">
                       <i />
-                      V{wbTitleVersion + 1} 自测中
+                      {L(`V${wbTitleVersion + 1} 自测中`, `V${wbTitleVersion + 1} Testing`)}
                     </span>
                   )}
                 </div>
@@ -1780,8 +1959,8 @@ export default function App() {
                   type="button"
                   className="outline-button icon-only-btn"
                   disabled={!code}
-                  title="复制 Verilog 代码"
-                  aria-label="复制 Verilog 代码"
+                  title={L('复制 Verilog 代码', 'Copy Verilog code')}
+                  aria-label={L('复制 Verilog 代码', 'Copy Verilog code')}
                   onClick={() => void copyHeaderCode()}
                 >
                   {copiedHeader ? <Check size={14} /> : <Copy size={14} />}
@@ -1792,7 +1971,7 @@ export default function App() {
                   disabled={!code}
                   onClick={() => handleExportVerilog()}
                 >
-                  <Download size={14} /> 导出 .v
+                  <Download size={14} /> {L('导出 .v', 'Export .v')}
                 </button>
               </div>
             </header>
@@ -1800,16 +1979,17 @@ export default function App() {
             <div key={wbTab} className="wb-tab-panel">
               {wbTab === 'canvas' && (
                 <div className="wb-canvas-layout">
-                  <section className="schematic-column" aria-label="门级原理图">
+                  <section className="schematic-column" aria-label={L('门级原理图', 'Gate-Level Schematic')}>
                     <div className="schematic-subheader">
                       <div className="schematic-title">
-                        <h2>门级原理图</h2>
+                        <h2>{L('门级原理图', 'Gate-Level Schematic')}</h2>
                         {code && <span className="file-chip mono">{activeFilename}</span>}
                       </div>
                       <ClockControls
                         speed={speed}
                         running={running}
                         disabled={!compiled}
+                        showFast={circuitUsesScreen}
                         onSpeed={(mode) => {
                           setSpeed(mode);
                           setRunning(true);
@@ -1821,47 +2001,63 @@ export default function App() {
                     <GateCanvas netlist={netlist} pending={busy} statusBadge={statusBadge} />
                   </section>
 
-                  <aside className="instruments-column" aria-label="实时波形与虚拟板卡">
-                    <Waveform title="实时波形" samples={history} ledFocus={lockActive} autoFollow showCycleMeta={false} />
+                  <aside className="instruments-column" aria-label={L('实时波形与虚拟板卡', 'Live Waveforms & Virtual Board')}>
+                    <Waveform title={L('实时波形', 'Live Waveform')} samples={history} autoFollow showCycleMeta={false} />
 
                     <section className="instrument-section">
                       <div className="section-heading">
-                        <h2>虚拟板卡</h2>
+                        <h2>{L('虚拟板卡', 'Virtual Board')}</h2>
                         {latest && <span className="instrument-meta mono">CLK ↑ {latest.cycle}</span>}
                       </div>
-                      {lockActive && (
-                        <p className="board-hint">
-                          用 SW3–SW0 依次拨入 1、2、3、4，每位按 KEY0 提交；KEY1 重新上锁。
-                        </p>
-                      )}
                       <VirtualBoard
                         inputs={inputs}
                         outputs={latest?.outputs}
                         onInputsChange={changeInputs}
                         disabled={!compiled}
-                        lockDemo={lockActive}
                       />
                     </section>
 
                     {selfTest && (
                       <details className="self-test-wave" open={!selfTest.passed}>
                         <summary>
-                          <span>自测波形</span>
+                          <span>{L('自测波形', 'Self-Test Waveform')}</span>
                           <span className={`mono ${selfTest.passed ? '' : 'fail-text'}`}>
                             {wbTitleVersion > 0 ? `V${wbTitleVersion} · ` : ''}
                             {selfTest.passedChecks}/{selfTest.totalChecks}
                           </span>
                         </summary>
                         <Waveform
-                          title="自测采样"
+                          title={L('自测采样', 'Test Samples')}
                           samples={selfTest.waveform}
                           failureCycle={selfTest.firstUnstableCycle ?? selfTest.firstFailure?.cycle}
-                          ledFocus={selfTest.firstFailure?.signal === 'led' || lockActive}
+                          ledFocus={selfTest.firstFailure?.signal === 'led'}
                         />
                       </details>
                     )}
                   </aside>
                 </div>
+              )}
+
+              {wbTab === 'screen' && (
+                <ScreenView
+                  screenBuffer={latest?.screenBuffer}
+                  hasScreenOutput={circuitUsesScreen || Boolean(latest?.screenBuffer)}
+                  compiled={compiled}
+                  filename={code ? activeFilename : undefined}
+                  cycle={latest?.cycle}
+                  inputs={inputs}
+                  onInputsChange={changeInputs}
+                  speed={speed}
+                  running={running}
+                  onSpeed={(mode) => {
+                    setSpeed(mode);
+                    setRunning(true);
+                  }}
+                  onToggle={toggleRun}
+                  onStep={stepOnce}
+                  keyLayout={screenKeyLayout}
+                  onKeyLayoutChange={setScreenKeyLayout}
+                />
               )}
 
               {wbTab === 'blueprint' && (
@@ -1888,7 +2084,7 @@ export default function App() {
                   selfTest={selfTest}
                   issues={issues}
                   traces={traces}
-                  ledFocus={lockActive}
+                  ledFocus={false}
                   onJumpToLine={jumpToVerilogLine}
                 />
               )}

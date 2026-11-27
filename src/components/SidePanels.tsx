@@ -1,24 +1,173 @@
 import {
+  Check,
   Clock,
+  Cpu,
   Download,
+  Monitor,
   Play,
   Trash2,
 } from 'lucide-react';
+import {
+  BOARD_PERIPHERAL_LIST,
+  BOARD_PRESETS,
+  toggleBoardPeripheral,
+} from '../services/boardProfiles';
+import { localizePreset, useI18n } from '../services/i18n';
 import type { HistoryEntry } from '../services/sessionHistory';
-import type { PresetProject } from '../types/contracts';
+import type { BoardPeripheralId, BoardProfile, PresetProject } from '../types/contracts';
 
-const PRESET_META: Record<string, { category: string; difficulty: string }> = {
-  'traffic-light': { category: '状态机', difficulty: '入门' },
-  'password-lock': { category: '安全逻辑', difficulty: '进阶' },
-  'sequence-detector': { category: '串行检测', difficulty: '进阶' },
-  stopwatch: { category: '计数器', difficulty: '入门' },
-  buzzer: { category: '仲裁锁存', difficulty: '入门' },
+const PRESET_META: Record<string, { category: string; categoryEn: string; difficulty: string; difficultyEn: string }> = {
+  'traffic-light': { category: '状态机', categoryEn: 'FSM', difficulty: '入门', difficultyEn: 'Beginner' },
+  'sequence-detector': { category: '串行检测', categoryEn: 'Serial', difficulty: '进阶', difficultyEn: 'Intermediate' },
+  stopwatch: { category: '计数器', categoryEn: 'Counter', difficulty: '入门', difficultyEn: 'Beginner' },
+  buzzer: { category: '仲裁锁存', categoryEn: 'Arbitration', difficulty: '入门', difficultyEn: 'Beginner' },
+  snake: { category: 'OLED 游戏', categoryEn: 'OLED Game', difficulty: '进阶', difficultyEn: 'Intermediate' },
 };
 
-const DIFFICULTY_TEXT: Record<NonNullable<PresetProject['difficulty']>, string> = {
-  beginner: '入门',
-  intermediate: '进阶',
-  advanced: '挑战',
+const PERIPHERAL_SHORT: Record<BoardPeripheralId, { zh: string; en: string }> = {
+  led: { zh: 'LED', en: 'LED' },
+  traffic: { zh: '交通灯', en: 'Traffic' },
+  seg: { zh: '数码管', en: '7-Seg' },
+  screen: { zh: '16×8 OLED', en: '16×8 OLED' },
+  tone: { zh: '蜂鸣器', en: 'Buzzer' },
+};
+
+export function BoardPanel({
+  profile,
+  onSelectProfile,
+  onOpenScreenTab,
+}: {
+  profile: BoardProfile;
+  onSelectProfile: (profile: BoardProfile) => void;
+  onOpenScreenTab: () => void;
+}) {
+  const { locale, L } = useI18n();
+  const hasScreen = profile.peripherals.includes('screen');
+
+  return (
+    <div className="drawer-scroll">
+      <div className="drawer-intro">
+        <p>
+          {L(
+            '选择虚拟 FPGA 开发板配置：决定可用外设（含 16×8 单色 OLED 屏）以及 AI 生成电路时的硬件端口约定。',
+            'Select a virtual FPGA board profile to configure available peripherals (including 16×8 monochrome OLED) and AI hardware port prompts.',
+          )}
+        </p>
+      </div>
+
+      <div className="board-profile-list">
+        {BOARD_PRESETS.map((item) => {
+          const active = profile.id === item.profile.id;
+          return (
+            <article
+              key={item.profile.id}
+              className={`preset-card board-profile-card${active ? ' active' : ''}`}
+            >
+              <div className="preset-card-top">
+                <div className="preset-tags">
+                  <span className="tag-pill">{L(item.badgeZh, item.badgeEn)}</span>
+                  <span className="tag-pill subtle">
+                    {item.profile.primaryView === 'screen'
+                      ? L('屏幕优先', 'OLED First')
+                      : L('网表优先', 'Netlist First')}
+                  </span>
+                </div>
+                {active && (
+                  <span className="board-active-badge">
+                    <Check size={11} strokeWidth={2.5} /> {L('当前使用', 'Active')}
+                  </span>
+                )}
+              </div>
+
+              <h3>{locale === 'en' ? item.nameEn : item.profile.name}</h3>
+              <p>{locale === 'en' ? item.descriptionEn : item.profile.description}</p>
+
+              <div className="board-peripheral-tags">
+                {item.profile.peripherals.map((pid) => (
+                  <span key={pid} className={`mono-chip${pid === 'screen' ? ' accent' : ''}`}>
+                    {L(PERIPHERAL_SHORT[pid].zh, PERIPHERAL_SHORT[pid].en)}
+                  </span>
+                ))}
+              </div>
+
+              <div className="preset-card-foot">
+                <span className="mono-meta">
+                  {L('4 按键 · 8 拨码', '4 Keys · 8 Switches')}
+                </span>
+                <button
+                  type="button"
+                  className={active ? 'outline-button compact-btn' : 'primary-button compact-btn'}
+                  aria-pressed={active}
+                  onClick={() => onSelectProfile(item.profile)}
+                >
+                  {active ? (
+                    <>
+                      <Check size={12} /> {L('已启用', 'Selected')}
+                    </>
+                  ) : (
+                    <>
+                      <Cpu size={12} /> {L('切换板卡', 'Select')}
+                    </>
+                  )}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+
+      <section className="board-custom-section" aria-label={L('外设开关定制', 'Custom peripheral toggles')}>
+        <div className="board-custom-head">
+          <h4>{L('自定义外设开关', 'Custom Peripherals')}</h4>
+          {profile.id === 'custom' && (
+            <span className="tag-pill">{L('自定义模式', 'Custom')}</span>
+          )}
+        </div>
+        <div className="board-toggle-list">
+          {BOARD_PERIPHERAL_LIST.map((item) => {
+            const enabled = profile.peripherals.includes(item.id);
+            const isOnlyOne = enabled && profile.peripherals.length === 1;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                className={`board-toggle-row${enabled ? ' enabled' : ''}`}
+                role="switch"
+                aria-checked={enabled}
+                disabled={isOnlyOne}
+                onClick={() => onSelectProfile(toggleBoardPeripheral(profile, item.id))}
+              >
+                <span className="board-toggle-info">
+                  <strong>{L(item.labelZh, item.labelEn)}</strong>
+                  <small className="mono">{item.portHint}</small>
+                </span>
+                <span className="board-toggle-pill" aria-hidden="true">
+                  <span className="board-toggle-thumb" />
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {hasScreen && (
+          <button
+            type="button"
+            className="outline-button compact-btn board-open-screen-btn"
+            onClick={onOpenScreenTab}
+          >
+            <Monitor size={13} />
+            <span>{L('打开 16×8 OLED 屏幕视图', 'Open 16×8 OLED Screen View')}</span>
+          </button>
+        )}
+      </section>
+    </div>
+  );
+}
+
+const DIFFICULTY_TEXT: Record<NonNullable<PresetProject['difficulty']>, { zh: string; en: string }> = {
+  beginner: { zh: '入门', en: 'Beginner' },
+  intermediate: { zh: '进阶', en: 'Intermediate' },
+  advanced: { zh: '挑战', en: 'Advanced' },
 };
 
 export function PresetsPanel({
@@ -32,16 +181,30 @@ export function PresetsPanel({
   busy: boolean;
   onSelectPreset: (preset: PresetProject) => void;
 }) {
+  const { locale, L } = useI18n();
   return (
     <div className="drawer-scroll">
       <div className="drawer-intro">
-        <p>所有预置案例均由浏览器内真实 RTL 引擎实时编译、自测与仿真，零 Token 消耗。</p>
+        <p>
+          {L(
+            '所有预置案例均由浏览器内真实 RTL 引擎实时编译、自测与仿真，零 Token 消耗。',
+            'Every built-in demo compiles, self-tests, and simulates live in the browser RTL engine with zero token usage.',
+          )}
+        </p>
       </div>
       <div className="preset-cards">
         {presets.map((preset) => {
-          const fallback = PRESET_META[preset.id] ?? { category: '数字逻辑', difficulty: '入门' };
-          const category = preset.category ?? fallback.category;
-          const difficulty = preset.difficulty ? DIFFICULTY_TEXT[preset.difficulty] : fallback.difficulty;
+          const localized = localizePreset(preset, locale);
+          const fallback = PRESET_META[preset.id] ?? {
+            category: '数字逻辑',
+            categoryEn: 'Digital Logic',
+            difficulty: '入门',
+            difficultyEn: 'Beginner',
+          };
+          const category = localized.category ?? L(fallback.category, fallback.categoryEn);
+          const difficulty = preset.difficulty
+            ? L(DIFFICULTY_TEXT[preset.difficulty].zh, DIFFICULTY_TEXT[preset.difficulty].en)
+            : L(fallback.difficulty, fallback.difficultyEn);
           const active = preset.id === activePresetId;
 
           return (
@@ -50,20 +213,25 @@ export function PresetsPanel({
                 <div className="preset-tags">
                   <span className="tag-pill">{category}</span>
                   <span className="tag-pill subtle">{difficulty}</span>
+                  {preset.requiredPeripherals?.includes('screen') && (
+                    <span className="tag-pill accent-soft">OLED</span>
+                  )}
                 </div>
-                <span className="mono-meta">{preset.testVectors.length} 拍自测</span>
+                <span className="mono-meta">
+                  {L(`${preset.testVectors.length} 拍自测`, `${preset.testVectors.length} test cycles`)}
+                </span>
               </div>
-              <h3>{preset.name}</h3>
-              <p>{preset.blueprint.summary}</p>
+              <h3>{localized.name}</h3>
+              <p>{localized.blueprint.summary}</p>
               <div className="preset-card-foot">
-                <span className="mono-meta">零 Token 实时仿真</span>
+                <span className="mono-meta">{L('零 Token 实时仿真', 'Zero-token live sim')}</span>
                 <button
                   type="button"
                   className={active ? 'outline-button compact-btn' : 'primary-button compact-btn'}
                   disabled={busy}
                   onClick={() => onSelectPreset(preset)}
                 >
-                  <Play size={12} /> {active ? '重新载入' : '上板运行'}
+                  <Play size={12} /> {active ? L('重新载入', 'Reload') : L('上板运行', 'Run Live')}
                 </button>
               </div>
             </article>
@@ -87,13 +255,19 @@ export function HistoryPanel({
   onDelete: (id: string) => void;
   onClear: () => void;
 }) {
+  const { locale, L } = useI18n();
   if (entries.length === 0) {
     return (
       <div className="drawer-scroll">
         <div className="empty-box">
           <Clock size={22} />
-          <p>尚无本地电路记录</p>
-          <small>运行预设演示或生成通过验证的电路后，版本快照会自动保存在这里。</small>
+          <p>{L('尚无本地电路记录', 'No local circuit history yet')}</p>
+          <small>
+            {L(
+              '运行预设演示或生成通过验证的电路后，版本快照会自动保存在这里。',
+              'Snapshots are saved here automatically after running a demo or verifying a generated circuit.',
+            )}
+          </small>
         </div>
       </div>
     );
@@ -102,9 +276,9 @@ export function HistoryPanel({
   return (
     <div className="drawer-scroll">
       <div className="history-top-bar">
-        <span>共 {entries.length} 条本地快照</span>
+        <span>{L(`共 ${entries.length} 条本地快照`, `${entries.length} local snapshots`)}</span>
         <button type="button" className="text-link danger" onClick={onClear}>
-          清空记录
+          {L('清空记录', 'Clear all')}
         </button>
       </div>
       <div className="history-list">
@@ -123,28 +297,31 @@ export function HistoryPanel({
                 </span>
               )}
               <span className="mono-meta">
-                {new Date(entry.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                {new Date(entry.timestamp).toLocaleTimeString(locale === 'en' ? 'en-US' : 'zh-CN', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
               </span>
             </div>
             <div className="history-actions">
               <button type="button" className="outline-button compact-btn" onClick={() => onRestore(entry)}>
-                <Play size={12} /> 载入
+                <Play size={12} /> {L('载入', 'Load')}
               </button>
               <button
                 type="button"
                 className="outline-button compact-btn"
-                title={`下载 ${entry.filename}`}
+                title={L(`下载 ${entry.filename}`, `Download ${entry.filename}`)}
                 onClick={() => onDownload(entry)}
               >
-                <Download size={12} /> 下载
+                <Download size={12} /> {L('下载', 'Download')}
               </button>
               <button
                 type="button"
                 className="outline-button compact-btn danger-btn"
-                title="删除记录"
+                title={L('删除记录', 'Delete snapshot')}
                 onClick={() => onDelete(entry.id)}
               >
-                <Trash2 size={12} /> 删除
+                <Trash2 size={12} /> {L('删除', 'Delete')}
               </button>
             </div>
           </article>

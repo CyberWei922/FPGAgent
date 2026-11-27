@@ -1,5 +1,6 @@
 import { Code2, GitBranch } from 'lucide-react';
 import { useEffect, useId, useMemo, useState } from 'react';
+import { useI18n } from '../services/i18n';
 import {
   layoutFsm,
   layoutFsmWithElk,
@@ -28,13 +29,14 @@ export {
   type ResolvedFsmLayoutMode,
 };
 
-const LAYOUT_OPTIONS: Array<{ value: FsmLayoutMode; label: string }> = [
-  { value: 'auto', label: '自动' },
-  { value: 'ring', label: '环形' },
-  { value: 'layered', label: '分层' },
+const LAYOUT_OPTIONS: Array<{ value: FsmLayoutMode; zh: string; en: string }> = [
+  { value: 'auto', zh: '自动', en: 'Auto' },
+  { value: 'ring', zh: '环形', en: 'Ring' },
+  { value: 'layered', zh: '分层', en: 'Layered' },
 ];
 
 export function FsmDiagram({ source }: { source: string }) {
+  const { L } = useI18n();
   const [showRaw, setShowRaw] = useState(false);
   const [layoutMode, setLayoutMode] = useState<FsmLayoutMode>('auto');
   const [hoveredNode, setHoveredNode] = useState<string | null>(null);
@@ -84,10 +86,10 @@ export function FsmDiagram({ source }: { source: string }) {
     return (
       <div className="fsm-box">
         <div className="fsm-head">
-          <span><GitBranch size={14} /> 状态转移图（FSM）</span>
+          <span><GitBranch size={14} /> {L('状态转移图（FSM）', 'State Transition Diagram (FSM)')}</span>
           {parsed && (
             <button type="button" className="mini-action-btn" onClick={() => setShowRaw(false)}>
-              图形视图
+              {L('图形视图', 'Graph View')}
             </button>
           )}
         </div>
@@ -116,10 +118,13 @@ export function FsmDiagram({ source }: { source: string }) {
   return (
     <div className="fsm-box">
       <div className="fsm-head">
-        <span><GitBranch size={14} /> 状态转移图（{parsed.nodes.length} 个状态）</span>
+        <span>
+          <GitBranch size={14} />{' '}
+          {L(`状态转移图（${parsed.nodes.length} 个状态）`, `State Transition Diagram (${parsed.nodes.length} states)`)}
+        </span>
         <div className="fsm-head-actions">
           {parsed.nodes.length >= 3 && (
-            <div className="fsm-mode-switch" role="group" aria-label="状态图布局方式">
+            <div className="fsm-mode-switch" role="group" aria-label={L('状态图布局方式', 'FSM layout mode')}>
               {LAYOUT_OPTIONS.map((opt) => (
                 <button
                   key={opt.value}
@@ -128,13 +133,13 @@ export function FsmDiagram({ source }: { source: string }) {
                   aria-pressed={layoutMode === opt.value}
                   onClick={() => setLayoutMode(opt.value)}
                 >
-                  {opt.label}
+                  {L(opt.zh, opt.en)}
                 </button>
               ))}
             </div>
           )}
           <button type="button" className="mini-action-btn" onClick={() => setShowRaw(true)}>
-            <Code2 size={12} /> Mermaid 源码
+            <Code2 size={12} /> {L('Mermaid 源码', 'Mermaid Source')}
           </button>
         </div>
       </div>
@@ -145,7 +150,7 @@ export function FsmDiagram({ source }: { source: string }) {
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           className={scrollable ? 'fsm-svg-scroll' : undefined}
           role="img"
-          aria-label="有限状态机转移图"
+          aria-label={L('有限状态机转移图', 'Finite state machine diagram')}
           onMouseLeave={() => {
             setHoveredNode(null);
             setHoveredEdge(null);

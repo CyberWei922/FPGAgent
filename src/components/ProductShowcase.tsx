@@ -7,47 +7,90 @@ import {
   Play,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
+import { localizePreset, useI18n } from '../services/i18n';
 import type { PresetProject } from '../types/contracts';
 import { BrandWordmark } from './BrandWordmark';
 
 const REPO_URL = 'https://github.com/CyberWei922/FPGAgent';
 
 const PIPELINE_STEPS = [
-  { step: '01', title: '需求解析', detail: '描述时序、按键与外设行为' },
-  { step: '02', title: '架构蓝图', detail: '拆解端口映射与有限状态机' },
-  { step: '03', title: '流式编码', detail: '词法级输出可综合 Verilog' },
-  { step: '04', title: '静态与自测', detail: 'Lint 体检与多拍向量自修复' },
-  { step: '05', title: '上板仿真', detail: '门级原理图、波形与板卡联动' },
+  {
+    step: '01',
+    title: '需求解析',
+    titleEn: 'Prompt Parsing',
+    detail: '描述时序、按键与外设行为',
+    detailEn: 'Describe timing, keys & peripherals',
+  },
+  {
+    step: '02',
+    title: '架构蓝图',
+    titleEn: 'Blueprint',
+    detail: '拆解端口映射与有限状态机',
+    detailEn: 'Pin mappings & finite state machine',
+  },
+  {
+    step: '03',
+    title: '流式编码',
+    titleEn: 'Streaming RTL',
+    detail: '词法级输出可综合 Verilog',
+    detailEn: 'Token-safe synthesizable Verilog',
+  },
+  {
+    step: '04',
+    title: '静态与自测',
+    titleEn: 'Lint & Verify',
+    detail: 'Lint 体检与多拍向量自修复',
+    detailEn: 'Static lint & multi-cycle auto-repair',
+  },
+  {
+    step: '05',
+    title: '上板仿真',
+    titleEn: 'Live Board',
+    detail: '门级原理图、波形与板卡联动',
+    detailEn: 'Gate netlist, waveforms & virtual board',
+  },
 ] as const;
 
 const DEVELOPERS = [
   {
     index: '01',
     badge: '项目队长',
+    badgeEn: 'Team Lead',
     handle: 'CyberWei922',
     focus: '全栈统筹 · 前端工作台 · 云端部署',
+    focusEn: 'Full-Stack Lead · Workbench UI · Cloud Deploy',
     summary:
       '主导硬件居中工作台交互架构与跨模块公共契约，负责多模型流式接入、联调与 Qoder Sites 部署。',
+    summaryEn:
+      'Leads the hardware-centric workbench architecture and shared module contracts, integrating multi-model streaming and Qoder Sites deployment.',
     url: 'https://github.com/CyberWei922',
     displayUrl: 'github.com/CyberWei922',
   },
   {
     index: '02',
     badge: '核心引擎',
+    badgeEn: 'RTL Engine',
     handle: 'ForrestKang',
     focus: '硬件解析 · 周期仿真引擎 · 教学网表',
+    focusEn: 'Verilog Parser · Cycle Simulator · Netlist',
     summary:
       '构建纯浏览器端 Verilog 解析器、可综合静态 Linter 与周期精确仿真内核，支撑门级网表提取与确定性自测。',
+    summaryEn:
+      'Built the in-browser Verilog parser, synthesizable static linter, and cycle-accurate simulation core powering gate netlists and deterministic self-tests.',
     url: 'https://github.com/ForrestKang',
     displayUrl: 'github.com/ForrestKang',
   },
   {
     index: '03',
     badge: '智能体与案例',
+    badgeEn: 'Agent & Demos',
     handle: 'fzd1210-beep',
     focus: 'AI 智能体闭环 · 校验自修复 · 预置案例',
+    focusEn: 'Agent Harness · Auto-Repair · Preset Library',
     summary:
       '设计多阶段硬件 Agent 规划与校验自修复闭环，构建渐进式排错能力，并沉淀五大经典数字逻辑案例库。',
+    summaryEn:
+      'Designed the multi-stage hardware agent planning and verification self-repair loop, progressive debugging, and five classic digital logic demos.',
     url: 'https://github.com/fzd1210-beep',
     displayUrl: 'github.com/fzd1210-beep',
   },
@@ -182,42 +225,56 @@ export function ProductShowcase({
   onTryPreset: (preset: PresetProject) => void;
   onOpenPresets: () => void;
 }) {
+  const { locale, L } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const ctaRef = useRef<HTMLDivElement>(null);
-  const [showTopbar, setShowTopbar] = useState(false);
-  const featuredPreset = presets.find((p) => p.id === 'traffic-light') ?? presets[0];
+  const topbarRef = useRef<HTMLElement>(null);
+  const [topbarInteractive, setTopbarInteractive] = useState(false);
 
   useEffect(() => {
     const scrollEl = scrollRef.current;
-    const ctaEl = ctaRef.current;
-    if (!scrollEl || !ctaEl) return;
+    const topbarEl = topbarRef.current;
+    if (!scrollEl || !topbarEl) return;
 
-    const updateVisibility = () => {
+    let rafId = 0;
+
+    const applyProgress = () => {
+      rafId = 0;
       const overflowY = window.getComputedStyle(scrollEl).overflowY;
       const usesInnerScroll = overflowY === 'auto' || overflowY === 'scroll';
-      const containerTop = usesInnerScroll ? scrollEl.getBoundingClientRect().top : 0;
-      const ctaBottom = ctaEl.getBoundingClientRect().bottom;
-      setShowTopbar(ctaBottom <= containerTop);
+      const scrollTop = usesInnerScroll ? scrollEl.scrollTop : window.scrollY;
+      const raw = Math.max(0, Math.min(1, (scrollTop - 16) / 220));
+      const eased = raw * raw * (3 - 2 * raw);
+      topbarEl.style.setProperty('--topbar-progress', eased.toFixed(4));
+      setTopbarInteractive((prev) => {
+        const next = eased > 0.12;
+        return prev === next ? prev : next;
+      });
     };
 
-    updateVisibility();
-    scrollEl.addEventListener('scroll', updateVisibility, { passive: true });
-    window.addEventListener('scroll', updateVisibility, { passive: true });
-    window.addEventListener('resize', updateVisibility);
+    const scheduleUpdate = () => {
+      if (!rafId) rafId = window.requestAnimationFrame(applyProgress);
+    };
+
+    applyProgress();
+    scrollEl.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
 
     return () => {
-      scrollEl.removeEventListener('scroll', updateVisibility);
-      window.removeEventListener('scroll', updateVisibility);
-      window.removeEventListener('resize', updateVisibility);
+      if (rafId) window.cancelAnimationFrame(rafId);
+      scrollEl.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('scroll', scheduleUpdate);
+      window.removeEventListener('resize', scheduleUpdate);
     };
   }, []);
 
   return (
-    <main className="showcase-stage" aria-label="FPGAgent 产品介绍">
+    <main className="showcase-stage" aria-label={L('FPGAgent 产品介绍', 'FPGAgent Product Overview')}>
       <header
+        ref={topbarRef}
         className="showcase-topbar"
-        data-visible={showTopbar ? 'true' : 'false'}
-        aria-hidden={!showTopbar}
+        data-interactive={topbarInteractive ? 'true' : 'false'}
+        aria-hidden={!topbarInteractive}
       >
         <div className="showcase-topbar-left">
           <button
@@ -227,34 +284,34 @@ export function ProductShowcase({
               scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            title="回到顶部"
-            aria-label="FPGAgent 回到顶部"
+            title={L('回到顶部', 'Back to top')}
+            aria-label={L('FPGAgent 回到顶部', 'FPGAgent back to top')}
           >
             <BrandWordmark className="showcase-topbar-logo" />
           </button>
           <span className="showcase-topbar-sep" aria-hidden="true" />
-          <span className="showcase-topbar-subtitle">专注于 FPGA 的 AI Agent</span>
+          <span className="showcase-topbar-subtitle">
+            {L('专注于 FPGA 的 AI Agent', 'The AI Agent Built for FPGA')}
+          </span>
         </div>
 
         <div className="showcase-topbar-actions">
           <a
-            className="showcase-ghost-link"
+            className="showcase-topbar-btn"
             href={REPO_URL}
             target="_blank"
             rel="noopener noreferrer"
           >
             <GitHubGlyph size={14} />
-            <span>GitHub</span>
-            <ExternalLink size={12} />
+            <span>{L('开源仓库', 'Open Source')}</span>
           </a>
 
           <button
             type="button"
-            className="primary-button compact-btn"
-            onClick={hasActiveSession ? onReturnWorkbench : onStartDesigning}
+            className="showcase-topbar-btn"
+            onClick={onStartDesigning}
           >
-            {hasActiveSession ? '返回工作台' : '进入工作台'}
-            <ArrowRight size={14} />
+            <span>{L('立即开始', 'Get Started')}</span>
           </button>
         </div>
       </header>
@@ -264,59 +321,56 @@ export function ProductShowcase({
         <section className="showcase-hero">
           <HeroCircuitBackdrop />
           <div className="showcase-hero-inner">
-            <div className="showcase-award-kicker mono">
-              2026 Qoder 高校创造力大赛 · StudyHack 赛道
-            </div>
+            <div className="showcase-hero-main">
+              <div className="showcase-award-kicker mono">
+                {L(
+                  '2026 Qoder 高校创造力大赛 · StudyHack 赛道',
+                  '2026 Qoder Campus Creativity Challenge · StudyHack Track',
+                )}
+              </div>
 
-            <div className="showcase-logo-stage">
-              <BrandWordmark className="showcase-hero-logo" />
-            </div>
+              <div className="showcase-logo-stage">
+                <BrandWordmark className="showcase-hero-logo" />
+              </div>
 
-            <h1 className="showcase-hero-title">专注于 FPGA 的 AI Agent</h1>
+              <h1 className="showcase-hero-title">
+                {L('专注于 FPGA 的 AI Agent', 'The AI Agent Built for FPGA')}
+              </h1>
 
-            <p className="showcase-hero-lead">
-              输入自然语言硬件需求，自动规划状态机蓝图、流式生成可综合 Verilog，并在浏览器内完成周期精确自测、门级仿真与虚拟开发板验证。
-            </p>
+              <p className="showcase-hero-lead">
+                {L(
+                  '输入自然语言硬件需求，自动规划状态机蓝图、流式生成可综合 Verilog，并在浏览器内完成周期精确自测、门级仿真与虚拟开发板验证。',
+                  'Describe hardware in natural language to plan FSM blueprints, stream synthesizable Verilog, and run cycle-accurate self-tests, gate simulation, and virtual board verification in your browser.',
+                )}
+              </p>
 
-            <div className="showcase-hero-cta" ref={ctaRef}>
-              <button
-                type="button"
-                className="primary-button showcase-cta-primary"
-                onClick={hasActiveSession ? onReturnWorkbench : onStartDesigning}
-              >
-                {hasActiveSession ? '返回当前工作台' : '立即开始设计电路'}
-                <ArrowRight size={15} />
-              </button>
-
-              {featuredPreset && (
+              <div className="showcase-hero-cta">
                 <button
                   type="button"
-                  className="outline-button showcase-cta-secondary"
-                  onClick={() => onTryPreset(featuredPreset)}
+                  className="showcase-cta-btn"
+                  onClick={onStartDesigning}
                 >
-                  <Play size={14} />
-                  试跑「{featuredPreset.name}」
+                  <span>{L('立即开始', 'Get Started')}</span>
                 </button>
-              )}
 
-              <a
-                className="showcase-cta-repo"
-                href={REPO_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <GitHubGlyph size={15} />
-                <span>开源仓库</span>
-                <ExternalLink size={12} />
-              </a>
+                <a
+                  className="showcase-cta-btn"
+                  href={REPO_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <GitHubGlyph size={15} />
+                  <span>{L('开源仓库', 'Open Source')}</span>
+                </a>
+              </div>
             </div>
 
-            <ol className="showcase-pipeline" aria-label="FPGAgent 硬件闭环流程">
+            <ol className="showcase-pipeline" aria-label={L('FPGAgent 硬件闭环流程', 'FPGAgent hardware workflow')}>
               {PIPELINE_STEPS.map((item) => (
                 <li key={item.step} className="showcase-pipe-node">
                   <span className="showcase-pipe-num mono">{item.step}</span>
-                  <strong>{item.title}</strong>
-                  <span>{item.detail}</span>
+                  <strong>{L(item.title, item.titleEn)}</strong>
+                  <span>{L(item.detail, item.detailEn)}</span>
                 </li>
               ))}
             </ol>
@@ -326,32 +380,60 @@ export function ProductShowcase({
         {/* 2. Asymmetric Capabilities Showcase */}
         <section className="showcase-section" aria-labelledby="showcase-capabilities-title">
           <div className="showcase-section-head">
-            <h2 id="showcase-capabilities-title">以硬件验证为中心的工作台</h2>
+            <h2 id="showcase-capabilities-title">
+              {L('以硬件验证为中心的工作台', 'A Hardware-First Verification Workbench')}
+            </h2>
             <p>
-              从状态机规划、可综合代码校验到门级实时仿真，全部在浏览器本地执行，无需配置本地 EDA 工具链。
+              {L(
+                '从状态机规划、可综合代码校验到门级实时仿真，全部在浏览器本地执行，无需配置本地 EDA 工具链。',
+                'From FSM planning and synthesizable linting to real-time gate simulation — everything runs locally in your browser with zero EDA setup.',
+              )}
             </p>
           </div>
 
           <div className="showcase-bento">
             <article className="showcase-bento-lead">
               <div className="showcase-bento-copy">
-                <span className="showcase-feature-kicker mono">01 · 硬件主视图</span>
-                <h3>对话退居侧栏，原理图、波形与板卡占据中央</h3>
+                <span className="showcase-feature-kicker mono">
+                  {L('01 · 硬件主视图', '01 · HARDWARE STAGE')}
+                </span>
+                <h3>
+                  {L(
+                    '对话退居侧栏，原理图、波形与板卡占据中央',
+                    'Chat in the Sidebar; Schematics, Waveforms & Board Center Stage',
+                  )}
+                </h3>
                 <p>
-                  将 Agent 的推理轨迹与自测清单收纳于可折叠侧栏；主视区留给高电平实时高亮的门级原理图、多通道逻辑波形与虚拟开发板，支持实时、0.2× 慢放与单步时钟推进。
+                  {L(
+                    '将 Agent 的推理轨迹与自测清单收纳于可折叠侧栏；主视区留给高电平实时高亮的门级原理图、多通道逻辑波形与虚拟开发板，支持实时、0.2× 慢放与单步时钟推进。',
+                    'Keep agent reasoning and test checklists neatly in a collapsible sidebar while the main canvas showcases live gate-level schematics, multi-channel waveforms, and a virtual board with 1×, 0.2× slow-mo, and single-step clocking.',
+                  )}
                 </p>
                 <div className="showcase-spec-line mono">
-                  高电平实时追踪 · 实时 / 0.2× / 单步时钟 · 一键导出 .v 与 tb_top.v
+                  {L(
+                    '高电平实时追踪 · 实时 / 0.2× / 单步时钟 · 一键导出 .v 与 tb_top.v',
+                    'LIVE HIGH-LEVEL TRACE · 1× / 0.2× / STEP CLOCK · EXPORT .v & tb_top.v',
+                  )}
                 </div>
               </div>
               <WorkbenchPreviewArtwork />
             </article>
 
             <article className="showcase-bento-card">
-              <span className="showcase-feature-kicker mono">02 · 浏览器 RTL 内核</span>
-              <h3>写完即编译，在上板前拦截 RTL 常见缺陷</h3>
+              <span className="showcase-feature-kicker mono">
+                {L('02 · 浏览器 RTL 内核', '02 · IN-BROWSER RTL ENGINE')}
+              </span>
+              <h3>
+                {L(
+                  '写完即编译，在上板前拦截 RTL 常见缺陷',
+                  'Compile as You Stream, Catch RTL Pitfalls Before Synthesis',
+                )}
+              </h3>
               <p>
-                纯前端 Verilog 解析器、可综合静态 Linter 与周期精确仿真器随流式代码同步运行：自动检出阻塞赋值混用、隐含锁存器与位宽截断，向量失配直接定位拍数与源码行号并触发自修复。
+                {L(
+                  '纯前端 Verilog 解析器、可综合静态 Linter 与周期精确仿真器随流式代码同步运行：自动检出阻塞赋值混用、隐含锁存器与位宽截断，向量失配直接定位拍数与源码行号并触发自修复。',
+                  'A pure-frontend Verilog parser, synthesizable linter, and cycle-accurate simulator run alongside streaming code — catching blocking/non-blocking mix-ups, inferred latches, and width truncation, then auto-repairing failing vectors.',
+                )}
               </p>
               <div className="showcase-code-preview" aria-hidden="true">
                 <div className="showcase-code-lines mono">
@@ -382,30 +464,43 @@ export function ProductShowcase({
             </article>
 
             <article className="showcase-bento-card">
-              <span className="showcase-feature-kicker mono">03 · 预置案例库</span>
-              <h3>内置五大经典案例，零消耗实时上板验证</h3>
+              <span className="showcase-feature-kicker mono">
+                {L('03 · 预置案例库', '03 · PRESET LIBRARY')}
+              </span>
+              <h3>
+                {L(
+                  '内置五大经典案例，零消耗实时上板验证',
+                  'Five Classic Digital Logic Demos, Zero Token Cost',
+                )}
+              </h3>
               <p>
-                内置 5 套零 Token 消耗的数字逻辑工程案例，涵盖状态机、安全逻辑、串行检测与计数器。一键上板即可实时观察门级信号跳变、多通道波形与虚拟外设联动。
+                {L(
+                  '内置 5 套零 Token 消耗的数字逻辑工程案例，涵盖状态机、串行检测、计数器、抢答仲裁与 OLED 游戏。一键上板即可实时观察门级信号跳变、多通道波形与虚拟外设联动。',
+                  'Five ready-to-run FPGA demos covering FSMs, serial detection, counters, arbitration, and OLED games. Launch any circuit in one click to inspect live gate transitions, waveforms, and interactive peripherals.',
+                )}
               </p>
               <div className="showcase-preset-launcher">
                 <div className="showcase-launcher-head">
-                  <span>点击任意内置案例直接上板运行</span>
+                  <span>{L('点击任意内置案例直接上板运行', 'Click any built-in demo to run live')}</span>
                   <button type="button" className="text-link" onClick={onOpenPresets}>
-                    <LayoutGrid size={12} /> 案例库
+                    <LayoutGrid size={12} /> {L('案例库', 'All Demos')}
                   </button>
                 </div>
                 <div className="showcase-preset-pills">
-                  {presets.map((preset) => (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      className="showcase-preset-pill"
-                      onClick={() => onTryPreset(preset)}
-                    >
-                      <Play size={11} />
-                      <span>{preset.name}</span>
-                    </button>
-                  ))}
+                  {presets.map((preset) => {
+                    const localized = localizePreset(preset, locale);
+                    return (
+                      <button
+                        key={preset.id}
+                        type="button"
+                        className="showcase-preset-pill"
+                        onClick={() => onTryPreset(preset)}
+                      >
+                        <Play size={11} />
+                        <span>{localized.name}</span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             </article>
@@ -415,9 +510,14 @@ export function ProductShowcase({
         {/* 3. Open Source & Engineering Team */}
         <section className="showcase-section" aria-labelledby="showcase-team-title">
           <div className="showcase-section-head">
-            <h2 id="showcase-team-title">开源仓库与开发团队</h2>
+            <h2 id="showcase-team-title">
+              {L('开源仓库与开发团队', 'Open Source & Engineering Team')}
+            </h2>
             <p>
-              三人小队全链路开源，覆盖浏览器 RTL 仿真内核、多阶段硬件 Agent 闭环与交互工作台。
+              {L(
+                '三人小队全链路开源，覆盖浏览器 RTL 仿真内核、多阶段硬件 Agent 闭环与交互工作台。',
+                'Built end-to-end in the open by a three-engineer team — covering the browser RTL core, multi-stage hardware agent harness, and interactive workbench.',
+              )}
             </p>
           </div>
 
@@ -442,7 +542,7 @@ export function ProductShowcase({
               </div>
             </div>
             <span className="showcase-repo-cta">
-              前往 GitHub 查看源码 <ExternalLink size={14} />
+              {L('前往 GitHub 查看源码', 'View Source on GitHub')} <ExternalLink size={14} />
             </span>
           </a>
 
@@ -457,17 +557,17 @@ export function ProductShowcase({
               >
                 <div className="showcase-author-top">
                   <span className="showcase-author-index mono">
-                    {dev.index} · {dev.badge}
+                    {dev.index} · {L(dev.badge, dev.badgeEn)}
                   </span>
                   <ExternalLink size={14} className="showcase-author-ext" />
                 </div>
 
                 <div className="showcase-author-identity">
                   <strong className="showcase-author-handle">@{dev.handle}</strong>
-                  <span className="showcase-author-focus">{dev.focus}</span>
+                  <span className="showcase-author-focus">{L(dev.focus, dev.focusEn)}</span>
                 </div>
 
-                <p className="showcase-author-summary">{dev.summary}</p>
+                <p className="showcase-author-summary">{L(dev.summary, dev.summaryEn)}</p>
 
                 <div className="showcase-author-foot mono">
                   <GitHubGlyph size={13} />
@@ -482,9 +582,12 @@ export function ProductShowcase({
         <footer className="showcase-closing">
           <div className="showcase-closing-card">
             <div className="showcase-closing-copy">
-              <h2>开始构建你的第一块数字电路</h2>
+              <h2>{L('开始构建你的第一块数字电路', 'Start Building Your First Digital Circuit')}</h2>
               <p>
-                提供免费云端体验额度与零消耗本地案例，也可在设置中接入 DeepSeek、GLM、通义千问等 OpenAI 兼容模型。
+                {L(
+                  '提供免费云端体验额度与零消耗本地案例，也可在设置中接入 DeepSeek、GLM、通义千问等 OpenAI 兼容模型。',
+                  'Includes free cloud quota and zero-token local demos, or connect DeepSeek, GLM, Qwen, and any OpenAI-compatible model in Settings.',
+                )}
               </p>
             </div>
             <div className="showcase-closing-actions">
@@ -493,7 +596,9 @@ export function ProductShowcase({
                 className="primary-button showcase-cta-primary"
                 onClick={hasActiveSession ? onReturnWorkbench : onStartDesigning}
               >
-                {hasActiveSession ? '返回当前工作台' : '立即开始设计'}
+                {hasActiveSession
+                  ? L('返回当前工作台', 'Back to Workbench')
+                  : L('立即开始设计', 'Start Designing')}
                 <ArrowRight size={15} />
               </button>
               <button
@@ -501,13 +606,19 @@ export function ProductShowcase({
                 className="outline-button showcase-cta-secondary"
                 onClick={onOpenPresets}
               >
-                <LayoutGrid size={14} /> 浏览全部 {presets.length} 个案例
+                <LayoutGrid size={14} />{' '}
+                {L(`浏览全部 ${presets.length} 个案例`, `Browse All ${presets.length} Demos`)}
               </button>
             </div>
           </div>
 
           <div className="showcase-footnote">
-            <span>FPGAgent · 2026 Qoder 高校创造力大赛 StudyHack 赛道作品</span>
+            <span>
+              {L(
+                'FPGAgent · 2026 Qoder 高校创造力大赛 StudyHack 赛道作品',
+                'FPGAgent · 2026 Qoder Campus Creativity Challenge (StudyHack Track)',
+              )}
+            </span>
             <a href={REPO_URL} target="_blank" rel="noopener noreferrer">
               GitHub · CyberWei922/FPGAgent
             </a>

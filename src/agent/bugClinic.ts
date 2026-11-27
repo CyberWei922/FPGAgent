@@ -15,36 +15,6 @@ function lineOf(code: string, needle: string): number {
   return index < 0 ? 1 : code.slice(0, index).split('\n').length;
 }
 
-/** 4 位密码锁：复位分支漏掉状态寄存器的复位。 */
-export function makePasswordLockBugs(fixedCode: string): BugClinicCase[] {
-  const from = `        if (!rst_n) begin
-            step     <= 2'd0;
-            unlocked <= 1'b0;
-            key0_d   <= 1'b0;
-        end else begin`;
-  const to = `        if (!rst_n) begin
-            key0_d   <= 1'b0;
-        end else begin`;
-  const buggyCode = replaceOnce(fixedCode, from, to, 'password-missing-reset');
-  return [
-    {
-      id: 'password-missing-reset',
-      title: '隐蔽故障：复位漏掉密码进度寄存器',
-      pitfallTag: 'missing-reset',
-      symptom: '中途按下复位后数码管仍显示旧的密码进度，上电时也可能残留随机状态',
-      buggyCode,
-      diagnosis: {
-        level1Hint: '复位那一拍，所有需要记住状态的寄存器都回到已知值了吗？',
-        level2Cause:
-          '复位分支只清了 key0_d，step 与 unlocked 没有复位：进度保留、开锁灯可能残留，仿真初值也不确定。',
-        level3PatchCode: fixedCode,
-        highlightLine: lineOf(buggyCode, "key0_d   <= 1'b0;"),
-        highlightCycle: 14,
-      },
-    },
-  ];
-}
-
 /** 1011 序列检测器：状态机转移写错导致漏检（重叠前缀丢失）。 */
 export function makeSequenceDetectorBugs(fixedCode: string): BugClinicCase[] {
   const transitionBuggy = replaceOnce(
@@ -130,6 +100,33 @@ export function makeBuzzerBugs(fixedCode: string): BugClinicCase[] {
         level2Cause: '分支条件删掉了 !locked 判断，锁存后仍继续仲裁，后按下的按键会改写 winner。',
         level3PatchCode: fixedCode,
         highlightLine: lineOf(buggyCode, 'end else begin'),
+      },
+    },
+  ];
+}
+
+/** 贪吃蛇：吃食物判定恒为假，导致无法得分与变长。 */
+export function makeSnakeBugs(fixedCode: string): BugClinicCase[] {
+  const buggyCode = replaceOnce(
+    fixedCode,
+    'if (will_eat) begin',
+    "if (1'b0) begin",
+    'snake-no-eat',
+  );
+  return [
+    {
+      id: 'snake-no-eat',
+      title: '隐蔽故障：吃食物判定恒为假，无法得分与变长',
+      pitfallTag: 'condition-stuck',
+      symptom: '蛇头经过食物坐标后不会触发得分提示音，数码管分数保持 0000，蛇身长度也不增加',
+      buggyCode,
+      diagnosis: {
+        level1Hint: '当蛇头下一步坐标等于食物坐标时，计分与增长分支真的被执行了吗？',
+        level2Cause:
+          "判断吃食物的条件被写死为 1'b0，导致 will_eat 无法触发计分、长度自增和重新生成食物。",
+        level3PatchCode: fixedCode,
+        highlightLine: lineOf(buggyCode, "if (1'b0) begin"),
+        highlightCycle: 17,
       },
     },
   ];

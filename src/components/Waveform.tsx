@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useI18n } from '../services/i18n';
 import type { SignalSample } from '../types/contracts';
 
 const LABEL = 43;
@@ -21,6 +22,7 @@ export function Waveform({ title, samples, failureCycle, ledFocus = false, autoF
   autoFollow?: boolean;
   showCycleMeta?: boolean;
 }) {
+  const { L } = useI18n();
   const frameRef = useRef<HTMLDivElement>(null);
   const stickToEndRef = useRef(true);
   const prevCycleRef = useRef<number | undefined>(undefined);
@@ -61,15 +63,29 @@ export function Waveform({ title, samples, failureCycle, ledFocus = false, autoF
 
   return (
     <section className="instrument-section waveform-section">
-      <div className="section-heading"><h2>{title}</h2>{showCycleMeta && samples.length > 0 && <span className="instrument-meta mono">周期 {samples.at(-1)?.cycle}</span>}</div>
+      <div className="section-heading">
+        <h2>{title}</h2>
+        {showCycleMeta && samples.length > 0 && (
+          <span className="instrument-meta mono">
+            {L(`周期 ${samples.at(-1)?.cycle}`, `Cycle ${samples.at(-1)?.cycle}`)}
+          </span>
+        )}
+      </div>
       <div
         ref={frameRef}
         className="waveform-frame"
         tabIndex={samples.length > 10 ? 0 : undefined}
         onScroll={handleScroll}
       >
-        {samples.length === 0 ? <p className="instrument-empty">等待仿真采样</p> : (
-          <svg style={{ minWidth: `${width}px` }} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`${title}，${samples.length} 个采样周期`}>
+        {samples.length === 0 ? (
+          <p className="instrument-empty">{L('等待仿真采样', 'Waiting for simulation samples')}</p>
+        ) : (
+          <svg
+            style={{ minWidth: `${width}px` }}
+            viewBox={`0 0 ${width} ${height}`}
+            role="img"
+            aria-label={L(`${title}，${samples.length} 个采样周期`, `${title}, ${samples.length} sampled cycles`)}
+          >
             {Array.from({ length: Math.max(10, samples.length) + 1 }, (_, index) => <line className="wave-grid" key={index} x1={LABEL + index * CELL} x2={LABEL + index * CELL} y1="9" y2={height - 17} />)}
             {channels.map((channel, row) => {
               const high = row * ROW + 11;

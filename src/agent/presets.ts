@@ -3,121 +3,11 @@
 import type { PresetProject, TestVectorStep } from '../types/contracts';
 import {
   makeBuzzerBugs,
-  makePasswordLockBugs,
   makeSequenceDetectorBugs,
+  makeSnakeBugs,
   makeStopwatchBugs,
 } from './bugClinic';
 import { MOCK_PRESETS } from './mockPresets';
-
-// ============================================================
-// 4 位数字密码锁
-// ============================================================
-
-export const PASSWORD_LOCK_CODE = `module top (
-    input         clk,
-    input         rst_n,
-    input  [3:0]  key,
-    input  [7:0]  sw,
-    output [7:0]  led,
-    output [2:0]  traffic,
-    output [15:0] seg
-);
-    localparam P1 = 4'd1;
-    localparam P2 = 4'd2;
-    localparam P3 = 4'd3;
-    localparam P4 = 4'd4;
-
-    reg [1:0] step;
-    reg       unlocked;
-    reg       key0_d;
-
-    wire key0_press;
-    wire lock_press;
-    assign key0_press = key[0] & ~key0_d;
-    assign lock_press = key[1];
-
-    always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            step     <= 2'd0;
-            unlocked <= 1'b0;
-            key0_d   <= 1'b0;
-        end else begin
-            key0_d <= key[0];
-            if (lock_press) begin
-                step     <= 2'd0;
-                unlocked <= 1'b0;
-            end else if (key0_press) begin
-                if (step == 2'd0) begin
-                    if (sw[3:0] == P1) step <= 2'd1; else step <= 2'd0;
-                end else if (step == 2'd1) begin
-                    if (sw[3:0] == P2) step <= 2'd2; else step <= 2'd0;
-                end else if (step == 2'd2) begin
-                    if (sw[3:0] == P3) step <= 2'd3; else step <= 2'd0;
-                end else begin
-                    if (sw[3:0] == P4) begin
-                        step     <= 2'd0;
-                        unlocked <= 1'b1;
-                    end else begin
-                        step <= 2'd0;
-                    end
-                end
-            end
-        end
-    end
-
-    assign led = {7'd0, unlocked};
-    assign seg = {12'd0, 2'b00, step};
-    assign traffic = 3'b000;
-endmodule
-`;
-
-const PASSWORD_LOCK_VECTORS: TestVectorStep[] = [
-  { cycle: 0, inputs: { rst_n: 0, key: 0, sw: 0 }, expect: { led: 0, seg: 0 }, note: '复位后关闭开锁灯，进度清零' },
-  { cycle: 1, inputs: { rst_n: 1, key: 0, sw: 1 }, expect: { seg: 0 }, note: '松开复位，准备输入' },
-  { cycle: 2, inputs: { rst_n: 1, key: 1, sw: 1 }, expect: { seg: 1 }, note: 'KEY0 提交数字 1，进度变为 1' },
-  { cycle: 3, inputs: { rst_n: 1, key: 0, sw: 2 }, expect: { seg: 1 }, note: '松开 KEY0，等待下一位' },
-  { cycle: 4, inputs: { rst_n: 1, key: 1, sw: 2 }, expect: { seg: 2 }, note: '提交数字 2，进度变为 2' },
-  { cycle: 5, inputs: { rst_n: 1, key: 0, sw: 3 }, expect: { seg: 2 }, note: '松开 KEY0' },
-  { cycle: 6, inputs: { rst_n: 1, key: 1, sw: 3 }, expect: { seg: 3 }, note: '提交数字 3，进度变为 3' },
-  { cycle: 7, inputs: { rst_n: 1, key: 0, sw: 4 }, expect: { seg: 3 }, note: '松开 KEY0' },
-  { cycle: 8, inputs: { rst_n: 1, key: 1, sw: 4 }, expect: { led: 1, seg: 0 }, note: '提交数字 4，开锁且进度复位' },
-  { cycle: 9, inputs: { rst_n: 1, key: 0, sw: 9 }, expect: { led: 1 }, note: '开锁后保持点亮' },
-  { cycle: 10, inputs: { rst_n: 1, key: 1, sw: 9 }, expect: { led: 1 }, note: '开锁状态下错误数字不会上锁' },
-  { cycle: 11, inputs: { rst_n: 1, key: 2, sw: 0 }, expect: { led: 0, seg: 0 }, note: 'KEY1 重新上锁并清空进度' },
-  { cycle: 12, inputs: { rst_n: 1, key: 0, sw: 1 }, expect: { seg: 0 }, note: '重新开始输入' },
-  { cycle: 13, inputs: { rst_n: 1, key: 1, sw: 1 }, expect: { seg: 1 }, note: '提交数字 1，进度变为 1' },
-  { cycle: 14, inputs: { rst_n: 0, key: 0, sw: 0 }, expect: { led: 0, seg: 0 }, note: '中途复位：开锁灯熄灭且密码进度清零' },
-];
-
-const PASSWORD_LOCK_BLUEPRINT: PresetProject['blueprint'] = {
-  title: '4 位数字密码锁',
-  summary: '依次输入 1、2、3、4 解锁；KEY0 提交当前拨码数字，KEY1 重新上锁，LED0 指示开锁。',
-  behaviors: [
-    '复位后密码进度为 0，LED0 熄灭',
-    'KEY0 出现上升沿时提交 sw[3:0] 当前数字',
-    '数字与当前期望位一致则进度加一，不一致则进度清零',
-    '第 4 位正确后 LED0 常亮，直到 KEY1 重新上锁',
-    'KEY1 按下时进度清零并关闭 LED0',
-  ],
-  pinMappings: [
-    { port: 'key[0]', role: '提交密码位' },
-    { port: 'key[1]', role: '重新上锁' },
-    { port: 'sw[3:0]', role: '密码数字输入' },
-    { port: 'led[0]', role: '开锁指示灯' },
-    { port: 'seg[3:0]', role: '已输入正确位数' },
-  ],
-  mermaidFsm: `stateDiagram-v2
-    [*] --> STEP0
-    STEP0 --> STEP1: KEY0 且数字=1
-    STEP1 --> STEP2: KEY0 且数字=2
-    STEP2 --> STEP3: KEY0 且数字=3
-    STEP3 --> UNLOCKED: KEY0 且数字=4
-    STEP0 --> STEP0: 数字错误
-    STEP1 --> STEP0: 数字错误
-    STEP2 --> STEP0: 数字错误
-    STEP3 --> STEP0: 数字错误
-    UNLOCKED --> STEP0: KEY1 重新上锁`,
-};
 
 // ============================================================
 // 1011 序列检测器
@@ -410,24 +300,401 @@ const BUZZER_BLUEPRINT: PresetProject['blueprint'] = {
 
 // ============================================================
 
+// ============================================================
+// 16×8 单色 OLED 贪吃蛇（V3 屏幕 + 方向键游戏案例）
+// ============================================================
+
+export const SNAKE_CODE = `module top (
+    input            clk,
+    input            rst_n,
+    input      [3:0] key,
+    input      [7:0] sw,
+    output     [7:0] led,
+    output     [2:0] traffic,
+    output    [15:0] seg,
+    output     [3:0] tone,
+    output reg [3:0] screen_x,
+    output reg [2:0] screen_y,
+    output reg [7:0] screen_data,
+    output reg [1:0] screen_cmd
+);
+    localparam ST_INIT = 2'd0;
+    localparam ST_PLAY = 2'd1;
+    localparam ST_OVER = 2'd2;
+
+    localparam DIR_UP    = 2'd0;
+    localparam DIR_DOWN  = 2'd1;
+    localparam DIR_LEFT  = 2'd2;
+    localparam DIR_RIGHT = 2'd3;
+
+    localparam TILE_EMPTY = 8'h00;
+    localparam TILE_HEAD  = 8'h83;
+    localparam TILE_BODY  = 8'h84;
+    localparam TILE_FOOD  = 8'h85;
+
+    reg [1:0] state;
+    reg [3:0] sub;
+    reg [1:0] dir;
+    reg [1:0] next_dir;
+    reg [5:0] slen;
+    reg [3:0] sx [0:31];
+    reg [2:0] sy [0:31];
+    reg [3:0] food_x;
+    reg [2:0] food_y;
+    reg [3:0] prev_hx;
+    reg [2:0] prev_hy;
+    reg [3:0] tail_x;
+    reg [2:0] tail_y;
+    reg [3:0] score_lo;
+    reg [3:0] score_hi;
+    reg [7:0] lfsr;
+    reg       ate_r;
+    reg [3:0] tone_r;
+
+    reg [1:0] eff_dir;
+    reg [3:0] cand_x;
+    reg [2:0] cand_y;
+    reg       hit_wall;
+    reg       will_eat;
+    reg       hit_self;
+    reg       food_busy;
+
+    wire [4:0] tail_idx;
+    assign tail_idx = (slen > 6'd31) ? 5'd31 : (slen[4:0] - 5'd1);
+
+    integer j;
+    integer k;
+
+    always @(*) begin
+        eff_dir = next_dir;
+        if (key[0] && dir != DIR_DOWN)       eff_dir = DIR_UP;
+        else if (key[1] && dir != DIR_UP)    eff_dir = DIR_DOWN;
+        else if (key[2] && dir != DIR_RIGHT) eff_dir = DIR_LEFT;
+        else if (key[3] && dir != DIR_LEFT)  eff_dir = DIR_RIGHT;
+
+        cand_x   = sx[0];
+        cand_y   = sy[0];
+        hit_wall = 1'b0;
+        case (eff_dir)
+            DIR_UP: begin
+                if (sy[0] == 3'd0) hit_wall = 1'b1;
+                else cand_y = sy[0] - 3'd1;
+            end
+            DIR_DOWN: begin
+                if (sy[0] == 3'd7) hit_wall = 1'b1;
+                else cand_y = sy[0] + 3'd1;
+            end
+            DIR_LEFT: begin
+                if (sx[0] == 4'd0) hit_wall = 1'b1;
+                else cand_x = sx[0] - 4'd1;
+            end
+            default: begin
+                if (sx[0] == 4'd15) hit_wall = 1'b1;
+                else cand_x = sx[0] + 4'd1;
+            end
+        endcase
+
+        will_eat = (!hit_wall) && (cand_x == food_x) && (cand_y == food_y);
+
+        hit_self = 1'b0;
+        for (j = 0; j < 32; j = j + 1) begin
+            if ((j < slen) && (will_eat || ((j + 1) < slen))) begin
+                if ((sx[j] == cand_x) && (sy[j] == cand_y)) begin
+                    hit_self = 1'b1;
+                end
+            end
+        end
+
+        food_busy = 1'b0;
+        for (j = 0; j < 32; j = j + 1) begin
+            if ((j < slen) && (sx[j] == food_x) && (sy[j] == food_y)) begin
+                food_busy = 1'b1;
+            end
+        end
+    end
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            state       <= ST_INIT;
+            sub         <= 4'd0;
+            dir         <= DIR_RIGHT;
+            next_dir    <= DIR_RIGHT;
+            slen        <= 6'd3;
+            sx[0]       <= 4'd6; sy[0] <= 3'd3;
+            sx[1]       <= 4'd5; sy[1] <= 3'd3;
+            sx[2]       <= 4'd4; sy[2] <= 3'd3;
+            for (k = 3; k < 32; k = k + 1) begin
+                sx[k] <= 4'd0;
+                sy[k] <= 3'd0;
+            end
+            food_x      <= 4'd10;
+            food_y      <= 3'd3;
+            prev_hx     <= 4'd6;
+            prev_hy     <= 3'd3;
+            tail_x      <= 4'd4;
+            tail_y      <= 3'd3;
+            score_lo    <= 4'd0;
+            score_hi    <= 4'd0;
+            lfsr        <= 8'h5A;
+            ate_r       <= 1'b0;
+            tone_r      <= 4'd0;
+            screen_x    <= 4'd0;
+            screen_y    <= 3'd0;
+            screen_data <= TILE_EMPTY;
+            screen_cmd  <= 2'b10;
+        end else begin
+            lfsr       <= {lfsr[6:0], lfsr[7] ^ lfsr[5] ^ lfsr[4] ^ lfsr[3]};
+            tone_r     <= 4'd0;
+            screen_cmd <= 2'b00;
+
+            case (state)
+                ST_INIT: begin
+                    case (sub)
+                        4'd0: begin
+                            screen_x    <= food_x;
+                            screen_y    <= food_y;
+                            screen_data <= TILE_FOOD;
+                            screen_cmd  <= 2'b01;
+                            sub         <= 4'd1;
+                        end
+                        4'd1: begin
+                            screen_x    <= sx[2];
+                            screen_y    <= sy[2];
+                            screen_data <= TILE_BODY;
+                            screen_cmd  <= 2'b01;
+                            sub         <= 4'd2;
+                        end
+                        4'd2: begin
+                            screen_x    <= sx[1];
+                            screen_y    <= sy[1];
+                            screen_data <= TILE_BODY;
+                            screen_cmd  <= 2'b01;
+                            sub         <= 4'd3;
+                        end
+                        default: begin
+                            screen_x    <= sx[0];
+                            screen_y    <= sy[0];
+                            screen_data <= TILE_HEAD;
+                            screen_cmd  <= 2'b01;
+                            state       <= ST_PLAY;
+                            sub         <= 4'd0;
+                        end
+                    endcase
+                end
+
+                ST_PLAY: begin
+                    if (key[0] && dir != DIR_DOWN)       next_dir <= DIR_UP;
+                    else if (key[1] && dir != DIR_UP)    next_dir <= DIR_DOWN;
+                    else if (key[2] && dir != DIR_RIGHT) next_dir <= DIR_LEFT;
+                    else if (key[3] && dir != DIR_LEFT)  next_dir <= DIR_RIGHT;
+
+                    case (sub)
+                        4'd0: begin
+                            if (hit_wall || hit_self) begin
+                                state      <= ST_OVER;
+                                sub        <= 4'd0;
+                                tone_r     <= 4'd15;
+                                screen_cmd <= 2'b10;
+                            end else begin
+                                dir      <= eff_dir;
+                                next_dir <= eff_dir;
+                                prev_hx  <= sx[0];
+                                prev_hy  <= sy[0];
+                                tail_x   <= sx[tail_idx];
+                                tail_y   <= sy[tail_idx];
+
+                                for (k = 31; k > 0; k = k - 1) begin
+                                    sx[k] <= sx[k - 1];
+                                    sy[k] <= sy[k - 1];
+                                end
+                                sx[0] <= cand_x;
+                                sy[0] <= cand_y;
+
+                                screen_x    <= cand_x;
+                                screen_y    <= cand_y;
+                                screen_data <= TILE_HEAD;
+                                screen_cmd  <= 2'b01;
+
+                                if (will_eat) begin
+                                    ate_r  <= 1'b1;
+                                    tone_r <= 4'd14;
+                                    if (slen < 6'd32) slen <= slen + 6'd1;
+                                    if (score_lo == 4'd9) begin
+                                        score_lo <= 4'd0;
+                                        if (score_hi < 4'd9) score_hi <= score_hi + 4'd1;
+                                    end else begin
+                                        score_lo <= score_lo + 4'd1;
+                                    end
+                                    food_x <= food_x + 4'd5 + {2'd0, lfsr[1:0]};
+                                    food_y <= food_y + 3'd3 + {2'd0, lfsr[2]};
+                                end else begin
+                                    ate_r <= 1'b0;
+                                    if (eff_dir != dir) tone_r <= 4'd13;
+                                end
+                                sub <= 4'd1;
+                            end
+                        end
+
+                        4'd1: begin
+                            screen_x    <= prev_hx;
+                            screen_y    <= prev_hy;
+                            screen_data <= TILE_BODY;
+                            screen_cmd  <= 2'b01;
+                            sub         <= 4'd2;
+                        end
+
+                        4'd2: begin
+                            if (ate_r) begin
+                                if (food_busy) begin
+                                    food_x <= food_x + 4'd3;
+                                    food_y <= food_y + 3'd1;
+                                end else begin
+                                    screen_x    <= food_x;
+                                    screen_y    <= food_y;
+                                    screen_data <= TILE_FOOD;
+                                    screen_cmd  <= 2'b01;
+                                    ate_r       <= 1'b0;
+                                    sub         <= 4'd3;
+                                end
+                            end else begin
+                                screen_x    <= tail_x;
+                                screen_y    <= tail_y;
+                                screen_data <= TILE_EMPTY;
+                                screen_cmd  <= 2'b01;
+                                sub         <= 4'd3;
+                            end
+                        end
+
+                        default: begin
+                            screen_x    <= food_x;
+                            screen_y    <= food_y;
+                            screen_data <= TILE_FOOD;
+                            screen_cmd  <= 2'b01;
+                            sub         <= 4'd0;
+                        end
+                    endcase
+                end
+
+                default: begin
+                    case (sub)
+                        4'd0:  begin screen_x <= 4'd3;  screen_y <= 3'd3; screen_data <= 8'h47; screen_cmd <= 2'b01; sub <= 4'd1;  end
+                        4'd1:  begin screen_x <= 4'd4;  screen_y <= 3'd3; screen_data <= 8'h41; screen_cmd <= 2'b01; sub <= 4'd2;  end
+                        4'd2:  begin screen_x <= 4'd5;  screen_y <= 3'd3; screen_data <= 8'h4D; screen_cmd <= 2'b01; sub <= 4'd3;  end
+                        4'd3:  begin screen_x <= 4'd6;  screen_y <= 3'd3; screen_data <= 8'h45; screen_cmd <= 2'b01; sub <= 4'd4;  end
+                        4'd4:  begin screen_x <= 4'd7;  screen_y <= 3'd3; screen_data <= 8'h20; screen_cmd <= 2'b01; sub <= 4'd5;  end
+                        4'd5:  begin screen_x <= 4'd8;  screen_y <= 3'd3; screen_data <= 8'h4F; screen_cmd <= 2'b01; sub <= 4'd6;  end
+                        4'd6:  begin screen_x <= 4'd9;  screen_y <= 3'd3; screen_data <= 8'h56; screen_cmd <= 2'b01; sub <= 4'd7;  end
+                        4'd7:  begin screen_x <= 4'd10; screen_y <= 3'd3; screen_data <= 8'h45; screen_cmd <= 2'b01; sub <= 4'd8;  end
+                        4'd8:  begin screen_x <= 4'd11; screen_y <= 3'd3; screen_data <= 8'h52; screen_cmd <= 2'b01; sub <= 4'd9;  end
+                        4'd9:  begin screen_x <= 4'd5;  screen_y <= 3'd5; screen_data <= 8'h52; screen_cmd <= 2'b01; sub <= 4'd10; end
+                        4'd10: begin screen_x <= 4'd6;  screen_y <= 3'd5; screen_data <= 8'h3A; screen_cmd <= 2'b01; sub <= 4'd11; end
+                        4'd11: begin screen_x <= 4'd7;  screen_y <= 3'd5; screen_data <= 8'h52; screen_cmd <= 2'b01; sub <= 4'd12; end
+                        4'd12: begin screen_x <= 4'd8;  screen_y <= 3'd5; screen_data <= 8'h53; screen_cmd <= 2'b01; sub <= 4'd13; end
+                        4'd13: begin screen_x <= 4'd9;  screen_y <= 3'd5; screen_data <= 8'h54; screen_cmd <= 2'b01; sub <= 4'd14; end
+                        default: begin screen_cmd <= 2'b00; end
+                    endcase
+                end
+            endcase
+        end
+    end
+
+    assign led     = {state == ST_OVER, 5'd0, ate_r, state == ST_PLAY};
+    assign traffic = (state == ST_OVER) ? 3'b100 : ((state == ST_PLAY) ? 3'b001 : 3'b010);
+    assign seg     = {8'd0, score_hi, score_lo};
+    assign tone    = tone_r;
+endmodule
+`;
+
+const SNAKE_VECTORS: TestVectorStep[] = [
+  {
+    cycle: 0,
+    inputs: { rst_n: 0, key: 0, sw: 0 },
+    expect: { led: 0, seg: 0 },
+    expectScreen: [{ x: 6, y: 3, code: 0x00 }],
+    note: '复位清屏并初始化蛇身与食物位置',
+  },
+  { cycle: 1, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 10, y: 3, code: 0x85 }], note: '绘制初始食物 (10,3)' },
+  { cycle: 2, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 4, y: 3, code: 0x84 }], note: '绘制初始蛇尾 (4,3)' },
+  { cycle: 3, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 5, y: 3, code: 0x84 }], note: '绘制初始蛇身 (5,3)' },
+  {
+    cycle: 4,
+    inputs: { rst_n: 1, key: 0, sw: 0 },
+    expect: { led: 1, seg: 0 },
+    expectScreen: [
+      { x: 6, y: 3, code: 0x83 },
+      { x: 5, y: 3, code: 0x84 },
+      { x: 4, y: 3, code: 0x84 },
+      { x: 10, y: 3, code: 0x85 },
+    ],
+    note: '绘制初始蛇头 (6,3)，进入运行态',
+  },
+  { cycle: 5, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 7, y: 3, code: 0x83 }], note: '向右前进一步，蛇头抵达 (7,3)' },
+  { cycle: 6, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 6, y: 3, code: 0x84 }], note: '原蛇头 (6,3) 转为蛇身' },
+  { cycle: 7, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 4, y: 3, code: 0x00 }], note: '擦除旧蛇尾 (4,3)' },
+  { cycle: 8, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '完成第 1 步移动节拍' },
+  { cycle: 9, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '第 2 步：蛇头抵达 (8,3)' },
+  { cycle: 10, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '更新蛇身' },
+  { cycle: 11, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '擦除旧尾 (5,3)' },
+  { cycle: 12, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '完成第 2 步' },
+  { cycle: 13, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '第 3 步：蛇头抵达 (9,3)' },
+  { cycle: 14, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '更新蛇身' },
+  { cycle: 15, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '擦除旧尾 (6,3)' },
+  { cycle: 16, inputs: { rst_n: 1, key: 0, sw: 0 }, note: '完成第 3 步' },
+  {
+    cycle: 17,
+    inputs: { rst_n: 1, key: 0, sw: 0 },
+    expect: { seg: 1 },
+    expectTone: 14,
+    expectScreen: [{ x: 10, y: 3, code: 0x83 }],
+    note: '蛇头吃到食物 (10,3)：得分 +1 并触发得分音',
+  },
+  { cycle: 18, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 9, y: 3, code: 0x84 }], note: '蛇身增长保留旧尾 (7,3)' },
+  { cycle: 19, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 7, y: 3, code: 0x84 }], note: '刷新新食物并保持 4 节蛇身' },
+  { cycle: 20, inputs: { rst_n: 1, key: 2, sw: 0 }, note: '按下 KEY1 (S / ↓) 锁存向下转向' },
+  {
+    cycle: 21,
+    inputs: { rst_n: 1, key: 0, sw: 0 },
+    expectScreen: [{ x: 10, y: 4, code: 0x83 }],
+    note: '按方向键成功向下拐弯至 (10,4)',
+  },
+  { cycle: 22, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 10, y: 3, code: 0x84 }], note: '拐点转为蛇身' },
+  { cycle: 23, inputs: { rst_n: 1, key: 0, sw: 0 }, expectScreen: [{ x: 7, y: 3, code: 0x00 }], note: '擦除新尾 (7,3)' },
+];
+
+const SNAKE_BLUEPRINT: PresetProject['blueprint'] = {
+  title: '16×8 OLED 贪吃蛇',
+  summary: '在 16×8 单色 OLED 屏上运行完整贪吃蛇：KEY0–KEY3（WASD / 方向键）控制上下左右，吃食物增长并计分，撞墙或撞身进入结束画面。',
+  behaviors: [
+    '复位后清屏并在 (6,3) 初始化 3 节蛇身，(10,3) 放置初始食物，默认向右移动',
+    '每拍持续采样 KEY0(上/W)、KEY1(下/S)、KEY2(左/A)、KEY3(右/D) 锁存下一方向，禁止 180° 直接掉头',
+    '采用增量显存绘制（仅刷新新蛇头、旧蛇头与旧蛇尾），在 16×8 单色 OLED 上零闪烁流畅运行',
+    '蛇头到达食物坐标时长度加 1、数码管 BCD 得分递增并由 LFSR 避开蛇身生成新食物',
+    '撞到屏幕边界或自身时清屏显示 GAME OVER，按 RST (R) 立即重开一局',
+  ],
+  pinMappings: [
+    { port: 'key[0]', role: '向上转向（W / ↑）' },
+    { port: 'key[1]', role: '向下转向（S / ↓）' },
+    { port: 'key[2]', role: '向左转向（A / ←）' },
+    { port: 'key[3]', role: '向右转向（D / →）' },
+    { port: 'rst_n', role: '硬件复位 / 重新开始（R）' },
+    { port: 'screen_x/y/data/cmd', role: '16×8 单色 OLED 显存写入与清屏端口' },
+    { port: 'seg[7:0]', role: '2 位 BCD 当前得分' },
+    { port: 'tone[3:0]', role: '转向、吃食物与撞墙提示音' },
+  ],
+  mermaidFsm: `stateDiagram-v2
+    [*] --> ST_INIT
+    ST_INIT --> ST_PLAY: 初始画面绘制完成
+    ST_PLAY --> ST_PLAY: 移动 / 转向 / 吃食物
+    ST_PLAY --> ST_OVER: 撞墙或撞到自身
+    ST_OVER --> ST_INIT: rst_n=0 复位重开`,
+};
+
 export const PRESETS: PresetProject[] = [
   {
     ...MOCK_PRESETS[0],
     category: '状态机与定时',
     difficulty: 'beginner',
     boardHint: 'traffic',
-  },
-  {
-    id: 'password-lock',
-    name: '4 位数字密码锁',
-    prompt: '做一个 4 位数字密码锁：密码依次为 1、2、3、4，用拨码开关输入数字，KEY0 提交，KEY1 重新上锁，开锁后 LED0 常亮',
-    blueprint: PASSWORD_LOCK_BLUEPRINT,
-    verilogCode: PASSWORD_LOCK_CODE,
-    testVectors: PASSWORD_LOCK_VECTORS,
-    bugs: makePasswordLockBugs(PASSWORD_LOCK_CODE),
-    category: '状态机与安全',
-    difficulty: 'intermediate',
-    boardHint: 'lock',
   },
   {
     id: 'sequence-detector',
@@ -464,5 +731,19 @@ export const PRESETS: PresetProject[] = [
     category: '状态机与仲裁',
     difficulty: 'intermediate',
     boardHint: 'general',
+  },
+  {
+    id: 'snake',
+    name: 'OLED 贪吃蛇',
+    prompt: '在 16×8 单色 OLED 屏幕上做一个贪吃蛇游戏，用 KEY0-KEY3（WASD / 方向键）控制上下左右移动，吃食物变长并记分，撞墙显示 GAME OVER',
+    blueprint: SNAKE_BLUEPRINT,
+    verilogCode: SNAKE_CODE,
+    testVectors: SNAKE_VECTORS,
+    bugs: makeSnakeBugs(SNAKE_CODE),
+    category: 'OLED 游戏',
+    difficulty: 'intermediate',
+    boardHint: 'general',
+    boardProfileId: 'arcade',
+    requiredPeripherals: ['led', 'seg', 'screen', 'tone'],
   },
 ];

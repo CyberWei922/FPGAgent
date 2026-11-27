@@ -1,5 +1,6 @@
 import { Maximize, Minus, Plus, Workflow } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
+import { localizeNetlistNarration, useI18n } from '../services/i18n';
 import type { NetlistGraph } from '../types/contracts';
 import { GateSymbol, signalValue } from './GateSymbol';
 import { layoutSchematic, schematicTopology, type SchematicLayout } from './schematicLayout';
@@ -89,6 +90,7 @@ function gestureGeometry(element: HTMLElement, fingers: Map<number, Finger>) {
 }
 
 function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netlist: NetlistGraph }) {
+  const { L } = useI18n();
   const viewport = useRef<HTMLDivElement>(null);
   const world = useRef<HTMLDivElement>(null);
   const fingers = useRef(new Map<number, Finger>());
@@ -317,7 +319,7 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
         }}
         tabIndex={0}
         role="region"
-        aria-label="门级图画布，可拖动、滚轮缩放或双指缩放"
+        aria-label={L('门级图画布，可拖动、滚轮缩放或双指缩放', 'Gate schematic canvas — drag to pan, scroll or pinch to zoom')}
         onPointerDown={begin} onPointerMove={move} onPointerUp={finish} onPointerCancel={finish} onLostPointerCapture={finish} onKeyDown={keyboardPan}>
         <div
           ref={world}
@@ -335,7 +337,7 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
             }
           }}
         >
-          <svg className="gate-chart" width={drawing.width} height={drawing.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label="电路门级网表">
+          <svg className="gate-chart" width={drawing.width} height={drawing.height} viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label={L('电路门级网表', 'Circuit gate-level netlist')}>
             {layout.wires.map((wire) => {
               const edges = wire.edgeIds.flatMap((id) => edgeById.get(id) ?? []);
               const signal = edges[0];
@@ -352,11 +354,11 @@ function SchematicViewport({ layout, netlist }: { layout: SchematicLayout; netli
           </svg>
         </div>
       </div>
-      <div className="zoom-controls" role="group" aria-label="画布缩放">
-        <button className="icon-button" aria-label="缩小" disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-25)}><Minus size={15} /></button>
+      <div className="zoom-controls" role="group" aria-label={L('画布缩放', 'Canvas zoom')}>
+        <button className="icon-button" aria-label={L('缩小', 'Zoom out')} disabled={zoom <= MIN_ZOOM} onClick={() => zoomBy(-25)}><Minus size={15} /></button>
         <span>{Math.round(zoom)}%</span>
-        <button className="icon-button" aria-label="放大" disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(25)}><Plus size={15} /></button>
-        <button className="icon-button" aria-label="适合画布" title="适合画布" onClick={fitToScreen}><Maximize size={14} /></button>
+        <button className="icon-button" aria-label={L('放大', 'Zoom in')} disabled={zoom >= MAX_ZOOM} onClick={() => zoomBy(25)}><Plus size={15} /></button>
+        <button className="icon-button" aria-label={L('适合画布', 'Fit to canvas')} title={L('适合画布', 'Fit to canvas')} onClick={fitToScreen}><Maximize size={14} /></button>
       </div>
     </div>
   );
@@ -371,6 +373,7 @@ export function GateCanvas({
   pending?: boolean;
   statusBadge?: string;
 }) {
+  const { locale, L } = useI18n();
   const topology = schematicTopology(netlist);
   const [rendered, setRendered] = useState<{ key: string; layout: SchematicLayout | null }>();
 
@@ -386,11 +389,18 @@ export function GateCanvas({
 
   const current = rendered?.key === topology ? rendered : undefined;
   if (!netlist || !current?.layout) {
-    const message = current?.layout === null ? '门级图布局失败。板卡和波形仍可使用。'
-      : topology ? '正在为电路布线…'
-        : pending ? '正在准备电路和仿真数据…' : '电路通过编译后，这里会显示门级原理图。';
+    const message =
+      current?.layout === null
+        ? L('门级图布局失败。板卡和波形仍可使用。', 'Schematic layout failed. Board and waveforms remain active.')
+        : topology
+          ? L('正在为电路布线…', 'Routing schematic wires…')
+          : pending
+            ? L('正在准备电路和仿真数据…', 'Preparing circuit and simulation data…')
+            : L('电路通过编译后，这里会显示门级原理图。', 'Gate-level schematic appears here once the circuit compiles.');
     return <div className="gate-blank" role="status"><Workflow size={34} strokeWidth={1.3} /><p>{message}</p></div>;
   }
+
+  const narration = localizeNetlistNarration(netlist.narration, locale);
 
   return (
     <>
@@ -398,7 +408,7 @@ export function GateCanvas({
       <div className="signal-caption">
         <span className="signal-caption-text">
           <span className="configured-dot" />
-          <span>{netlist.narration}</span>
+          <span>{narration}</span>
         </span>
         {statusBadge && <span className="signal-caption-badge">{statusBadge}</span>}
       </div>

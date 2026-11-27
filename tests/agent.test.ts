@@ -188,6 +188,7 @@ describe('预置案例', () => {
   it('提供 5 个零 Token 案例，字段完整且互不重复', () => {
     expect(runtime.presets).toHaveLength(5);
     expect(new Set(runtime.presets.map((p) => p.id)).size).toBe(5);
+    expect(runtime.presets.some((p) => p.id === 'password-lock')).toBe(false);
     for (const preset of runtime.presets) {
       expect(preset.name.length).toBeGreaterThan(0);
       expect(preset.prompt.length).toBeGreaterThan(0);
@@ -211,7 +212,7 @@ describe('预置案例', () => {
   it('每个案例都有 1-2 个故障关卡，修复代码等于标准代码', () => {
     const allBugs = runtime.presets.flatMap((p) => p.bugs);
     expect(allBugs.length).toBeGreaterThanOrEqual(6);
-    expect(allBugs.length).toBeLessThanOrEqual(8);
+    expect(allBugs.length).toBeLessThanOrEqual(10);
     expect(new Set(allBugs.map((b) => b.id)).size).toBe(allBugs.length);
     for (const preset of runtime.presets) {
       expect(preset.bugs.length).toBeGreaterThanOrEqual(1);
@@ -252,10 +253,45 @@ describe('提示词与 JSON 解析', () => {
     expect(planMessages[0].content).toContain('testVectors');
     expect(planMessages[0].content).toContain('module top');
     expect(planMessages[1].content).toContain('做个交通灯');
+    expect(planMessages[1].content).toContain('100ms');
+    expect(planMessages[1].content).toContain('10 Hz');
+    expect(planMessages[1].content).toContain('未涉及现实时间');
 
     const generateMessages = buildGenerateMessages(BLUEPRINT, VECTORS);
     expect(generateMessages[0].content).toContain('非阻塞');
     expect(generateMessages[1].content).toContain('测试电路');
+    expect(generateMessages[1].content).toContain('100ms');
+  });
+
+  it('时钟档位（100ms / 500ms）会透传到 plan / generate / repair 提示词', async () => {
+    const slowPlan = buildPlanMessages('做一个每秒闪一次的灯', { clockIntervalMs: 500 });
+    expect(slowPlan[1].content).toContain('500ms');
+    expect(slowPlan[1].content).toContain('2 Hz');
+    expect(slowPlan[1].content).toContain('慢动作档');
+
+    const slowGen = buildGenerateMessages(BLUEPRINT, VECTORS, { clockIntervalMs: 500 });
+    expect(slowGen[1].content).toContain('500ms');
+
+    const slowRepair = buildRepairMessages({
+      code: CODE_A,
+      issues: [],
+      blueprint: BLUEPRINT,
+      testVectors: VECTORS,
+      clockIntervalMs: 500,
+    });
+    expect(slowRepair[1].content).toContain('500ms');
+
+    const { llm, calls } = createStubLLM({
+      plan: () => JSON.stringify({ blueprint: BLUEPRINT, testVectors: VECTORS }),
+      generate: () => JSON.stringify({ code: CODE_A }),
+    });
+    const runtime = createAgentRuntime({ llm, engine: createStubEngine({}) });
+    await runtime.runHarness('做一个每秒闪一次的灯', {
+      onTrace: () => {},
+      clockIntervalMs: 500,
+    });
+    expect(calls[0].messages[1].content).toContain('500ms');
+    expect(calls[1].messages[1].content).toContain('500ms');
   });
 
   it('解析带 Markdown 围栏和解释文字的规划 JSON', () => {

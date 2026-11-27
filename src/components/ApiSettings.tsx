@@ -1,6 +1,7 @@
 import {
   Check,
   CheckCircle2,
+  Clock,
   Cpu,
   ExternalLink,
   Eye,
@@ -18,6 +19,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { localizeAccentName, localizeProviderName, useI18n } from '../services/i18n';
 import { CustomModelSelect } from './CustomSelect';
 import {
   createLLMClient,
@@ -45,7 +47,7 @@ import {
 } from '../services/theme';
 import { isLLMError, type LLMModelOption, type LLMProviderId } from '../types/contracts';
 
-type SettingsSection = 'api' | 'appearance';
+export type SettingsSection = 'api' | 'simulation' | 'appearance';
 
 interface TestResult {
   ok: boolean;
@@ -76,6 +78,7 @@ export function ApiSettings({
   onPrefsChange: (next: AppPreferences) => void;
   onClose: () => void;
 }) {
+  const { locale, L } = useI18n();
   const dialog = useRef<HTMLDialogElement>(null);
   const [section, setSection] = useState<SettingsSection>(initialSection);
 
@@ -160,13 +163,19 @@ export function ApiSettings({
     if (!isAllowedBaseUrl(normalized, providerId)) {
       setError(
         providerId === 'local-gateway'
-          ? '请先填写有效的本地/内网网关地址（如 http://127.0.0.1:11434/v1 或 http://192.168.x.x:8000/v1）。'
-          : '请先填写有效的 HTTPS API Base URL（内网地址请选择「本地 / 内网网关」）。',
+          ? L(
+              '请先填写有效的本地/内网网关地址（如 http://127.0.0.1:11434/v1 或 http://192.168.x.x:8000/v1）。',
+              'Enter a valid local/LAN gateway URL (e.g. http://127.0.0.1:11434/v1 or http://192.168.x.x:8000/v1).',
+            )
+          : L(
+              '请先填写有效的 HTTPS API Base URL（内网地址请选择「本地 / 内网网关」）。',
+              'Enter a valid HTTPS API Base URL (select "Local / LAN Gateway" for LAN HTTP endpoints).',
+            ),
       );
       return;
     }
     if (!isApiKeyOptional(normalized, providerId) && !apiKey.trim()) {
-      setError('请先填写 API Key，再自动获取模型列表。');
+      setError(L('请先填写 API Key，再自动获取模型列表。', 'Enter your API key before fetching models.'));
       return;
     }
 
@@ -179,7 +188,7 @@ export function ApiSettings({
       if (list.length === 0) {
         const fallback = getSuggestedModelOptions(providerId, model);
         setFetchedModels(fallback);
-        setModelsHint('接口返回了空列表，已回退为推荐模型列表。');
+        setModelsHint(L('接口返回了空列表，已回退为推荐模型列表。', 'Endpoint returned an empty list; showing suggested models instead.'));
       } else {
         setFetchedModels(list);
         const preferred =
@@ -190,7 +199,7 @@ export function ApiSettings({
             : model.trim();
         setModel(preferred);
         setCustomModelInput(false);
-        setModelsHint(`已从网关同步 ${list.length} 个可用模型。`);
+        setModelsHint(L(`已从网关同步 ${list.length} 个可用模型。`, `Synced ${list.length} models from gateway.`));
         if (config && normalizeBaseUrl(config.baseUrl) === normalized) {
           const synced: ByokConfig = {
             ...config,
@@ -210,8 +219,8 @@ export function ApiSettings({
     } catch (err) {
       const fallback = getSuggestedModelOptions(providerId, model);
       setFetchedModels(fallback);
-      const reason = isLLMError(err) ? err.message : '拉取失败';
-      setModelsHint(`自动拉取未成功（${reason}），可手动填写模型名称。`);
+      const reason = isLLMError(err) ? err.message : L('拉取失败', 'fetch failed');
+      setModelsHint(L(`自动拉取未成功（${reason}），可手动填写模型名称。`, `Auto-fetch failed (${reason}). You can type a model ID manually.`));
     } finally {
       setModelsLoading(false);
     }
@@ -228,7 +237,11 @@ export function ApiSettings({
         setTestResult({
           ok: result.ok,
           latencyMs: result.latencyMs,
-          message: result.message ?? (result.ok ? '站点默认服务连接正常' : '站点默认服务不可用'),
+          message:
+            result.message ??
+            (result.ok
+              ? L('站点默认服务连接正常', 'Site default service connected')
+              : L('站点默认服务不可用', 'Site default service unavailable')),
         });
         return;
       }
@@ -237,14 +250,21 @@ export function ApiSettings({
       if (!isAllowedBaseUrl(normalized, providerId)) {
         setError(
           providerId === 'local-gateway'
-            ? '请填写有效的 http:// 或 https:// 网关地址。'
-            : '请使用 HTTPS 地址（本地/内网 HTTP 地址请选「本地 / 内网网关」）。',
+            ? L('请填写有效的 http:// 或 https:// 网关地址。', 'Enter a valid http:// or https:// gateway URL.')
+            : L(
+                '请使用 HTTPS 地址（本地/内网 HTTP 地址请选「本地 / 内网网关」）。',
+                'Use an HTTPS URL (select "Local / LAN Gateway" for local HTTP).',
+              ),
         );
         return;
       }
       const optional = isApiKeyOptional(normalized, providerId);
       if (!model.trim() || (!optional && !apiKey.trim())) {
-        setError(optional ? '请先填写或获取模型名称。' : '请先填写模型名称和 API Key。');
+        setError(
+          optional
+            ? L('请先填写或获取模型名称。', 'Enter or fetch a model name first.')
+            : L('请先填写模型名称和 API Key。', 'Enter both model name and API key first.'),
+        );
         return;
       }
 
@@ -261,8 +281,8 @@ export function ApiSettings({
         ok: result.ok,
         latencyMs: result.latencyMs,
         message: result.ok
-          ? `连接成功（${result.model} · ${result.latencyMs} ms）`
-          : result.message ?? '连接测试未通过',
+          ? L(`连接成功（${result.model} · ${result.latencyMs} ms）`, `Connected (${result.model} · ${result.latencyMs} ms)`)
+          : result.message ?? L('连接测试未通过', 'Connection test failed'),
       });
     } finally {
       setTesting(false);
@@ -271,7 +291,7 @@ export function ApiSettings({
 
   function handleSave(event: FormEvent) {
     event.preventDefault();
-    if (section === 'appearance') {
+    if (section !== 'api') {
       dialog.current?.close();
       return;
     }
@@ -282,14 +302,24 @@ export function ApiSettings({
       if (!isAllowedBaseUrl(normalized, providerId)) {
         setError(
           providerId === 'local-gateway'
-            ? '请填写有效的 http:// 或 https:// 网关地址，且不要包含 URL 凭据或查询参数。'
-            : '请使用 HTTPS 地址（本机或局域网 HTTP 网关请选「本地 / 内网网关」），且不要包含查询参数。',
+            ? L(
+                '请填写有效的 http:// 或 https:// 网关地址，且不要包含 URL 凭据或查询参数。',
+                'Enter a valid http:// or https:// URL without credentials or query parameters.',
+              )
+            : L(
+                '请使用 HTTPS 地址（本机或局域网 HTTP 网关请选「本地 / 内网网关」），且不要包含查询参数。',
+                'Use an HTTPS URL without query parameters (pick "Local / LAN Gateway" for local HTTP).',
+              ),
         );
         return;
       }
       const optional = isApiKeyOptional(normalized, providerId);
       if (!model.trim() || (!optional && !apiKey.trim())) {
-        setError(optional ? '请填写或获取模型名称。' : '请填写模型名称和 API Key。');
+        setError(
+          optional
+            ? L('请填写或获取模型名称。', 'Enter or fetch a model name.')
+            : L('请填写模型名称和 API Key。', 'Enter both model name and API key.'),
+        );
         return;
       }
       const ensuredModels = fetchedModels.some((m) => m.id === model.trim())
@@ -310,7 +340,7 @@ export function ApiSettings({
       onSaveApi(next);
       dialog.current?.close();
     } catch {
-      setError('浏览器未允许保存设置，请检查本地存储权限后重试。');
+      setError(L('浏览器未允许保存设置，请检查本地存储权限后重试。', 'Unable to save settings. Check browser localStorage permissions.'));
     }
   }
 
@@ -349,12 +379,12 @@ export function ApiSettings({
       <div className="dialog-heading">
         <div className="dialog-title-group">
           <SlidersHorizontal size={18} />
-          <h2 id="settings-modal-title">工作台设置</h2>
+          <h2 id="settings-modal-title">{L('工作台设置', 'Workbench Settings')}</h2>
         </div>
         <button
           type="button"
           className="icon-button"
-          aria-label="关闭设置"
+          aria-label={L('关闭设置', 'Close settings')}
           onClick={() => dialog.current?.close()}
         >
           <X size={18} />
@@ -362,14 +392,22 @@ export function ApiSettings({
       </div>
 
       <div className="settings-body">
-        <nav className="settings-sidebar" aria-label="设置分组">
+        <nav className="settings-sidebar" aria-label={L('设置分组', 'Settings sections')}>
           <button
             type="button"
             className={section === 'api' ? 'active' : undefined}
             onClick={() => setSection('api')}
           >
             <Cpu size={15} />
-            <span>模型与 API</span>
+            <span>{L('模型与 API', 'Models & API')}</span>
+          </button>
+          <button
+            type="button"
+            className={section === 'simulation' ? 'active' : undefined}
+            onClick={() => setSection('simulation')}
+          >
+            <Clock size={15} />
+            <span>{L('仿真与时钟', 'Simulation & Clock')}</span>
           </button>
           <button
             type="button"
@@ -377,7 +415,7 @@ export function ApiSettings({
             onClick={() => setSection('appearance')}
           >
             <Palette size={15} />
-            <span>外观与主题</span>
+            <span>{L('外观与主题', 'Appearance')}</span>
           </button>
         </nav>
 
@@ -386,7 +424,7 @@ export function ApiSettings({
             <div className="settings-pane">
               <div className="setting-block">
                 <div className="setting-block-head">
-                  <label className="setting-label">选择模型服务商</label>
+                  <label className="setting-label">{L('选择模型服务商', 'Model Provider')}</label>
                   {activePreset?.docsUrl && (
                     <a
                       className="text-link"
@@ -394,11 +432,11 @@ export function ApiSettings({
                       target="_blank"
                       rel="noreferrer"
                     >
-                      获取 Key <ExternalLink size={12} />
+                      {L('获取 Key', 'Get API Key')} <ExternalLink size={12} />
                     </a>
                   )}
                 </div>
-                <div className="provider-grid" role="radiogroup" aria-label="模型服务商预设">
+                <div className="provider-grid" role="radiogroup" aria-label={L('模型服务商预设', 'Model provider presets')}>
                   <button
                     type="button"
                     role="radio"
@@ -406,7 +444,7 @@ export function ApiSettings({
                     className={`provider-chip${providerId === 'site-default' ? ' selected' : ''}`}
                     onClick={() => selectProvider('site-default')}
                   >
-                    <span>站点默认</span>
+                    <span>{L('站点默认', 'Site Default')}</span>
                   </button>
                   {PROVIDER_PRESETS.map((preset) => (
                     <button
@@ -417,7 +455,7 @@ export function ApiSettings({
                       className={`provider-chip${providerId === preset.id ? ' selected' : ''}`}
                       onClick={() => selectProvider(preset.id)}
                     >
-                      <span>{preset.name}</span>
+                      <span>{localizeProviderName(preset.id, preset.name, locale)}</span>
                     </button>
                   ))}
                 </div>
@@ -437,7 +475,10 @@ export function ApiSettings({
                         }}
                         placeholder={
                           providerId === 'local-gateway'
-                            ? 'http://127.0.0.1:11434/v1 或 http://192.168.x.x:8000/v1'
+                            ? L(
+                                'http://127.0.0.1:11434/v1 或 http://192.168.x.x:8000/v1',
+                                'http://127.0.0.1:11434/v1 or http://192.168.x.x:8000/v1',
+                              )
                             : 'https://api.deepseek.com/v1'
                         }
                         required
@@ -445,14 +486,17 @@ export function ApiSettings({
                     </label>
                     {providerId === 'local-gateway' && (
                       <p className="field-help">
-                        支持 OpenAI 兼容的本地或内网网关（Ollama、LM Studio、vLLM、OneAPI / NewAPI、自建转发网关等），可直接填写 http:// 本机或局域网 IP。
+                        {L(
+                          '支持 OpenAI 兼容的本地或内网网关（Ollama、LM Studio、vLLM、OneAPI / NewAPI、自建转发网关等），可直接填写 http:// 本机或局域网 IP。',
+                          'Supports OpenAI-compatible local/LAN gateways (Ollama, LM Studio, vLLM, OneAPI / NewAPI, etc.) using http:// localhost or LAN IPs.',
+                        )}
                       </p>
                     )}
                   </div>
 
                   <div className="setting-block">
                     <label className="setting-field" htmlFor="settings-api-key">
-                      <span>{keyOptional ? 'API Key（本地/内网网关可选）' : 'API Key'}</span>
+                      <span>{keyOptional ? L('API Key（本地/内网网关可选）', 'API Key (Optional for local gateway)') : 'API Key'}</span>
                       <div className="key-field">
                         <input
                           id="settings-api-key"
@@ -462,7 +506,7 @@ export function ApiSettings({
                             setApiKey(event.target.value);
                             setTestResult(null);
                           }}
-                          placeholder={keyOptional ? '无需鉴权可留空，需要则填写 sk-...' : 'sk-...'}
+                          placeholder={keyOptional ? L('无需鉴权可留空，需要则填写 sk-...', 'Optional if unauthenticated, or sk-...') : 'sk-...'}
                           autoComplete="off"
                           spellCheck={false}
                           required={!keyOptional}
@@ -470,7 +514,7 @@ export function ApiSettings({
                         <button
                           type="button"
                           className="icon-button"
-                          aria-label={showKey ? '隐藏 API Key' : '显示 API Key'}
+                          aria-label={showKey ? L('隐藏 API Key', 'Hide API key') : L('显示 API Key', 'Show API key')}
                           onClick={() => setShowKey((visible) => !visible)}
                         >
                           {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
@@ -479,8 +523,14 @@ export function ApiSettings({
                     </label>
                     <p className="field-help">
                       {keyOptional
-                        ? '若网关免鉴权可直接留空；填写后仅保存在当前浏览器本地存储中。'
-                        : 'Key 仅保存在你当前浏览器的本地存储中，生成电路时直连所选服务商。'}
+                        ? L(
+                            '若网关免鉴权可直接留空；填写后仅保存在当前浏览器本地存储中。',
+                            'Leave blank if your gateway requires no auth; stored only in this browser localStorage.',
+                          )
+                        : L(
+                            'Key 仅保存在你当前浏览器的本地存储中，生成电路时直连所选服务商。',
+                            'Your key stays only in browser localStorage and calls the chosen provider directly.',
+                          )}
                     </p>
                   </div>
 
@@ -488,10 +538,13 @@ export function ApiSettings({
                     <div className="setting-row-card">
                       <div className="setting-row-copy">
                         <span className="setting-row-title">
-                          <Wifi size={14} /> 通过本地开发代理转发（解决内网 CORS 跨域）
+                          <Wifi size={14} /> {L('通过本地开发代理转发（解决内网 CORS 跨域）', 'Forward via local dev proxy (bypass LAN CORS)')}
                         </span>
                         <span className="field-help">
-                          由当前本机开发服务器代发至目标网关，内网 API 未配置 CORS 响应头也能直接拉取模型并调用
+                          {L(
+                            '由当前本机开发服务器代发至目标网关，内网 API 未配置 CORS 响应头也能直接拉取模型并调用',
+                            'Routes requests through the local dev server so LAN APIs without CORS headers work directly',
+                          )}
                         </span>
                       </div>
                       <label className="switch-toggle">
@@ -511,7 +564,7 @@ export function ApiSettings({
                   <div className="setting-block">
                     <div className="setting-block-head">
                       <label className="setting-label" htmlFor="settings-model-select">
-                        默认对话模型
+                        {L('默认对话模型', 'Default Model')}
                       </label>
                       <div className="inline-actions">
                         <button
@@ -519,7 +572,7 @@ export function ApiSettings({
                           className="mini-action-btn"
                           onClick={() => setCustomModelInput((value) => !value)}
                         >
-                          {customModelInput ? '从列表选' : '手动填写'}
+                          {customModelInput ? L('从列表选', 'Pick from list') : L('手动填写', 'Type manually')}
                         </button>
                         <button
                           type="button"
@@ -528,7 +581,7 @@ export function ApiSettings({
                           onClick={() => void refreshModels()}
                         >
                           <RefreshCw size={12} className={modelsLoading ? 'spin' : undefined} />
-                          {modelsLoading ? '获取中…' : '自动获取模型'}
+                          {modelsLoading ? L('获取中…', 'Fetching…') : L('自动获取模型', 'Fetch Models')}
                         </button>
                       </div>
                     </div>
@@ -539,14 +592,14 @@ export function ApiSettings({
                         className="text-input"
                         value={model}
                         onChange={(event) => setModel(event.target.value)}
-                        placeholder="例如 qwen3.8-flash / deepseek-chat / glm-4.5-air"
+                        placeholder={L('例如 qwen3.8-flash / deepseek-chat / glm-4.5-air', 'e.g. qwen3.8-flash / deepseek-chat / glm-4.5-air')}
                         autoComplete="off"
                         required
                       />
                     ) : (
                       <CustomModelSelect
                         id="settings-model-select"
-                        ariaLabel="默认对话模型"
+                        ariaLabel={L('默认对话模型', 'Default model')}
                         variant="field"
                         options={modelChoices}
                         value={modelChoices.some((m) => m.id === model) ? model : modelChoices[0].id}
@@ -559,15 +612,18 @@ export function ApiSettings({
               ) : (
                 <div className="info-card">
                   <p className="info-card-title">
-                    站点默认代理
+                    {L('站点默认代理', 'Site Default Proxy')}
                     {remainingQuota !== undefined
                       ? dailyQuotaLimit !== undefined
-                        ? ` · 今日剩余 ${remainingQuota} / ${dailyQuotaLimit} 次`
-                        : ` · 今日剩余 ${remainingQuota} 次`
+                        ? L(` · 今日剩余 ${remainingQuota} / ${dailyQuotaLimit} 次`, ` · ${remainingQuota} / ${dailyQuotaLimit} remaining today`)
+                        : L(` · 今日剩余 ${remainingQuota} 次`, ` · ${remainingQuota} remaining today`)
                       : ''}
                   </p>
                   <p className="field-help">
-                    无需填写密钥即可体验自由输入与多轮修改。若需更高并发或切换 DeepSeek、GLM、通义千问等特定模型，请在上方选择对应服务商。保存此选项会清除本地自定义 Key。
+                    {L(
+                      '无需填写密钥即可体验自由输入与多轮修改。若需更高并发或切换 DeepSeek、GLM、通义千问等特定模型，请在上方选择对应服务商。保存此选项会清除本地自定义 Key。',
+                      'Try free-form prompts and multi-turn refinements with no API key required. For higher limits or specific models (DeepSeek, GLM, Qwen), choose a provider above. Saving this clears any saved local key.',
+                    )}
                   </p>
                 </div>
               )}
@@ -575,10 +631,13 @@ export function ApiSettings({
               <div className="setting-row-card">
                 <div className="setting-row-copy">
                   <span className="setting-row-title">
-                    <Globe size={14} /> 允许联网查阅 Verilog 规范
+                    <Globe size={14} /> {L('允许联网查阅 Verilog 规范', 'Allow Web Verilog Spec Lookup')}
                   </span>
                   <span className="field-help">
-                    遇到复杂协议或修复受阻时自动搜索参考语法并在对话中附来源链接
+                    {L(
+                      '遇到复杂协议或修复受阻时自动搜索参考语法并在对话中附来源链接',
+                      'Automatically searches Verilog references when protocols are complex or repairs stall, citing sources in chat',
+                    )}
                   </span>
                 </div>
                 <label className="switch-toggle">
@@ -599,7 +658,7 @@ export function ApiSettings({
                   onClick={() => void runConnectionTest()}
                 >
                   {testing ? <Loader2 size={14} className="spin" /> : <Wifi size={14} />}
-                  {testing ? '测连中…' : '测试连接'}
+                  {testing ? L('测连中…', 'Testing…') : L('测试连接', 'Test Connection')}
                 </button>
                 {testResult && (
                   <span className={`test-pill ${testResult.ok ? 'ok' : 'fail'}`}>
@@ -615,18 +674,69 @@ export function ApiSettings({
                 </p>
               )}
             </div>
+          ) : section === 'simulation' ? (
+            <div className="settings-pane">
+              <div className="setting-block">
+                <span className="setting-label">
+                  {L('默认仿真时钟间隔', 'Default Clock Interval')}
+                </span>
+                <div className="segmented-inline" role="radiogroup" aria-label={L('默认仿真时钟间隔', 'Default simulation clock interval')}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={prefs.defaultClockSpeed === 'realtime'}
+                    className={prefs.defaultClockSpeed === 'realtime' ? 'active' : undefined}
+                    onClick={() => updatePrefs({ defaultClockSpeed: 'realtime' })}
+                  >
+                    {L('实时（100ms/拍 · 10 Hz）', 'Real-time (100ms/cycle · 10 Hz)')}
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={prefs.defaultClockSpeed === 'slow'}
+                    className={prefs.defaultClockSpeed === 'slow' ? 'active' : undefined}
+                    onClick={() => updatePrefs({ defaultClockSpeed: 'slow' })}
+                  >
+                    {L('慢动作（500ms/拍 · 2 Hz）', 'Slow-mo (500ms/cycle · 2 Hz)')}
+                  </button>
+                </div>
+                <p className="field-help">
+                  {L(
+                    '切换后立即作用于当前工作台仿真速率，并作为新会话的默认时钟档位。',
+                    'Applies immediately to the current simulation speed and serves as the default for new sessions.',
+                  )}
+                </p>
+              </div>
+
+              <div className="info-card">
+                <p className="info-card-title">
+                  {L('同步给 AI 的计时换算基准', 'Timing Reference Shared with AI')}
+                </p>
+                <p className="field-help">
+                  {prefs.defaultClockSpeed === 'slow'
+                    ? L(
+                        '当前档位：500ms / 拍（2 Hz，现实 1 秒 = 2 个时钟周期）。AI 在生成秒表、倒计时、闪烁等涉及现实时间的电路时会自动按此基准分频；不涉及时间的组合/状态逻辑不受影响。',
+                        'Current setting: 500ms / cycle (2 Hz, 1 real second = 2 clock cycles). AI uses this baseline when generating time-based circuits such as stopwatches or blinkers; untimed logic is unaffected.',
+                      )
+                    : L(
+                        '当前档位：100ms / 拍（10 Hz，现实 1 秒 = 10 个时钟周期）。AI 在生成秒表、倒计时、闪烁等涉及现实时间的电路时会自动按此基准分频；不涉及时间的组合/状态逻辑不受影响。',
+                        'Current setting: 100ms / cycle (10 Hz, 1 real second = 10 clock cycles). AI uses this baseline when generating time-based circuits such as stopwatches or blinkers; untimed logic is unaffected.',
+                      )}
+                </p>
+              </div>
+            </div>
           ) : (
             <div className="settings-pane">
               <div className="setting-block">
-                <span className="setting-label">外观模式</span>
-                <div className="theme-mode-grid" role="radiogroup" aria-label="深色与浅色模式">
+                <span className="setting-label">{L('外观模式', 'Theme Mode')}</span>
+                <div className="theme-mode-grid" role="radiogroup" aria-label={L('深色与浅色模式', 'Dark and light mode')}>
                   {(
                     [
-                      { id: 'light', label: '浅色模式', Icon: Sun },
-                      { id: 'dark', label: '深色模式', Icon: Moon },
-                      { id: 'system', label: '跟随系统', Icon: Monitor },
+                      { id: 'light', zh: '浅色模式', en: 'Light', Icon: Sun },
+                      { id: 'dark', zh: '深色模式', en: 'Dark', Icon: Moon },
+                      { id: 'system', zh: '跟随系统', en: 'System', Icon: Monitor },
                     ] as const
-                  ).map(({ id, label, Icon }) => (
+                  ).map(({ id, zh, en, Icon }) => (
                     <button
                       key={id}
                       type="button"
@@ -638,15 +748,15 @@ export function ApiSettings({
                       <span className="mode-card-icon">
                         <Icon size={17} />
                       </span>
-                      <strong>{label}</strong>
+                      <strong>{L(zh, en)}</strong>
                     </button>
                   ))}
                 </div>
               </div>
 
               <div className="setting-block">
-                <span className="setting-label">主题强调色</span>
-                <div className="accent-grid" role="radiogroup" aria-label="主题色选择">
+                <span className="setting-label">{L('主题强调色', 'Accent Color')}</span>
+                <div className="accent-grid" role="radiogroup" aria-label={L('主题色选择', 'Accent color picker')}>
                   {ACCENT_PRESETS.map((preset) => {
                     const selected = theme.accentId === preset.id;
                     return (
@@ -667,18 +777,18 @@ export function ApiSettings({
                             />
                           )}
                         </span>
-                        <span>{preset.name}</span>
+                        <span>{localizeAccentName(preset.id, preset.name, locale)}</span>
                       </button>
                     );
                   })}
 
                   <label
                     className={`accent-option accent-custom${theme.accentId === 'custom' ? ' selected' : ''}`}
-                    title="自定义任意主题色"
+                    title={L('自定义任意主题色', 'Pick a custom accent color')}
                   >
                     <input
                       type="color"
-                      aria-label="自定义主题色"
+                      aria-label={L('自定义主题色', 'Custom accent color')}
                       value={theme.customAccent}
                       onChange={(event) => updateAccent('custom', event.target.value)}
                     />
@@ -687,32 +797,8 @@ export function ApiSettings({
                         <Check size={13} color={contrastInkOn(theme.customAccent)} strokeWidth={3} />
                       )}
                     </span>
-                    <span>自定义</span>
+                    <span>{L('自定义', 'Custom')}</span>
                   </label>
-                </div>
-              </div>
-
-              <div className="setting-block">
-                <span className="setting-label">默认仿真时钟倍速</span>
-                <div className="segmented-inline" role="radiogroup" aria-label="默认仿真时钟倍速">
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={prefs.defaultClockSpeed === 'realtime'}
-                    className={prefs.defaultClockSpeed === 'realtime' ? 'active' : undefined}
-                    onClick={() => updatePrefs({ defaultClockSpeed: 'realtime' })}
-                  >
-                    实时（500ms/拍）
-                  </button>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={prefs.defaultClockSpeed === 'slow'}
-                    className={prefs.defaultClockSpeed === 'slow' ? 'active' : undefined}
-                    onClick={() => updatePrefs({ defaultClockSpeed: 'slow' })}
-                  >
-                    慢动作（0.2× 观察信号流）
-                  </button>
                 </div>
               </div>
             </div>
@@ -722,15 +808,15 @@ export function ApiSettings({
             {section === 'api' ? (
               <>
                 <button type="button" className="outline-button" onClick={() => dialog.current?.close()}>
-                  取消
+                  {L('取消', 'Cancel')}
                 </button>
                 <button type="submit" className="primary-button">
-                  保存 API 配置
+                  {L('保存 API 配置', 'Save API Config')}
                 </button>
               </>
             ) : (
               <button type="button" className="primary-button" onClick={() => dialog.current?.close()}>
-                完成（已即时生效）
+                {L('完成（已即时生效）', 'Done (Applied Live)')}
               </button>
             )}
           </footer>
