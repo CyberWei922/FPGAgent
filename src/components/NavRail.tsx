@@ -6,16 +6,14 @@ import {
   Moon,
   Plus,
   SlidersHorizontal,
-  Stethoscope,
   Sun,
 } from 'lucide-react';
 
-export type RailTab = 'chat' | 'presets' | 'clinic' | 'history';
+export type RailTab = 'chat' | 'presets' | 'history';
 
 const NAV_ITEMS: Array<{ id: RailTab; label: string; Icon: typeof MessageSquare }> = [
   { id: 'chat', label: '对话', Icon: MessageSquare },
   { id: 'presets', label: '案例', Icon: LayoutGrid },
-  { id: 'clinic', label: '诊所', Icon: Stethoscope },
   { id: 'history', label: '历史', Icon: History },
 ];
 
@@ -29,7 +27,6 @@ export function NavRail({
   resolvedTheme,
   onToggleTheme,
   hasCustomApi,
-  hasActiveBug,
 }: {
   activeTab: RailTab;
   isShowcase?: boolean;
@@ -40,7 +37,6 @@ export function NavRail({
   resolvedTheme: 'light' | 'dark';
   onToggleTheme: () => void;
   hasCustomApi: boolean;
-  hasActiveBug?: boolean;
 }) {
   return (
     <aside className="nav-rail" aria-label="主导航">
@@ -80,7 +76,6 @@ export function NavRail({
             >
               <span className="rail-icon-wrap">
                 <Icon size={17} strokeWidth={selected ? 2.1 : 1.8} />
-                {id === 'clinic' && hasActiveBug && <span className="rail-badge-dot warn" />}
               </span>
               <span>{label}</span>
             </button>

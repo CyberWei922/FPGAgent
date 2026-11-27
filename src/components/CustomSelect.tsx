@@ -1,4 +1,4 @@
-import { Check, ChevronDown, Search, Settings2, Sparkles } from 'lucide-react';
+import { Check, ChevronDown, Search, Settings2 } from 'lucide-react';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { LLMModelOption } from '../types/contracts';
 
@@ -148,7 +148,6 @@ export function CustomModelSelect({
         className={variant === 'field' ? 'custom-select-trigger' : 'inline-model-btn'}
         onClick={() => setOpen((prev) => !prev)}
       >
-        {variant === 'inline' && <Sparkles size={13} className="inline-model-spark" />}
         <span className="custom-select-value">{displayLabel}</span>
         <ChevronDown size={variant === 'field' ? 15 : 12} className={`custom-select-arrow${open ? ' open' : ''}`} />
       </button>

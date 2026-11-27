@@ -1,16 +1,10 @@
 import {
   ArrowRight,
   CheckCircle2,
-  Cpu,
   ExternalLink,
   GitBranch,
   LayoutGrid,
-  Moon,
   Play,
-  Sparkles,
-  Stethoscope,
-  Sun,
-  Terminal,
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { PresetProject } from '../types/contracts';
@@ -19,11 +13,11 @@ import { BrandWordmark } from './BrandWordmark';
 const REPO_URL = 'https://github.com/CyberWei922/FPGAgent';
 
 const PIPELINE_STEPS = [
-  { step: '01', title: '自然语言需求', detail: '口语描述时序与按键行为' },
-  { step: '02', title: 'FSM 架构蓝图', detail: '自动拆解端口、状态机与约束' },
-  { step: '03', title: '流式可综合代码', detail: 'SSE 词法级渐进输出 Verilog' },
-  { step: '04', title: 'Lint 与确定性自测', detail: '多拍向量断言校验与自修复' },
-  { step: '05', title: '上板实时仿真', detail: '门级网表、波形与虚拟开发板' },
+  { step: '01', title: '需求解析', detail: '描述时序、按键与外设行为' },
+  { step: '02', title: '架构蓝图', detail: '拆解端口映射与有限状态机' },
+  { step: '03', title: '流式编码', detail: '词法级输出可综合 Verilog' },
+  { step: '04', title: '静态与自测', detail: 'Lint 体检与多拍向量自修复' },
+  { step: '05', title: '上板仿真', detail: '门级原理图、波形与板卡联动' },
 ] as const;
 
 const DEVELOPERS = [
@@ -33,7 +27,7 @@ const DEVELOPERS = [
     handle: 'CyberWei922',
     focus: '全栈统筹 · 前端工作台 · 云端部署',
     summary:
-      '主导 FPGAgent 整体产品交互架构与硬件居中工作台设计，定义跨模块公共契约，打通多模型流式 API 接入、团队联调与 Qoder Sites 云端发布。',
+      '主导硬件居中工作台交互架构与跨模块公共契约，负责多模型流式接入、联调与 Qoder Sites 部署。',
     url: 'https://github.com/CyberWei922',
     displayUrl: 'github.com/CyberWei922',
   },
@@ -43,7 +37,7 @@ const DEVELOPERS = [
     handle: 'ForrestKang',
     focus: '硬件解析 · 周期仿真引擎 · 教学网表',
     summary:
-      '构建纯浏览器端 Verilog 词法与语法解析器、可综合静态 Linter 与周期精确数字电路仿真内核，驱动教学级门级网表提取与确定性波形自测。',
+      '构建纯浏览器端 Verilog 解析器、可综合静态 Linter 与周期精确仿真内核，支撑门级网表提取与确定性自测。',
     url: 'https://github.com/ForrestKang',
     displayUrl: 'github.com/ForrestKang',
   },
@@ -51,9 +45,9 @@ const DEVELOPERS = [
     index: '03',
     badge: '智能体与案例',
     handle: 'fzd1210-beep',
-    focus: 'AI 智能体闭环 · 故障诊所 · 预置案例',
+    focus: 'AI 智能体闭环 · 校验自修复 · 预置案例',
     summary:
-      '设计多阶段硬件 Agent 规划与错误自修复闭环，打造苏格拉底渐进式「故障诊所」排错体系，并沉淀五大经典数字逻辑教学硬件案例库。',
+      '设计多阶段硬件 Agent 规划与校验自修复闭环，构建渐进式排错能力，并沉淀五大经典数字逻辑案例库。',
     url: 'https://github.com/fzd1210-beep',
     displayUrl: 'github.com/fzd1210-beep',
   },
@@ -176,8 +170,6 @@ function WorkbenchPreviewArtwork() {
 export function ProductShowcase({
   presets,
   hasActiveSession,
-  resolvedTheme,
-  onToggleTheme,
   onStartDesigning,
   onReturnWorkbench,
   onTryPreset,
@@ -185,8 +177,6 @@ export function ProductShowcase({
 }: {
   presets: PresetProject[];
   hasActiveSession: boolean;
-  resolvedTheme: 'light' | 'dark';
-  onToggleTheme: () => void;
   onStartDesigning: () => void;
   onReturnWorkbench: () => void;
   onTryPreset: (preset: PresetProject) => void;
@@ -260,16 +250,6 @@ export function ProductShowcase({
 
           <button
             type="button"
-            className="icon-button topbar-icon-btn"
-            onClick={onToggleTheme}
-            title={resolvedTheme === 'dark' ? '切换浅色模式' : '切换深色模式'}
-            aria-label={resolvedTheme === 'dark' ? '切换浅色模式' : '切换深色模式'}
-          >
-            {resolvedTheme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-          </button>
-
-          <button
-            type="button"
             className="primary-button compact-btn"
             onClick={hasActiveSession ? onReturnWorkbench : onStartDesigning}
           >
@@ -284,21 +264,18 @@ export function ProductShowcase({
         <section className="showcase-hero">
           <HeroCircuitBackdrop />
           <div className="showcase-hero-inner">
-            <div className="showcase-award-pill">
-              <Sparkles size={12} />
-              <span>2026 Qoder 高校创造力大赛 · StudyHack 赛道</span>
+            <div className="showcase-award-kicker mono">
+              2026 Qoder 高校创造力大赛 · StudyHack 赛道
             </div>
 
             <div className="showcase-logo-stage">
-              <div className="showcase-logo-halo" aria-hidden="true" />
               <BrandWordmark className="showcase-hero-logo" />
             </div>
 
             <h1 className="showcase-hero-title">专注于 FPGA 的 AI Agent</h1>
 
             <p className="showcase-hero-lead">
-              面向 FPGA 与数字电路开发的专属 AI 智能体。一句话描述硬件需求，即可自动规划状态机与端口蓝图、
-              流式编写可综合 Verilog，并在浏览器内完成确定性自测、门级网表仿真与虚拟开发板实时验证。
+              输入自然语言硬件需求，自动规划状态机蓝图、流式生成可综合 Verilog，并在浏览器内完成周期精确自测、门级仿真与虚拟开发板验证。
             </p>
 
             <div className="showcase-hero-cta" ref={ctaRef}>
@@ -349,42 +326,32 @@ export function ProductShowcase({
         {/* 2. Asymmetric Capabilities Showcase */}
         <section className="showcase-section" aria-labelledby="showcase-capabilities-title">
           <div className="showcase-section-head">
-            <h2 id="showcase-capabilities-title">为硬件工程师直觉而重构的工作台</h2>
+            <h2 id="showcase-capabilities-title">以硬件验证为中心的工作台</h2>
             <p>
-              不止于代码生成，而是把硬件设计最关键的架构规划、时序验证与排错训练装进一个零门槛的浏览器工作台。
+              从状态机规划、可综合代码校验到门级实时仿真，全部在浏览器本地执行，无需配置本地 EDA 工具链。
             </p>
           </div>
 
           <div className="showcase-bento">
             <article className="showcase-bento-lead">
               <div className="showcase-bento-copy">
-                <span className="showcase-feature-kicker">
-                  <Cpu size={13} /> 硬件居中 · Hardware-First
-                </span>
-                <h3>对话退居侧栏，板卡、波形与原理图占据中央</h3>
+                <span className="showcase-feature-kicker mono">01 · 硬件主视图</span>
+                <h3>对话退居侧栏，原理图、波形与板卡占据中央</h3>
                 <p>
-                  调硬件的核心不是翻阅冗长的对话气泡，而是亲眼看见信号流经每一级逻辑门。
-                  FPGAgent 将 Agent 的规划思路、阶段耗时与检查清单收纳在可折叠左侧时间线，
-                  让可交互门级原理图、多通道逻辑波形、拨码开关与七段数码管开发板成为真正的主视野。
+                  将 Agent 的推理轨迹与自测清单收纳于可折叠侧栏；主视区留给高电平实时高亮的门级原理图、多通道逻辑波形与虚拟开发板，支持实时、0.2× 慢放与单步时钟推进。
                 </p>
-                <div className="showcase-chip-row">
-                  <span className="showcase-metric-chip">门级网表高电平实时高亮</span>
-                  <span className="showcase-metric-chip">实时 / 0.2× / 单步时钟控制</span>
-                  <span className="showcase-metric-chip">一键导出标准 .v 与 Testbench</span>
+                <div className="showcase-spec-line mono">
+                  高电平实时追踪 · 实时 / 0.2× / 单步时钟 · 一键导出 .v 与 tb_top.v
                 </div>
               </div>
               <WorkbenchPreviewArtwork />
             </article>
 
             <article className="showcase-bento-card">
-              <span className="showcase-feature-kicker">
-                <Terminal size={13} /> 真流式 RTL 闭环 · Built-in Verification
-              </span>
-              <h3>写完即编译，把 RTL 经典坑点拦在上板之前</h3>
+              <span className="showcase-feature-kicker mono">02 · 浏览器 RTL 内核</span>
+              <h3>写完即编译，在上板前拦截 RTL 常见缺陷</h3>
               <p>
-                内置纯前端 Verilog 解析器、可综合静态 Linter 与周期精确仿真引擎。
-                SSE 实时逐词写出代码的同时，自动检测阻塞赋值混用、隐含锁存器与位宽截断，
-                并运行确定性测试向量校验——失配即精确标定拍数与源码行号，驱动 Agent 自动迭代修复。
+                纯前端 Verilog 解析器、可综合静态 Linter 与周期精确仿真器随流式代码同步运行：自动检出阻塞赋值混用、隐含锁存器与位宽截断，向量失配直接定位拍数与源码行号并触发自修复。
               </p>
               <div className="showcase-code-preview" aria-hidden="true">
                 <div className="showcase-code-lines mono">
@@ -415,14 +382,10 @@ export function ProductShowcase({
             </article>
 
             <article className="showcase-bento-card">
-              <span className="showcase-feature-kicker">
-                <Stethoscope size={13} /> 故障诊所与教学案例 · Learn by Debugging
-              </span>
-              <h3>内置故障诊所，带你实战排查硬件 Bug</h3>
+              <span className="showcase-feature-kicker mono">03 · 预置案例库</span>
+              <h3>内置五大经典案例，零消耗实时上板验证</h3>
               <p>
-                内置 5 套零 Token 消耗的经典数字逻辑案例与多组高频 RTL 踩坑故障关卡，
-                还支持 AI 针对当前电路自动构造隐蔽 Bug。配合「思考线索 → 错因行号 → 修复复测」三档苏格拉底式引导，
-                让数字电路学习从死记语法变成看得见的信号实验。
+                内置 5 套零 Token 消耗的数字逻辑工程案例，涵盖状态机、安全逻辑、串行检测与计数器。一键上板即可实时观察门级信号跳变、多通道波形与虚拟外设联动。
               </p>
               <div className="showcase-preset-launcher">
                 <div className="showcase-launcher-head">
@@ -454,7 +417,7 @@ export function ProductShowcase({
           <div className="showcase-section-head">
             <h2 id="showcase-team-title">开源仓库与开发团队</h2>
             <p>
-              由三人参赛小队协作打造，从浏览器 RTL 仿真内核、AI 智能体闭环到前端交互工作台全链路开源，欢迎查阅代码与交流探讨。
+              三人小队全链路开源，覆盖浏览器 RTL 仿真内核、多阶段硬件 Agent 闭环与交互工作台。
             </p>
           </div>
 
@@ -476,11 +439,6 @@ export function ProductShowcase({
                   </span>
                 </div>
                 <span className="showcase-repo-url mono">{REPO_URL}</span>
-                <div className="showcase-repo-tags">
-                  <span>Browser RTL Engine</span>
-                  <span>SSE Streaming Agent</span>
-                  <span>Interactive Gate Netlist &amp; Virtual Board</span>
-                </div>
               </div>
             </div>
             <span className="showcase-repo-cta">
@@ -524,9 +482,9 @@ export function ProductShowcase({
         <footer className="showcase-closing">
           <div className="showcase-closing-card">
             <div className="showcase-closing-copy">
-              <h2>时钟已就绪，现在点亮你的第一块数字电路</h2>
+              <h2>开始构建你的第一块数字电路</h2>
               <p>
-                支持开箱即用的云端免费额度、零消耗本地预置案例，也支持接入 DeepSeek / GLM / 通义千问等 OpenAI 兼容自有 Key。
+                提供免费云端体验额度与零消耗本地案例，也可在设置中接入 DeepSeek、GLM、通义千问等 OpenAI 兼容模型。
               </p>
             </div>
             <div className="showcase-closing-actions">

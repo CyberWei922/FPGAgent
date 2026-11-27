@@ -1,12 +1,10 @@
 import {
   ArrowUp,
-  Bug,
   Globe,
   Pause,
   Play,
   Settings2,
   SkipForward,
-  Sparkles,
   Square,
 } from 'lucide-react';
 import { useRef, useState, type CSSProperties } from 'react';
@@ -33,7 +31,6 @@ export function PromptComposer({
   onOpenSettings,
   enableWebResearch,
   onToggleWebResearch,
-  onInjectBug,
   liveHint,
   draftValue,
   onDraftChange,
@@ -52,7 +49,6 @@ export function PromptComposer({
   onOpenSettings: () => void;
   enableWebResearch: boolean;
   onToggleWebResearch: () => void;
-  onInjectBug?: () => void;
   liveHint?: string;
   draftValue?: string;
   onDraftChange?: (value: string) => void;
@@ -124,7 +120,6 @@ export function PromptComposer({
             />
           ) : (
             <div className="model-select-wrap" title={`当前服务商：${providerLabel}`}>
-              <Sparkles size={13} className="model-select-icon" />
               <button
                 type="button"
                 className="inline-model-trigger"
@@ -146,19 +141,6 @@ export function PromptComposer({
             <Globe size={13} />
             <span>联网</span>
           </button>
-
-          {onInjectBug && (
-            <button
-              type="button"
-              className="tool-chip"
-              disabled={busy}
-              title="打开故障诊所或注入教学故障"
-              onClick={onInjectBug}
-            >
-              <Bug size={13} />
-              <span>故障诊所</span>
-            </button>
-          )}
         </div>
 
         <div className="composer-right">

@@ -1,19 +1,11 @@
 import {
-  AlertTriangle,
-  ArrowRight,
-  Bug,
-  CheckCircle2,
   Clock,
   Download,
-  Lightbulb,
   Play,
-  RotateCcw,
-  Sparkles,
   Trash2,
-  Wrench,
 } from 'lucide-react';
 import type { HistoryEntry } from '../services/sessionHistory';
-import type { BugClinicCase, PresetProject, SelfTestResult } from '../types/contracts';
+import type { PresetProject } from '../types/contracts';
 
 const PRESET_META: Record<string, { category: string; difficulty: string }> = {
   'traffic-light': { category: '状态机', difficulty: '入门' },
@@ -64,7 +56,7 @@ export function PresetsPanel({
               <h3>{preset.name}</h3>
               <p>{preset.blueprint.summary}</p>
               <div className="preset-card-foot">
-                <span className="mono-meta">{preset.bugs.length} 个故障关卡</span>
+                <span className="mono-meta">零 Token 实时仿真</span>
                 <button
                   type="button"
                   className={active ? 'outline-button compact-btn' : 'primary-button compact-btn'}
@@ -78,206 +70,6 @@ export function PresetsPanel({
           );
         })}
       </div>
-    </div>
-  );
-}
-
-export function BugClinicPanel({
-  presets,
-  activePreset,
-  hasCircuit,
-  activeBug,
-  hintLevel,
-  selfTest,
-  injecting,
-  onInjectPresetBug,
-  onInjectAiBug,
-  onRevealHint,
-  onApplyFix,
-  onExitBug,
-  onLoadPreset,
-  onJumpToLine,
-}: {
-  presets: PresetProject[];
-  activePreset?: PresetProject;
-  hasCircuit: boolean;
-  activeBug: BugClinicCase | null;
-  hintLevel: 0 | 1 | 2 | 3;
-  selfTest?: SelfTestResult;
-  injecting: boolean;
-  onInjectPresetBug: (bug: BugClinicCase, sourcePreset?: PresetProject) => void;
-  onInjectAiBug: () => void;
-  onRevealHint: (level: 1 | 2 | 3) => void;
-  onApplyFix: () => void;
-  onExitBug: () => void;
-  onLoadPreset: (preset: PresetProject) => void;
-  onJumpToLine: (line?: number) => void;
-}) {
-  const availableBugs: Array<{ bug: BugClinicCase; preset: PresetProject }> = activePreset
-    ? activePreset.bugs.map((bug) => ({ bug, preset: activePreset }))
-    : presets.slice(0, 3).flatMap((preset) => preset.bugs.slice(0, 1).map((bug) => ({ bug, preset })));
-
-  return (
-    <div className="drawer-scroll">
-      {activeBug ? (
-        <div className="clinic-active">
-          <div className="clinic-banner">
-            <div className="clinic-banner-head">
-              <span className="clinic-badge">
-                <AlertTriangle size={13} /> 故障排错中
-              </span>
-              <span className="mono-meta">{activeBug.pitfallTag}</span>
-            </div>
-            <h3>{activeBug.title}</h3>
-            <p className="clinic-symptom">{activeBug.symptom}</p>
-            {selfTest && !selfTest.passed && (
-              <div className="clinic-failure-box">
-                {selfTest.firstFailure ? (
-                  <>
-                    自测第 <strong>{selfTest.firstFailure.cycle}</strong> 拍失配：
-                    <code>{selfTest.firstFailure.signal}</code> 期望{' '}
-                    <code>{selfTest.firstFailure.expected}</code>，实际{' '}
-                    <code>{selfTest.firstFailure.actual}</code>
-                  </>
-                ) : (
-                  <>自测未通过（{selfTest.passedChecks}/{selfTest.totalChecks}），请检查 Lint 与波形。</>
-                )}
-              </div>
-            )}
-            {selfTest?.passed && (
-              <div className="clinic-pass-box">
-                <CheckCircle2 size={14} /> 已通过全部 {selfTest.totalChecks} 项自测！故障修复成功。
-              </div>
-            )}
-          </div>
-
-          <div className="hint-ladder">
-            <h4>苏格拉底渐进提示</h4>
-
-            <div className={`hint-step${hintLevel >= 1 ? ' revealed' : ''}`}>
-              <div className="hint-step-head">
-                <span><Lightbulb size={14} /> 第 1 档 · 思考线索</span>
-                {hintLevel < 1 && (
-                  <button type="button" className="mini-action-btn" onClick={() => onRevealHint(1)}>
-                    查看线索
-                  </button>
-                )}
-              </div>
-              {hintLevel >= 1 && <p>{activeBug.diagnosis.level1Hint}</p>}
-            </div>
-
-            <div className={`hint-step${hintLevel >= 2 ? ' revealed' : ''}`}>
-              <div className="hint-step-head">
-                <span><Bug size={14} /> 第 2 档 · 错因定位</span>
-                {hintLevel < 2 && (
-                  <button type="button" className="mini-action-btn" onClick={() => onRevealHint(2)}>
-                    定位错因
-                  </button>
-                )}
-              </div>
-              {hintLevel >= 2 && (
-                <div>
-                  <p>{activeBug.diagnosis.level2Cause}</p>
-                  {activeBug.diagnosis.highlightLine && (
-                    <button
-                      type="button"
-                      className="text-link inline-link"
-                      onClick={() => onJumpToLine(activeBug.diagnosis.highlightLine)}
-                    >
-                      跳转到 Verilog 第 {activeBug.diagnosis.highlightLine} 行 <ArrowRight size={12} />
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
-
-            <div className={`hint-step${hintLevel >= 3 ? ' revealed' : ''}`}>
-              <div className="hint-step-head">
-                <span><Wrench size={14} /> 第 3 档 · 标准修复方案</span>
-                {hintLevel < 3 && (
-                  <button type="button" className="mini-action-btn" onClick={() => onRevealHint(3)}>
-                    展开修复
-                  </button>
-                )}
-              </div>
-              {hintLevel >= 3 && (
-                <div className="hint-fix-actions">
-                  <p className="field-help">点击下方按钮将应用修复补丁并重新执行确定性自测。</p>
-                  <button type="button" className="primary-button compact-btn" onClick={onApplyFix}>
-                    <Wrench size={13} /> 一键应用修复并复测
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <button type="button" className="outline-button full-width" onClick={onExitBug}>
-            <RotateCcw size={14} /> 退出诊所并恢复原电路
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="drawer-intro">
-            <p>选择一个典型 RTL 踩坑关卡注入到当前电路，结合板卡现象、自测波形与三档提示定位并修复故障。</p>
-          </div>
-
-          {hasCircuit ? (
-            <button
-              type="button"
-              className="ai-inject-card"
-              disabled={injecting}
-              onClick={onInjectAiBug}
-            >
-              <span className="ai-inject-icon">
-                <Sparkles size={16} />
-              </span>
-              <span className="ai-inject-copy">
-                <strong>{injecting ? 'AI 正在构造隐蔽故障…' : 'AI 为当前电路注入隐蔽故障'}</strong>
-                <small>自动生成典型阻塞赋值 / 锁存器 / 位宽截断坑点与三档提示</small>
-              </span>
-            </button>
-          ) : (
-            <div className="empty-box">
-              <p>先载入一个电路，即可开始故障排错挑战。</p>
-              <div className="empty-actions">
-                {presets.slice(0, 2).map((preset) => (
-                  <button
-                    key={preset.id}
-                    type="button"
-                    className="outline-button compact-btn"
-                    onClick={() => onLoadPreset(preset)}
-                  >
-                    载入「{preset.name}」
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="clinic-list">
-            <h4 className="drawer-subheading">
-              {activePreset ? `「${activePreset.name}」内置故障关卡` : '精选教学故障关卡'}
-            </h4>
-            {availableBugs.map(({ bug, preset }) => (
-              <article key={bug.id} className="bug-card">
-                <div className="bug-card-head">
-                  <span className="tag-pill warn">{bug.pitfallTag}</span>
-                  <span className="mono-meta">{preset.name}</span>
-                </div>
-                <h3>{bug.title}</h3>
-                <p>{bug.symptom}</p>
-                <button
-                  type="button"
-                  className="outline-button compact-btn"
-                  onClick={() => onInjectPresetBug(bug, preset)}
-                >
-                  <Bug size={13} /> 注入此故障开始排错
-                </button>
-              </article>
-            ))}
-          </div>
-        </>
-      )}
     </div>
   );
 }

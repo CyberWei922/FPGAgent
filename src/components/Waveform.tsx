@@ -13,12 +13,13 @@ interface Channel {
   clock?: boolean;
 }
 
-export function Waveform({ title, samples, failureCycle, ledFocus = false, autoFollow = false }: {
+export function Waveform({ title, samples, failureCycle, ledFocus = false, autoFollow = false, showCycleMeta = true }: {
   title: string;
   samples: SignalSample[];
   failureCycle?: number;
   ledFocus?: boolean;
   autoFollow?: boolean;
+  showCycleMeta?: boolean;
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
   const stickToEndRef = useRef(true);
@@ -60,7 +61,7 @@ export function Waveform({ title, samples, failureCycle, ledFocus = false, autoF
 
   return (
     <section className="instrument-section waveform-section">
-      <div className="section-heading"><h2>{title}</h2>{samples.length > 0 && <span className="instrument-meta">周期 {samples.at(-1)?.cycle}</span>}</div>
+      <div className="section-heading"><h2>{title}</h2>{showCycleMeta && samples.length > 0 && <span className="instrument-meta mono">周期 {samples.at(-1)?.cycle}</span>}</div>
       <div
         ref={frameRef}
         className="waveform-frame"

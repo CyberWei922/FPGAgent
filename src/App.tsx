@@ -1,20 +1,21 @@
 import {
   Check,
   ChevronRight,
+  CircuitBoard,
+  ClipboardCheck,
   Copy,
   Download,
+  FileCode2,
+  FileText,
   LayoutGrid,
   LockKeyhole,
-  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   Radio,
-  Sun,
 } from 'lucide-react';
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -29,7 +30,7 @@ import { ChatPane, stepKeyForTrace, type ChatTurn } from './components/ChatPane'
 import { GateCanvas } from './components/GateCanvas';
 import { NavRail, type RailTab } from './components/NavRail';
 import { ProductShowcase } from './components/ProductShowcase';
-import { BugClinicPanel, HistoryPanel, PresetsPanel } from './components/SidePanels';
+import { HistoryPanel, PresetsPanel } from './components/SidePanels';
 import { ClockControls, PromptComposer, SPEED_INTERVAL_MS, type ClockSpeed } from './components/TopBar';
 import { VirtualBoard } from './components/VirtualBoard';
 import { Waveform } from './components/Waveform';
@@ -82,7 +83,6 @@ import {
   isLLMError,
   type AgentBlueprint,
   type BoardInputs,
-  type BugClinicCase,
   type HarnessTraceEvent,
   type LintIssue,
   type LLMErrorCode,
@@ -163,7 +163,7 @@ function parseRouteFromHash(hash: string): RouteState {
   if (segs[0] === 'intro' || segs[0] === 'showcase' || segs[0] === 'about') {
     return { view: 'showcase', railTab: 'chat', wbTab: 'canvas' };
   }
-  if (segs[0] === 'presets' || segs[0] === 'clinic' || segs[0] === 'history') {
+  if (segs[0] === 'presets' || segs[0] === 'history') {
     const wb = params.get('tab');
     const wbTab: WorkbenchTab =
       wb === 'blueprint' || wb === 'verilog' || wb === 'verify' ? wb : 'canvas';
@@ -175,7 +175,7 @@ function parseRouteFromHash(hash: string): RouteState {
       wb === 'blueprint' || wb === 'verilog' || wb === 'verify' ? wb : 'canvas';
     const panel = params.get('panel');
     const railTab: RailTab =
-      panel === 'presets' || panel === 'clinic' || panel === 'history' ? panel : 'chat';
+      panel === 'presets' || panel === 'history' ? panel : 'chat';
     return { view: 'workbench', railTab, wbTab };
   }
   return { view: 'home', railTab: 'chat', wbTab: 'canvas' };
@@ -198,44 +198,6 @@ function nextId(prefix: string): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-const HOME_TIME_PREFIX_PROBABILITY = 0.7;
-
-const HOME_GREETING_BODIES = [
-  '从哪个模块开始？',
-  '想在板子上跑点什么？',
-  '想点亮哪块电路？',
-  '手头在调什么逻辑？',
-  '想写点什么 Verilog？',
-  '准备验证什么电路？',
-  '想先看哪段波形？',
-  '打算先搭哪个原型？',
-] as const;
-
-const HOME_STANDALONE_GREETINGS = [
-  '时钟已就绪，从哪个模块开始？',
-  '板卡已上电，准备验证什么？',
-  '先搭个原型，看看波形。',
-] as const;
-
-function getTimeGreetingPrefix(date: Date): string {
-  const hour = date.getHours();
-  if (hour >= 5 && hour < 9) return '早上好';
-  if (hour >= 9 && hour < 12) return '上午好';
-  if (hour >= 12 && hour < 14) return '中午好';
-  if (hour >= 14 && hour < 18) return '下午好';
-  if (hour >= 18 && hour < 23) return '晚上好';
-  return '夜深了';
-}
-
-function pickHomeGreeting(previous?: string, now = new Date()): string {
-  const withTimePrefix = Math.random() < HOME_TIME_PREFIX_PROBABILITY;
-  const candidates = withTimePrefix
-    ? HOME_GREETING_BODIES.map((body) => `${getTimeGreetingPrefix(now)}，${body}`)
-    : [...HOME_GREETING_BODIES, ...HOME_STANDALONE_GREETINGS];
-  const pool = previous ? candidates.filter((item) => item !== previous) : candidates;
-  return pool[Math.floor(Math.random() * pool.length)] ?? candidates[0];
-}
-
 export default function App() {
   const engineFactory = useMemo(() => createRtlEngine, []);
   const runtime = useMemo(
@@ -256,7 +218,6 @@ export default function App() {
   const [siteModel, setSiteModel] = useState<string>(loadSiteModel);
   const [remainingQuota, setRemainingQuota] = useState<number | undefined>();
   const [dailyQuotaLimit, setDailyQuotaLimit] = useState<number | undefined>();
-  const [homeGreeting, setHomeGreeting] = useState<string>(() => pickHomeGreeting());
 
   // Navigation & Browser History State
   const initialRoute = useMemo<RouteState>(() => {
@@ -313,7 +274,6 @@ export default function App() {
         (candidate.view === 'home' || candidate.view === 'workbench' || candidate.view === 'showcase') &&
         (candidate.railTab === 'chat' ||
           candidate.railTab === 'presets' ||
-          candidate.railTab === 'clinic' ||
           candidate.railTab === 'history') &&
         (candidate.wbTab === 'canvas' ||
           candidate.wbTab === 'blueprint' ||
@@ -360,21 +320,6 @@ export default function App() {
   const userOverrodeTabRef = useRef(false);
   const liveCodeStreamerRef = useRef<LiveCodeStreamer | null>(null);
   const prefillAbortRef = useRef<AbortController | null>(null);
-
-  // Sliding tab indicator measurement
-  const wbTabsRef = useRef<HTMLDivElement>(null);
-  const tabButtonRefs = useRef<Partial<Record<WorkbenchTab, HTMLButtonElement | null>>>({});
-  const [tabIndicator, setTabIndicator] = useState<{ left: number; width: number; ready: boolean }>({
-    left: 0,
-    width: 0,
-    ready: false,
-  });
-
-  // Bug Clinic State
-  const [activeBug, setActiveBug] = useState<BugClinicCase | null>(null);
-  const [hintLevel, setHintLevel] = useState<0 | 1 | 2 | 3>(0);
-  const [injectingBug, setInjectingBug] = useState(false);
-  const cleanBeforeBug = useRef<{ code: string; vectors: TestVectorStep[]; blueprint?: AgentBlueprint; presetId?: string } | null>(null);
 
   // Simulation State
   const [netlist, setNetlist] = useState<NetlistGraph>();
@@ -616,7 +561,6 @@ export default function App() {
   function clearCircuit() {
     simulation.current = null;
     applied.current = undefined;
-    cleanBeforeBug.current = null;
     setCompiled(false);
     setBlueprint(undefined);
     setCode('');
@@ -625,8 +569,6 @@ export default function App() {
     setSelfTest(undefined);
     setNetlist(undefined);
     setHistory([]);
-    setActiveBug(null);
-    setHintLevel(0);
     setHighlightLine(undefined);
     resetInputs();
   }
@@ -704,7 +646,6 @@ export default function App() {
     setSpeed(prefs.defaultClockSpeed);
     setRunning(true);
     clearCircuit();
-    setHomeGreeting((prev) => pickHomeGreeting(prev));
     navigateTo({ view: 'home', railTab: 'chat', wbTab: 'canvas' });
   }
 
@@ -763,15 +704,12 @@ export default function App() {
   }
 
   function compileEditedCode() {
-    const { ok, verification } = loadCircuit(code, vectors, blueprint?.title, activePresetId, undefined, {
-      allowFailedSelfTest: Boolean(activeBug),
+    const { ok } = loadCircuit(code, vectors, blueprint?.title, activePresetId, undefined, {
       nextVersion: Math.max(1, version),
     });
     if (ok) {
       setOutcome('ready');
-      if (activeBug && verification?.passed) {
-        setHighlightLine(undefined);
-      }
+      setHighlightLine(undefined);
     } else {
       setOutcome('failed');
       navigateTo({ view: 'workbench', wbTab: 'verify' });
@@ -798,8 +736,6 @@ export default function App() {
       navigateTo({ view: 'workbench', railTab: 'chat', wbTab: 'blueprint' }, { skipTransition: true });
       setRecommendedTab('blueprint');
       setSidebarCollapsed(false);
-      setActiveBug(null);
-      setHintLevel(0);
       setHighlightLine(undefined);
       setOutcome('busy');
       setTraces([]);
@@ -1388,92 +1324,7 @@ export default function App() {
     );
   }
 
-  // Bug Clinic Actions
-  function injectPresetBug(bug: BugClinicCase, sourcePreset?: PresetProject) {
-    const targetVectors = sourcePreset?.testVectors ?? vectors;
-    const targetBlueprint = sourcePreset?.blueprint ?? blueprint;
-    const targetCleanCode = sourcePreset?.verilogCode ?? code;
-    const targetPresetId = sourcePreset?.id ?? activePresetId;
-
-    if (!cleanBeforeBug.current && targetCleanCode) {
-      cleanBeforeBug.current = {
-        code: targetCleanCode,
-        vectors: targetVectors,
-        blueprint: targetBlueprint,
-        presetId: targetPresetId,
-      };
-    }
-
-    setBlueprint(targetBlueprint);
-    setVectors(targetVectors);
-    setCode(bug.buggyCode);
-    setActiveBug(bug);
-    setHintLevel(0);
-    setHighlightLine(bug.diagnosis.highlightLine);
-    setSidebarCollapsed(false);
-
-    const { ok } = loadCircuit(bug.buggyCode, targetVectors, targetBlueprint?.title, targetPresetId, undefined, {
-      allowFailedSelfTest: true,
-      nextVersion: Math.max(1, version),
-    });
-    navigateTo({ view: 'workbench', railTab: 'clinic', wbTab: ok ? 'canvas' : 'verify' });
-  }
-
-  async function injectAiBug() {
-    if (!code || injectingBug) return;
-    setInjectingBug(true);
-    try {
-      const bug = await runtime.injectBug(code, { model: selectedModel });
-      injectPresetBug(bug);
-    } catch (error) {
-      const detail = isLLMError(error) ? LLM_ERROR_TEXT[error.code] : 'AI 故障注入失败，可先尝试下方的内置故障关卡。';
-      setTurns((prev) => [
-        ...prev,
-        {
-          id: nextId('ai'),
-          role: 'assistant',
-          status: 'failed',
-          text: detail,
-          errorCode: isLLMError(error) ? error.code : undefined,
-        },
-      ]);
-      navigateTo({ view: 'workbench', railTab: 'chat' });
-    } finally {
-      setInjectingBug(false);
-    }
-  }
-
-  function applyBugFix() {
-    if (!activeBug) return;
-    const fixedCode = activeBug.diagnosis.level3PatchCode || cleanBeforeBug.current?.code || code;
-    setCode(fixedCode);
-    setHighlightLine(undefined);
-    const { ok } = loadCircuit(fixedCode, vectors, blueprint?.title, activePresetId, undefined, {
-      allowFailedSelfTest: true,
-      nextVersion: Math.max(1, version),
-    });
-    if (ok) setOutcome('ready');
-  }
-
-  function exitBugClinic() {
-    const backup = cleanBeforeBug.current;
-    setActiveBug(null);
-    setHintLevel(0);
-    setHighlightLine(undefined);
-    if (backup) {
-      setBlueprint(backup.blueprint);
-      setCode(backup.code);
-      setVectors(backup.vectors);
-      loadCircuit(backup.code, backup.vectors, backup.blueprint?.title, backup.presetId, undefined, {
-        nextVersion: Math.max(1, version),
-      });
-    }
-    cleanBeforeBug.current = null;
-  }
-
   function restoreHistoryEntry(entry: HistoryEntry) {
-    setActiveBug(null);
-    setHintLevel(0);
     setHighlightLine(undefined);
     setBlueprint(entry.blueprint);
     setCode(entry.code);
@@ -1551,7 +1402,6 @@ export default function App() {
   const busy = outcome === 'busy';
   const latest = history.at(-1);
   const lockActive = activePresetId === 'password-lock';
-  const activePreset = runtime.presets.find((item) => item.id === activePresetId);
   const hasSession = view === 'workbench';
 
   const statusBadge = useMemo(() => {
@@ -1568,38 +1418,19 @@ export default function App() {
   const leftHeaderTitle =
     railTab === 'presets'
       ? '预置电路案例'
-      : railTab === 'clinic'
-        ? 'RTL 故障诊所'
-        : railTab === 'history'
-          ? '本地版本历史'
-          : blueprint?.title ?? '新电路对话';
+      : railTab === 'history'
+        ? '本地版本历史'
+        : blueprint?.title ?? '新电路对话';
 
-  const activeSiteModelLabel = availableModels.find((m) => m.id === selectedModel)?.label ?? selectedModel;
-  const quotaOrModelPill = api
-    ? `${providerLabel} · ${api.model}`
-    : `站点默认 · ${activeSiteModelLabel}`;
+  const homeQuotaText = api
+    ? `自定义 API · ${providerLabel}`
+    : remainingQuota !== undefined && dailyQuotaLimit !== undefined
+      ? `站点免费额度 · ${remainingQuota}/${dailyQuotaLimit}`
+      : remainingQuota !== undefined
+        ? `站点免费额度 · 剩 ${remainingQuota} 次`
+        : '站点免费额度';
 
   const wbTitleVersion = applied.current?.version ?? version;
-
-  useLayoutEffect(() => {
-    if (!hasSession) return;
-    const measure = () => {
-      const container = wbTabsRef.current;
-      const activeBtn = tabButtonRefs.current[wbTab];
-      if (!container || !activeBtn) return;
-      const left = activeBtn.offsetLeft;
-      const width = activeBtn.offsetWidth;
-      setTabIndicator((prev) =>
-        prev.left === left && prev.width === width && prev.ready ? prev : { left, width, ready: true },
-      );
-    };
-    measure();
-    const container = wbTabsRef.current;
-    if (!container || typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [hasSession, wbTab, selfTest, busy, sidebarCollapsed]);
 
   return (
     <div
@@ -1630,7 +1461,6 @@ export default function App() {
         resolvedTheme={resolvedTheme}
         onToggleTheme={toggleLightDark}
         hasCustomApi={Boolean(api)}
-        hasActiveBug={Boolean(activeBug)}
       />
 
       {settingsOpen && (
@@ -1655,8 +1485,6 @@ export default function App() {
         <ProductShowcase
           presets={runtime.presets}
           hasActiveSession={turns.length > 0 || compiled}
-          resolvedTheme={resolvedTheme}
-          onToggleTheme={toggleLightDark}
           onStartDesigning={() => {
             setSidebarCollapsed(false);
             navigateTo({ view: 'home', railTab: 'chat' });
@@ -1681,28 +1509,19 @@ export default function App() {
             <div className="home-topbar-actions">
               <button
                 type="button"
-                className="status-pill-btn"
+                className="home-quota-link mono"
                 onClick={() => openSettings('api')}
-                title={`${quotaOrModelPill} · 点击管理模型与 API 配置`}
+                title={`${homeQuotaText} · 点击管理模型与 API 配置`}
               >
                 <span className="status-dot" />
-                <span className="status-pill-text">{quotaOrModelPill}</span>
-              </button>
-              <button
-                type="button"
-                className="icon-button topbar-icon-btn"
-                onClick={toggleLightDark}
-                title={resolvedTheme === 'dark' ? '切换浅色模式' : '切换深色模式'}
-                aria-label={resolvedTheme === 'dark' ? '切换浅色模式' : '切换深色模式'}
-              >
-                {resolvedTheme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+                <span>{homeQuotaText}</span>
               </button>
             </div>
           </header>
 
           <div className="home-center">
             <div className="home-hero">
-              <h1 className="home-hero-heading">{homeGreeting}</h1>
+              <h1 className="home-hero-heading">用自然语言编写并仿真数字电路</h1>
 
               <PromptComposer
                 onSend={(prompt) => void run(prompt)}
@@ -1778,15 +1597,6 @@ export default function App() {
                 <div className="pane-header-right">
                   <button
                     type="button"
-                    className="status-pill-btn"
-                    title={`${quotaOrModelPill} · 点击切换模型或 API 服务商`}
-                    onClick={() => openSettings('api')}
-                  >
-                    <span className="status-dot" />
-                    <span className="status-pill-text">{quotaOrModelPill}</span>
-                  </button>
-                  <button
-                    type="button"
                     className="icon-button"
                     title="收起左侧栏"
                     aria-label="收起左侧栏"
@@ -1824,7 +1634,6 @@ export default function App() {
                       onOpenSettings={() => openSettings('api')}
                       enableWebResearch={prefs.enableWebResearch}
                       onToggleWebResearch={handleToggleWebResearch}
-                      onInjectBug={compiled ? () => navigateTo({ view: 'workbench', railTab: 'clinic' }) : undefined}
                       liveHint={busy && compiled ? `V${wbTitleVersion} 仿真可继续操作` : undefined}
                       viewTransitionName={sidebarCollapsed ? undefined : 'main-composer'}
                     />
@@ -1838,25 +1647,6 @@ export default function App() {
                   activePresetId={activePresetId}
                   busy={busy}
                   onSelectPreset={(preset) => void run(preset.prompt, preset)}
-                />
-              )}
-
-              {railTab === 'clinic' && (
-                <BugClinicPanel
-                  presets={runtime.presets}
-                  activePreset={activePreset}
-                  hasCircuit={compiled}
-                  activeBug={activeBug}
-                  hintLevel={hintLevel}
-                  selfTest={selfTest}
-                  injecting={injectingBug}
-                  onInjectPresetBug={injectPresetBug}
-                  onInjectAiBug={() => void injectAiBug()}
-                  onRevealHint={(level) => setHintLevel(level)}
-                  onApplyFix={applyBugFix}
-                  onExitBug={exitBugClinic}
-                  onLoadPreset={(preset) => void run(preset.prompt, preset)}
-                  onJumpToLine={jumpToVerilogLine}
                 />
               )}
 
@@ -1900,7 +1690,7 @@ export default function App() {
                 {sidebarCollapsed && (
                   <button
                     type="button"
-                    className="icon-button"
+                    className="icon-button wb-expand-btn"
                     title="展开左侧栏"
                     aria-label="展开左侧栏"
                     onClick={() => setSidebarCollapsed(false)}
@@ -1909,73 +1699,55 @@ export default function App() {
                   </button>
                 )}
 
-                <div ref={wbTabsRef} className="wb-tabs" role="tablist" aria-label="工作台视图">
-                  {tabIndicator.ready && (
-                    <span
-                      className="wb-tab-indicator"
-                      aria-hidden="true"
-                      style={{
-                        transform: `translateX(${tabIndicator.left}px)`,
-                        width: `${tabIndicator.width}px`,
-                      }}
-                    />
-                  )}
+                <div className="wb-tabs" role="tablist" aria-label="工作台视图">
                   <button
-                    ref={(el) => {
-                      tabButtonRefs.current.canvas = el;
-                    }}
                     type="button"
                     role="tab"
                     aria-selected={wbTab === 'canvas'}
                     className={wbTab === 'canvas' ? 'active' : undefined}
                     onClick={() => handleManualTabClick('canvas')}
                   >
-                    仿真画布
+                    <CircuitBoard size={13.5} className="wb-tab-icon" aria-hidden="true" />
+                    <span>仿真画布</span>
                     {busy && recommendedTab === 'canvas' && wbTab !== 'canvas' && (
                       <span className="tab-activity-dot" aria-label="后台就绪" />
                     )}
                   </button>
                   <button
-                    ref={(el) => {
-                      tabButtonRefs.current.blueprint = el;
-                    }}
                     type="button"
                     role="tab"
                     aria-selected={wbTab === 'blueprint'}
                     className={wbTab === 'blueprint' ? 'active' : undefined}
                     onClick={() => handleManualTabClick('blueprint')}
                   >
-                    蓝图
+                    <FileText size={13.5} className="wb-tab-icon" aria-hidden="true" />
+                    <span>蓝图</span>
                     {busy && recommendedTab === 'blueprint' && wbTab !== 'blueprint' && (
                       <span className="tab-activity-dot" aria-label="规划中" />
                     )}
                   </button>
                   <button
-                    ref={(el) => {
-                      tabButtonRefs.current.verilog = el;
-                    }}
                     type="button"
                     role="tab"
                     aria-selected={wbTab === 'verilog'}
                     className={wbTab === 'verilog' ? 'active' : undefined}
                     onClick={() => handleManualTabClick('verilog')}
                   >
-                    Verilog
+                    <FileCode2 size={13.5} className="wb-tab-icon" aria-hidden="true" />
+                    <span>Verilog</span>
                     {busy && recommendedTab === 'verilog' && wbTab !== 'verilog' && (
                       <span className="tab-activity-dot" aria-label="编码与验证中" />
                     )}
                   </button>
                   <button
-                    ref={(el) => {
-                      tabButtonRefs.current.verify = el;
-                    }}
                     type="button"
                     role="tab"
                     aria-selected={wbTab === 'verify'}
                     className={wbTab === 'verify' ? 'active' : undefined}
                     onClick={() => handleManualTabClick('verify')}
                   >
-                    自测
+                    <ClipboardCheck size={13.5} className="wb-tab-icon" aria-hidden="true" />
+                    <span>自测</span>
                     {selfTest && (
                       <span className={`tab-count ${selfTest.passed ? 'ok' : 'fail'}`}>
                         {selfTest.passedChecks}/{selfTest.totalChecks}
@@ -1989,13 +1761,9 @@ export default function App() {
 
                 <div className="wb-status-pills">
                   {compiled && wbTitleVersion > 0 && (
-                    <span className={`version-pill ${activeBug ? 'warn' : 'live'}`}>
+                    <span className="version-pill live">
                       <i />
-                      {activeBug
-                        ? '故障排错中'
-                        : running
-                          ? `V${wbTitleVersion} 运行中`
-                          : `V${wbTitleVersion} 已暂停`}
+                      {running ? `V${wbTitleVersion} 运行中` : `V${wbTitleVersion} 已暂停`}
                     </span>
                   )}
                   {busy && (
@@ -2054,7 +1822,7 @@ export default function App() {
                   </section>
 
                   <aside className="instruments-column" aria-label="实时波形与虚拟板卡">
-                    <Waveform title="实时波形" samples={history} ledFocus={lockActive} autoFollow />
+                    <Waveform title="实时波形" samples={history} ledFocus={lockActive} autoFollow showCycleMeta={false} />
 
                     <section className="instrument-section">
                       <div className="section-heading">
