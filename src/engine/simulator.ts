@@ -1,4 +1,12 @@
-import type { BoardInputs, BoardOutputs, SignalSample } from '../types/contracts';
+import {
+  BOARD_SCREEN_CELLS,
+  BOARD_SCREEN_COLS,
+  type BoardExtendedOutputs,
+  type BoardInputs,
+  type BoardOutputs,
+  type ScreenPortOutputs,
+  type SignalSample,
+} from '../types/contracts';
 import type {
   AlwaysBlock,
   Expr,
@@ -7,6 +15,7 @@ import type {
   PortDirection,
   RangeSpec,
   SignalKind,
+  SourceLoc,
   Stmt,
 } from './ast';
 
@@ -22,10 +31,32 @@ export interface SignalMeta {
   kind: SignalKind;
 }
 
+export interface ArrayDimensionMeta {
+  start: number;
+  end: number;
+  size: number;
+}
+
+export interface ArrayMeta {
+  name: string;
+  elementWidth: number;
+  msb: number;
+  lsb: number;
+  mask: number;
+  signed: boolean;
+  kind: SignalKind;
+  isPort: boolean;
+  dimensions: ArrayDimensionMeta[];
+  totalElements: number;
+  loc: SourceLoc;
+  invalidReason?: string;
+}
+
 export interface ElaboratedModule {
   ast: ModuleAst;
   params: Map<string, { value: number; width: number; signed: boolean }>;
   signals: Map<string, SignalMeta>;
+  arrays: Map<string, ArrayMeta>;
   wireInits: Array<{ name: string; value: Expr }>;
   regInits: Array<{ name: string; value: Expr }>;
 }
@@ -36,13 +67,20 @@ interface EvalValue {
   signed: boolean;
 }
 
-interface PendingWrite {
-  target: LValue;
-  value: number;
-}
+type PendingWrite =
+  | { kind: 'lvalue'; target: LValue; value: number }
+  | {
+      kind: 'array';
+      name: string;
+      linearIndex: number;
+      value: number;
+      bitPos?: number;
+      slice?: { low: number; high: number };
+    };
 
 export const MAX_COMB_ITERATIONS = 16;
-export const MAX_FOR_ITERATIONS = 128;
+export const MAX_FOR_ITERATIONS = 256;
+export const MAX_ARRAY_ELEMENTS = 4096;
 
 function isExprStatic(
   expr: Expr,
@@ -150,6 +188,17 @@ function substituteLValue(lv: LValue, varName: string, value: number): LValue {
         ...lv,
         msb: substituteExpr(lv.msb, varName, value),
         lsb: substituteExpr(lv.lsb, varName, value),
+      };
+    case 'indexed':
+      return {
+        ...lv,
+        indices: lv.indices.map((idx) => substituteExpr(idx, varName, value)),
+        ...(lv.slice && {
+          slice: {
+            msb: substituteExpr(lv.slice.msb, varName, value),
+            lsb: substituteExpr(lv.slice.lsb, varName, value),
+          },
+        }),
       };
     case 'concat':
       return { ...lv, items: lv.items.map((it) => substituteLValue(it, varName, value)) };
@@ -320,6 +369,21 @@ function resolveRange(
   return { msb: msbVal, lsb: lsbVal, width };
 }
 
+export function resolveArrayLinearIndex(meta: ArrayMeta, indices: number[]): number {
+  if (indices.length < meta.dimensions.length || meta.totalElements <= 0) return -1;
+  let linear = 0;
+  for (let d = 0; d < meta.dimensions.length; d++) {
+    const dim = meta.dimensions[d];
+    const idx = indices[d];
+    const min = Math.min(dim.start, dim.end);
+    const max = Math.max(dim.start, dim.end);
+    if (idx < min || idx > max) return -1;
+    const offset = dim.start <= dim.end ? idx - dim.start : dim.start - idx;
+    linear = linear * dim.size + offset;
+  }
+  return linear >= 0 && linear < meta.totalElements ? linear : -1;
+}
+
 export function elaborate(ast: ModuleAst): ElaboratedModule {
   const params = new Map<string, { value: number; width: number; signed: boolean }>();
   for (const p of ast.params) {
@@ -335,6 +399,7 @@ export function elaborate(ast: ModuleAst): ElaboratedModule {
   }
 
   const signals = new Map<string, SignalMeta>();
+  const arrays = new Map<string, ArrayMeta>();
   const wireInits: Array<{ name: string; value: Expr }> = [];
   const regInits: Array<{ name: string; value: Expr }> = [];
 
@@ -354,8 +419,42 @@ export function elaborate(ast: ModuleAst): ElaboratedModule {
   }
 
   for (const sig of ast.signals) {
-    const existing = signals.get(sig.name);
     const { msb, lsb, width } = resolveRange(sig.range, params);
+    if (sig.dimensions && sig.dimensions.length > 0) {
+      const dims: ArrayDimensionMeta[] = sig.dimensions.map((d) => {
+        const start = toSigned(evalConstExpr(d.msb, params).value, 32);
+        const end = toSigned(evalConstExpr(d.lsb, params).value, 32);
+        const size = Math.abs(end - start) + 1;
+        return { start, end, size };
+      });
+      const rawTotal = dims.reduce((acc, d) => acc * d.size, 1);
+      let invalidReason: string | undefined;
+      if (sig.direction !== undefined) {
+        invalidReason = `端口 "${sig.name}" 不支持数组维度声明`;
+      } else if (dims.length > 2) {
+        invalidReason = `数组 "${sig.name}" 为 ${dims.length} 维，当前仿真引擎仅支持 1D 或 2D 定长数组`;
+      } else if (rawTotal <= 0 || rawTotal > MAX_ARRAY_ELEMENTS) {
+        invalidReason = `数组 "${sig.name}" 元素总数 (${rawTotal}) 超出上限 ${MAX_ARRAY_ELEMENTS}`;
+      }
+      const totalElements = invalidReason ? 0 : rawTotal;
+      arrays.set(sig.name, {
+        name: sig.name,
+        elementWidth: width,
+        msb,
+        lsb,
+        mask: maskWidth(0xffffffff, width),
+        signed: sig.signed,
+        kind: sig.kind,
+        isPort: sig.direction !== undefined,
+        dimensions: dims,
+        totalElements,
+        loc: sig.loc,
+        ...(invalidReason && { invalidReason }),
+      });
+      continue;
+    }
+
+    const existing = signals.get(sig.name);
     if (existing) {
       if (sig.direction) existing.direction = sig.direction;
       if (sig.kind === 'reg') existing.kind = 'reg';
@@ -397,15 +496,88 @@ export function elaborate(ast: ModuleAst): ElaboratedModule {
     })),
   };
 
-  return { ast: unrolledAst, params, signals, wireInits, regInits };
+  return { ast: unrolledAst, params, signals, arrays, wireInits, regInits };
+}
+
+function unwrapArrayAccess(
+  expr: Expr
+): { rootName: string; indices: Expr[]; slice?: { msb: Expr; lsb: Expr } } | null {
+  let slice: { msb: Expr; lsb: Expr } | undefined;
+  let cur: Expr = expr;
+  if (cur.type === 'slice') {
+    slice = { msb: cur.msb, lsb: cur.lsb };
+    cur = cur.target;
+  }
+  const indices: Expr[] = [];
+  while (cur.type === 'index') {
+    indices.unshift(cur.index);
+    cur = cur.target;
+  }
+  if (cur.type === 'ident' && indices.length > 0) {
+    return { rootName: cur.name, indices, slice };
+  }
+  return null;
 }
 
 export function evalExpr(
   expr: Expr,
   values: ReadonlyMap<string, number>,
   signals: Map<string, SignalMeta>,
-  params: Map<string, { value: number; width: number; signed: boolean }>
+  params: Map<string, { value: number; width: number; signed: boolean }>,
+  arrays?: ReadonlyMap<string, Uint32Array>,
+  arrayMetas?: ReadonlyMap<string, ArrayMeta>
 ): EvalValue {
+  const sub = (e: Expr) => evalExpr(e, values, signals, params, arrays, arrayMetas);
+
+  if ((expr.type === 'index' || expr.type === 'slice') && arrayMetas && arrayMetas.size > 0) {
+    const access = unwrapArrayAccess(expr);
+    if (access) {
+      const meta = arrayMetas.get(access.rootName);
+      if (meta) {
+        const dimsCount = meta.dimensions.length;
+        if (access.indices.length < dimsCount) {
+          return { value: 0, width: meta.elementWidth, signed: meta.signed };
+        }
+        const dimIndices: number[] = [];
+        for (let d = 0; d < dimsCount; d++) {
+          const ev = sub(access.indices[d]);
+          dimIndices.push(ev.signed ? toSigned(ev.value, ev.width) : ev.value >>> 0);
+        }
+        const linear = resolveArrayLinearIndex(meta, dimIndices);
+        const rawElem =
+          linear >= 0 ? maskWidth(arrays?.get(access.rootName)?.[linear] ?? 0, meta.elementWidth) : 0;
+
+        if (access.slice) {
+          if (access.indices.length !== dimsCount) {
+            return { value: 0, width: 1, signed: false };
+          }
+          const msbEv = sub(access.slice.msb);
+          const lsbEv = sub(access.slice.lsb);
+          const hi = toSigned(msbEv.value, 32) - meta.lsb;
+          const lo = toSigned(lsbEv.value, 32) - meta.lsb;
+          const low = Math.min(hi, lo);
+          const high = Math.max(hi, lo);
+          const w = Math.max(1, Math.min(32, high - low + 1));
+          const shifted = low >= 0 && low < 32 ? rawElem >>> low : 0;
+          return { value: maskWidth(shifted, w), width: w, signed: false };
+        }
+
+        if (access.indices.length === dimsCount) {
+          return { value: rawElem, width: meta.elementWidth, signed: meta.signed };
+        }
+
+        if (access.indices.length === dimsCount + 1) {
+          const bitIdxEv = sub(access.indices[dimsCount]);
+          const bitPos = toSigned(bitIdxEv.value, 32) - meta.lsb;
+          const bit = bitPos >= 0 && bitPos < 32 ? (rawElem >>> bitPos) & 1 : 0;
+          return { value: bit, width: 1, signed: false };
+        }
+
+        return { value: 0, width: 1, signed: false };
+      }
+    }
+  }
+
   switch (expr.type) {
     case 'number':
       return {
@@ -422,12 +594,16 @@ export function evalExpr(
       if (meta) {
         return { value: maskWidth(val, meta.width), width: meta.width, signed: meta.signed };
       }
+      const arrMeta = arrayMetas?.get(expr.name);
+      if (arrMeta) {
+        return { value: 0, width: arrMeta.elementWidth, signed: arrMeta.signed };
+      }
       return { value: val >>> 0, width: 32, signed: false };
     }
 
     case 'index': {
-      const base = evalExpr(expr.target, values, signals, params);
-      const idxEv = evalExpr(expr.index, values, signals, params);
+      const base = sub(expr.target);
+      const idxEv = sub(expr.index);
       let lsbOffset = 0;
       if (expr.target.type === 'ident') {
         const meta = signals.get(expr.target.name);
@@ -439,9 +615,9 @@ export function evalExpr(
     }
 
     case 'slice': {
-      const base = evalExpr(expr.target, values, signals, params);
-      const msbEv = evalExpr(expr.msb, values, signals, params);
-      const lsbEv = evalExpr(expr.lsb, values, signals, params);
+      const base = sub(expr.target);
+      const msbEv = sub(expr.msb);
+      const lsbEv = sub(expr.lsb);
       let lsbOffset = 0;
       if (expr.target.type === 'ident') {
         const meta = signals.get(expr.target.name);
@@ -460,7 +636,7 @@ export function evalExpr(
       let acc = 0n;
       let totalWidth = 0;
       for (const item of expr.items) {
-        const ev = evalExpr(item, values, signals, params);
+        const ev = sub(item);
         const w = Math.max(1, ev.width);
         acc = (acc << BigInt(w)) | BigInt(maskWidth(ev.value, w));
         totalWidth += w;
@@ -471,12 +647,12 @@ export function evalExpr(
     }
 
     case 'repeat': {
-      const countEv = evalExpr(expr.count, values, signals, params);
+      const countEv = sub(expr.count);
       const count = Math.max(0, Math.min(32, countEv.value));
       let innerAcc = 0n;
       let innerWidth = 0;
       for (const item of expr.items) {
-        const ev = evalExpr(item, values, signals, params);
+        const ev = sub(item);
         const w = Math.max(1, ev.width);
         innerAcc = (innerAcc << BigInt(w)) | BigInt(maskWidth(ev.value, w));
         innerWidth += w;
@@ -493,7 +669,7 @@ export function evalExpr(
     }
 
     case 'sysfn': {
-      const arg = evalExpr(expr.arg, values, signals, params);
+      const arg = sub(expr.arg);
       return {
         value: arg.value,
         width: arg.width,
@@ -502,7 +678,7 @@ export function evalExpr(
     }
 
     case 'unary': {
-      const op = evalExpr(expr.operand, values, signals, params);
+      const op = sub(expr.operand);
       switch (expr.op) {
         case '+':
           return op;
@@ -553,8 +729,8 @@ export function evalExpr(
     }
 
     case 'binary': {
-      const l = evalExpr(expr.left, values, signals, params);
-      const r = evalExpr(expr.right, values, signals, params);
+      const l = sub(expr.left);
+      const r = sub(expr.right);
       const maxW = Math.min(32, Math.max(l.width, r.width));
       const bothSigned = l.signed && r.signed;
 
@@ -663,9 +839,9 @@ export function evalExpr(
     }
 
     case 'ternary': {
-      const cond = evalExpr(expr.condition, values, signals, params);
-      const thenEv = evalExpr(expr.thenExpr, values, signals, params);
-      const elseEv = evalExpr(expr.elseExpr, values, signals, params);
+      const cond = sub(expr.condition);
+      const thenEv = sub(expr.thenExpr);
+      const elseEv = sub(expr.elseExpr);
       const w = Math.max(thenEv.width, elseEv.width);
       const signed = thenEv.signed && elseEv.signed;
       const chosen = cond.value !== 0 ? thenEv.value : elseEv.value;
@@ -676,26 +852,139 @@ export function evalExpr(
 
 function lvalueWidth(
   target: LValue,
-  values: Map<string, number>,
+  values: ReadonlyMap<string, number>,
   signals: Map<string, SignalMeta>,
-  params: Map<string, { value: number; width: number; signed: boolean }>
+  params: Map<string, { value: number; width: number; signed: boolean }>,
+  arrays?: ReadonlyMap<string, Uint32Array>,
+  arrayMetas?: ReadonlyMap<string, ArrayMeta>
 ): number {
   switch (target.type) {
     case 'ident':
-      return signals.get(target.name)?.width ?? 32;
-    case 'index':
+      return signals.get(target.name)?.width ?? arrayMetas?.get(target.name)?.elementWidth ?? 32;
+    case 'index': {
+      const arrMeta = arrayMetas?.get(target.name);
+      if (arrMeta && arrMeta.dimensions.length === 1) {
+        return arrMeta.elementWidth;
+      }
       return 1;
+    }
     case 'slice': {
-      const hi = toSigned(evalExpr(target.msb, values, signals, params).value, 32);
-      const lo = toSigned(evalExpr(target.lsb, values, signals, params).value, 32);
+      const hi = toSigned(evalExpr(target.msb, values, signals, params, arrays, arrayMetas).value, 32);
+      const lo = toSigned(evalExpr(target.lsb, values, signals, params, arrays, arrayMetas).value, 32);
       return Math.max(1, Math.min(32, Math.abs(hi - lo) + 1));
+    }
+    case 'indexed': {
+      if (target.slice) {
+        const hi = toSigned(evalExpr(target.slice.msb, values, signals, params, arrays, arrayMetas).value, 32);
+        const lo = toSigned(evalExpr(target.slice.lsb, values, signals, params, arrays, arrayMetas).value, 32);
+        return Math.max(1, Math.min(32, Math.abs(hi - lo) + 1));
+      }
+      const arrMeta = arrayMetas?.get(target.name);
+      if (arrMeta) {
+        if (target.indices.length === arrMeta.dimensions.length) {
+          return arrMeta.elementWidth;
+        }
+        return 1;
+      }
+      return 1;
     }
     case 'concat':
       return target.items.reduce(
-        (sum, item) => sum + lvalueWidth(item, values, signals, params),
+        (sum, item) => sum + lvalueWidth(item, values, signals, params, arrays, arrayMetas),
         0
       );
   }
+}
+
+function resolveArrayWrite(
+  name: string,
+  indexExprs: Expr[],
+  sliceExpr: { msb: Expr; lsb: Expr } | undefined,
+  rhsVal: number,
+  values: ReadonlyMap<string, number>,
+  signals: Map<string, SignalMeta>,
+  params: Map<string, { value: number; width: number; signed: boolean }>,
+  arrays: ReadonlyMap<string, Uint32Array>,
+  arrayMetas: ReadonlyMap<string, ArrayMeta>
+): Extract<PendingWrite, { kind: 'array' }> | null {
+  const meta = arrayMetas.get(name);
+  if (!meta) return null;
+  const dimsCount = meta.dimensions.length;
+  if (indexExprs.length < dimsCount) {
+    return { kind: 'array', name, linearIndex: -1, value: rhsVal };
+  }
+  const dimIndices: number[] = [];
+  for (let d = 0; d < dimsCount; d++) {
+    const ev = evalExpr(indexExprs[d], values, signals, params, arrays, arrayMetas);
+    dimIndices.push(ev.signed ? toSigned(ev.value, ev.width) : ev.value >>> 0);
+  }
+  const linearIndex = resolveArrayLinearIndex(meta, dimIndices);
+  if (linearIndex < 0) {
+    return { kind: 'array', name, linearIndex: -1, value: rhsVal };
+  }
+  if (sliceExpr) {
+    if (indexExprs.length !== dimsCount) {
+      return { kind: 'array', name, linearIndex: -1, value: rhsVal };
+    }
+    const hi = toSigned(evalExpr(sliceExpr.msb, values, signals, params, arrays, arrayMetas).value, 32) - meta.lsb;
+    const lo = toSigned(evalExpr(sliceExpr.lsb, values, signals, params, arrays, arrayMetas).value, 32) - meta.lsb;
+    return {
+      kind: 'array',
+      name,
+      linearIndex,
+      value: rhsVal,
+      slice: { low: Math.min(hi, lo), high: Math.max(hi, lo) },
+    };
+  }
+  if (indexExprs.length === dimsCount + 1) {
+    const bitPos =
+      toSigned(evalExpr(indexExprs[dimsCount], values, signals, params, arrays, arrayMetas).value, 32) - meta.lsb;
+    return { kind: 'array', name, linearIndex, value: rhsVal, bitPos };
+  }
+  if (indexExprs.length === dimsCount) {
+    return { kind: 'array', name, linearIndex, value: rhsVal };
+  }
+  return { kind: 'array', name, linearIndex: -1, value: rhsVal };
+}
+
+function applyArrayWrite(
+  write: Extract<PendingWrite, { kind: 'array' }>,
+  arrays: Map<string, Uint32Array>,
+  arrayMetas: ReadonlyMap<string, ArrayMeta>
+): boolean {
+  if (write.linearIndex < 0) return false;
+  const meta = arrayMetas.get(write.name);
+  const arr = arrays.get(write.name);
+  if (!meta || !arr || write.linearIndex >= arr.length) return false;
+  const prev = arr[write.linearIndex] ?? 0;
+
+  if (write.bitPos !== undefined) {
+    if (write.bitPos < 0 || write.bitPos >= meta.elementWidth) return false;
+    const bitMask = (1 << write.bitPos) >>> 0;
+    const next = maskWidth(
+      (write.value & 1) !== 0 ? (prev | bitMask) >>> 0 : (prev & ~bitMask) >>> 0,
+      meta.elementWidth
+    );
+    arr[write.linearIndex] = next;
+    return next !== prev;
+  }
+
+  if (write.slice) {
+    const { low, high } = write.slice;
+    if (high < 0 || low >= meta.elementWidth) return false;
+    const w = high - low + 1;
+    const prevBig = BigInt(prev);
+    const fieldMask = ((1n << BigInt(w)) - 1n) << BigInt(low);
+    const inserted = (BigInt(maskWidth(write.value, w)) << BigInt(low)) & fieldMask;
+    const nextBig = (prevBig & ~fieldMask) | inserted;
+    const next = maskWidth(Number(nextBig & 0xffffffffn) >>> 0, meta.elementWidth);
+    arr[write.linearIndex] = next;
+    return next !== prev;
+  }
+
+  const next = maskWidth(write.value, meta.elementWidth);
+  arr[write.linearIndex] = next;
+  return next !== prev;
 }
 
 function writeLValue(
@@ -703,7 +992,9 @@ function writeLValue(
   rhsVal: number,
   values: Map<string, number>,
   signals: Map<string, SignalMeta>,
-  params: Map<string, { value: number; width: number; signed: boolean }>
+  params: Map<string, { value: number; width: number; signed: boolean }>,
+  arrays?: Map<string, Uint32Array>,
+  arrayMetas?: ReadonlyMap<string, ArrayMeta>
 ): boolean {
   switch (target.type) {
     case 'ident': {
@@ -715,10 +1006,24 @@ function writeLValue(
     }
 
     case 'index': {
+      if (arrays && arrayMetas?.has(target.name)) {
+        const w = resolveArrayWrite(
+          target.name,
+          [target.index],
+          undefined,
+          rhsVal,
+          values,
+          signals,
+          params,
+          arrays,
+          arrayMetas
+        );
+        return w ? applyArrayWrite(w, arrays, arrayMetas) : false;
+      }
       const meta = signals.get(target.name);
       const lsbOffset = meta ? meta.lsb : 0;
       const width = meta ? meta.width : 32;
-      const bitPos = toSigned(evalExpr(target.index, values, signals, params).value, 32) - lsbOffset;
+      const bitPos = toSigned(evalExpr(target.index, values, signals, params, arrays, arrayMetas).value, 32) - lsbOffset;
       if (bitPos < 0 || bitPos >= width) return false;
       const prev = values.get(target.name) ?? 0;
       const bitMask = (1 << bitPos) >>> 0;
@@ -731,8 +1036,8 @@ function writeLValue(
       const meta = signals.get(target.name);
       const lsbOffset = meta ? meta.lsb : 0;
       const sigWidth = meta ? meta.width : 32;
-      const hi = toSigned(evalExpr(target.msb, values, signals, params).value, 32) - lsbOffset;
-      const lo = toSigned(evalExpr(target.lsb, values, signals, params).value, 32) - lsbOffset;
+      const hi = toSigned(evalExpr(target.msb, values, signals, params, arrays, arrayMetas).value, 32) - lsbOffset;
+      const lo = toSigned(evalExpr(target.lsb, values, signals, params, arrays, arrayMetas).value, 32) - lsbOffset;
       const low = Math.min(hi, lo);
       const high = Math.max(hi, lo);
       if (high < 0 || low >= sigWidth) return false;
@@ -746,15 +1051,33 @@ function writeLValue(
       return next !== Number(prev);
     }
 
+    case 'indexed': {
+      if (arrays && arrayMetas?.has(target.name)) {
+        const w = resolveArrayWrite(
+          target.name,
+          target.indices,
+          target.slice,
+          rhsVal,
+          values,
+          signals,
+          params,
+          arrays,
+          arrayMetas
+        );
+        return w ? applyArrayWrite(w, arrays, arrayMetas) : false;
+      }
+      return false;
+    }
+
     case 'concat': {
       let remaining = BigInt(rhsVal >>> 0);
       let changed = false;
       for (let i = target.items.length - 1; i >= 0; i--) {
         const item = target.items[i];
-        const w = lvalueWidth(item, values, signals, params);
+        const w = lvalueWidth(item, values, signals, params, arrays, arrayMetas);
         const mask = (1n << BigInt(w)) - 1n;
         const part = Number(remaining & mask) >>> 0;
-        if (writeLValue(item, part, values, signals, params)) {
+        if (writeLValue(item, part, values, signals, params, arrays, arrayMetas)) {
           changed = true;
         }
         remaining >>= BigInt(w);
@@ -774,31 +1097,68 @@ export interface SignalSnapshot {
   previous: Record<string, number>;
 }
 
+function hashArray(arr: Uint32Array): number {
+  let h = 2166136261;
+  for (let i = 0; i < arr.length; i++) {
+    h ^= arr[i];
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 export class SimulationSession {
   readonly elaborated: ElaboratedModule;
+  readonly hasTone: boolean;
+  readonly hasScreen: boolean;
   private values = new Map<string, number>();
   private prevValues = new Map<string, number>();
+  private arrays = new Map<string, Uint32Array>();
+  private arrayDigests = new Map<string, number>();
+  private prevArrayDigests = new Map<string, number>();
+  private arrayVersion = 0;
+  private screenBuffer = new Uint8Array(BOARD_SCREEN_CELLS);
   private cycle = 0;
 
   constructor(elaborated: ElaboratedModule) {
     this.elaborated = elaborated;
+    this.hasTone = elaborated.signals.has('tone');
+    this.hasScreen =
+      elaborated.signals.has('screen_x') &&
+      elaborated.signals.has('screen_y') &&
+      elaborated.signals.has('screen_data') &&
+      elaborated.signals.has('screen_cmd');
     this.reset();
   }
 
   reset(): void {
     this.cycle = 0;
+    this.arrayVersion = 0;
     this.values.clear();
     this.prevValues.clear();
+    this.arrays.clear();
+    this.arrayDigests.clear();
+    this.prevArrayDigests.clear();
+    this.screenBuffer.fill(0);
+
     for (const [name] of this.elaborated.signals) {
       this.values.set(name, 0);
       this.prevValues.set(name, 0);
+    }
+    for (const [name, meta] of this.elaborated.arrays) {
+      const storage = new Uint32Array(Math.max(0, meta.totalElements));
+      this.arrays.set(name, storage);
+      const digest = hashArray(storage);
+      this.arrayDigests.set(name, digest);
+      this.prevArrayDigests.set(name, digest);
     }
     for (const init of this.elaborated.regInits) {
       const ev = evalExpr(
         init.value,
         this.values,
         this.elaborated.signals,
-        this.elaborated.params
+        this.elaborated.params,
+        this.arrays,
+        this.elaborated.arrays
       );
       const meta = this.elaborated.signals.get(init.name);
       this.values.set(init.name, meta ? maskWidth(ev.value, meta.width) : ev.value);
@@ -806,6 +1166,11 @@ export class SimulationSession {
     this.runCombinational();
     for (const [name, val] of this.values) {
       this.prevValues.set(name, val);
+    }
+    for (const [name, arr] of this.arrays) {
+      const digest = hashArray(arr);
+      this.arrayDigests.set(name, digest);
+      this.prevArrayDigests.set(name, digest);
     }
   }
 
@@ -816,12 +1181,19 @@ export class SimulationSession {
       current[name] = val;
       previous[name] = this.prevValues.get(name) ?? 0;
     }
+    for (const [name] of this.arrays) {
+      current[name] = this.arrayDigests.get(name) ?? 0;
+      previous[name] = this.prevArrayDigests.get(name) ?? 0;
+    }
     return { current, previous };
   }
 
   step(inputs: BoardInputs): StepOutcome {
     for (const [name, val] of this.values) {
       this.prevValues.set(name, val);
+    }
+    for (const [name, digest] of this.arrayDigests) {
+      this.prevArrayDigests.set(name, digest);
     }
 
     const sanitizedInputs: BoardInputs = {
@@ -844,15 +1216,33 @@ export class SimulationSession {
       this.execSeqBlock(block, preEdgeSnapshot, blockingCommits, nbaCommits);
     }
 
-    for (const w of blockingCommits) {
-      writeLValue(w.target, w.value, this.values, this.elaborated.signals, this.elaborated.params);
-    }
-    for (const w of nbaCommits) {
-      writeLValue(w.target, w.value, this.values, this.elaborated.signals, this.elaborated.params);
-    }
+    const commitWrite = (w: PendingWrite) => {
+      if (w.kind === 'array') {
+        if (applyArrayWrite(w, this.arrays, this.elaborated.arrays)) {
+          this.arrayVersion += 1;
+        }
+      } else {
+        writeLValue(
+          w.target,
+          w.value,
+          this.values,
+          this.elaborated.signals,
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
+        );
+      }
+    };
+
+    for (const w of blockingCommits) commitWrite(w);
+    for (const w of nbaCommits) commitWrite(w);
 
     // Post-edge combinational convergence so outputs reflect newly committed registers.
     const postLoop = this.runCombinational();
+
+    for (const [name, arr] of this.arrays) {
+      this.arrayDigests.set(name, hashArray(arr));
+    }
 
     const currentCycle = this.cycle;
     this.cycle += 1;
@@ -862,6 +1252,34 @@ export class SimulationSession {
       traffic: maskWidth(this.values.get('traffic') ?? 0, 3),
       seg: maskWidth(this.values.get('seg') ?? 0, 16),
     };
+
+    let extendedOutputs: BoardExtendedOutputs | undefined;
+    let screenBufferSnapshot: number[] | undefined;
+
+    if (this.hasTone || this.hasScreen) {
+      extendedOutputs = {};
+      if (this.hasTone) {
+        extendedOutputs.tone = maskWidth(this.values.get('tone') ?? 0, 4);
+      }
+      if (this.hasScreen) {
+        const screen: ScreenPortOutputs = {
+          x: maskWidth(this.values.get('screen_x') ?? 0, 4),
+          y: maskWidth(this.values.get('screen_y') ?? 0, 3),
+          data: maskWidth(this.values.get('screen_data') ?? 0, 8),
+          cmd: maskWidth(this.values.get('screen_cmd') ?? 0, 2),
+        };
+        if (screen.cmd === 1) {
+          this.screenBuffer[screen.y * BOARD_SCREEN_COLS + screen.x] = screen.data;
+        } else if (screen.cmd === 2) {
+          this.screenBuffer.fill(0);
+        } else if (screen.cmd === 3) {
+          this.screenBuffer.fill(0);
+          this.screenBuffer[screen.y * BOARD_SCREEN_COLS + screen.x] = screen.data;
+        }
+        extendedOutputs.screen = screen;
+        screenBufferSnapshot = Array.from(this.screenBuffer);
+      }
+    }
 
     const internals: Record<string, number> = {};
     for (const [name, meta] of this.elaborated.signals) {
@@ -876,6 +1294,8 @@ export class SimulationSession {
         inputs: sanitizedInputs,
         outputs,
         internals,
+        ...(extendedOutputs && { extendedOutputs }),
+        ...(screenBufferSnapshot && { screenBuffer: screenBufferSnapshot }),
       },
       combLoopDetected: preLoop || postLoop,
     };
@@ -895,13 +1315,16 @@ export class SimulationSession {
 
     for (let iter = 0; iter < MAX_COMB_ITERATIONS; iter++) {
       const before = new Map(this.values);
+      const beforeArrayVersion = this.arrayVersion;
 
       for (const wi of wireInits) {
         const rhs = evalExpr(
           wi.value,
           this.values,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
         );
         const meta = this.elaborated.signals.get(wi.name);
         const next = meta ? maskWidth(rhs.value, meta.width) : rhs.value >>> 0;
@@ -913,18 +1336,39 @@ export class SimulationSession {
           a.value,
           this.values,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
         );
-        writeLValue(a.target, rhs.value, this.values, this.elaborated.signals, this.elaborated.params);
+        const changed = writeLValue(
+          a.target,
+          rhs.value,
+          this.values,
+          this.elaborated.signals,
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
+        );
+        if (changed && this.isArrayTarget(a.target)) this.arrayVersion += 1;
       }
 
       for (const block of combBlocks) this.execCombStmt(block.body);
 
       // A block may override its own default write before the iteration settles.
-      if ([...this.values].every(([name, value]) => before.get(name) === value)) return false;
+      if (
+        beforeArrayVersion === this.arrayVersion &&
+        [...this.values].every(([name, value]) => before.get(name) === value)
+      ) {
+        return false;
+      }
     }
 
     return true;
+  }
+
+  private isArrayTarget(target: LValue): boolean {
+    if (target.type === 'concat') return target.items.some((it) => this.isArrayTarget(it));
+    return this.elaborated.arrays.has(target.name);
   }
 
   private execCombStmt(stmt: Stmt): void {
@@ -941,9 +1385,20 @@ export class SimulationSession {
           stmt.value,
           this.values,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
         );
-        writeLValue(stmt.target, rhs.value, this.values, this.elaborated.signals, this.elaborated.params);
+        const changed = writeLValue(
+          stmt.target,
+          rhs.value,
+          this.values,
+          this.elaborated.signals,
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
+        );
+        if (changed && this.isArrayTarget(stmt.target)) this.arrayVersion += 1;
         return;
       }
 
@@ -952,7 +1407,9 @@ export class SimulationSession {
           stmt.condition,
           this.values,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
         );
         if (cond.value !== 0) this.execCombStmt(stmt.thenBranch);
         else if (stmt.elseBranch) this.execCombStmt(stmt.elseBranch);
@@ -964,7 +1421,9 @@ export class SimulationSession {
           stmt.expr,
           this.values,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
         );
         for (const item of stmt.items) {
           for (const pat of item.patterns) {
@@ -972,7 +1431,9 @@ export class SimulationSession {
               pat,
               this.values,
               this.elaborated.signals,
-              this.elaborated.params
+              this.elaborated.params,
+              this.arrays,
+              this.elaborated.arrays
             );
             if (matchCasePattern(stmt.kind, target.value, pat, patEv.value)) {
               this.execCombStmt(item.body);
@@ -989,7 +1450,9 @@ export class SimulationSession {
           stmt.init,
           this.values,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          this.arrays,
+          this.elaborated.arrays
         );
         writeLValue(
           { type: 'ident', name: stmt.varName, loc: stmt.loc },
@@ -1003,7 +1466,9 @@ export class SimulationSession {
             stmt.condition,
             this.values,
             this.elaborated.signals,
-            this.elaborated.params
+            this.elaborated.params,
+            this.arrays,
+            this.elaborated.arrays
           );
           if (cond.value === 0) break;
           this.execCombStmt(stmt.body);
@@ -1021,12 +1486,44 @@ export class SimulationSession {
     nbaCommits: PendingWrite[]
   ): void {
     const localEnv = new Map(preEdgeSnapshot);
-    this.execSeqStmt(block.body, localEnv, blockingCommits, nbaCommits);
+    const localArrays = new Map<string, Uint32Array>(this.arrays);
+    const clonedArrays = new Set<string>();
+    this.execSeqStmt(block.body, localEnv, localArrays, clonedArrays, blockingCommits, nbaCommits);
+  }
+
+  private resolvePending(
+    target: LValue,
+    rhsVal: number,
+    localEnv: Map<string, number>,
+    localArrays: Map<string, Uint32Array>
+  ): PendingWrite {
+    if (
+      (target.type === 'index' || target.type === 'indexed') &&
+      this.elaborated.arrays.has(target.name)
+    ) {
+      const indices = target.type === 'index' ? [target.index] : target.indices;
+      const slice = target.type === 'indexed' ? target.slice : undefined;
+      const resolved = resolveArrayWrite(
+        target.name,
+        indices,
+        slice,
+        rhsVal,
+        localEnv,
+        this.elaborated.signals,
+        this.elaborated.params,
+        localArrays,
+        this.elaborated.arrays
+      );
+      if (resolved) return resolved;
+    }
+    return { kind: 'lvalue', target, value: rhsVal };
   }
 
   private execSeqStmt(
     stmt: Stmt,
     localEnv: Map<string, number>,
+    localArrays: Map<string, Uint32Array>,
+    clonedArrays: Set<string>,
     blockingCommits: PendingWrite[],
     nbaCommits: PendingWrite[]
   ): void {
@@ -1036,7 +1533,7 @@ export class SimulationSession {
 
       case 'block':
         for (const s of stmt.statements) {
-          this.execSeqStmt(s, localEnv, blockingCommits, nbaCommits);
+          this.execSeqStmt(s, localEnv, localArrays, clonedArrays, blockingCommits, nbaCommits);
         }
         return;
 
@@ -1045,19 +1542,35 @@ export class SimulationSession {
           stmt.value,
           localEnv,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          localArrays,
+          this.elaborated.arrays
         );
+        const pending = this.resolvePending(stmt.target, rhs.value, localEnv, localArrays);
         if (stmt.kind === 'nonblocking') {
-          nbaCommits.push({ target: stmt.target, value: rhs.value });
+          nbaCommits.push(pending);
         } else {
-          writeLValue(
-            stmt.target,
-            rhs.value,
-            localEnv,
-            this.elaborated.signals,
-            this.elaborated.params
-          );
-          blockingCommits.push({ target: stmt.target, value: rhs.value });
+          if (pending.kind === 'array') {
+            if (!clonedArrays.has(pending.name)) {
+              const orig = localArrays.get(pending.name);
+              if (orig) {
+                localArrays.set(pending.name, new Uint32Array(orig));
+                clonedArrays.add(pending.name);
+              }
+            }
+            applyArrayWrite(pending, localArrays, this.elaborated.arrays);
+          } else {
+            writeLValue(
+              stmt.target,
+              rhs.value,
+              localEnv,
+              this.elaborated.signals,
+              this.elaborated.params,
+              localArrays,
+              this.elaborated.arrays
+            );
+          }
+          blockingCommits.push(pending);
         }
         return;
       }
@@ -1067,12 +1580,14 @@ export class SimulationSession {
           stmt.condition,
           localEnv,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          localArrays,
+          this.elaborated.arrays
         );
         if (cond.value !== 0) {
-          this.execSeqStmt(stmt.thenBranch, localEnv, blockingCommits, nbaCommits);
+          this.execSeqStmt(stmt.thenBranch, localEnv, localArrays, clonedArrays, blockingCommits, nbaCommits);
         } else if (stmt.elseBranch) {
-          this.execSeqStmt(stmt.elseBranch, localEnv, blockingCommits, nbaCommits);
+          this.execSeqStmt(stmt.elseBranch, localEnv, localArrays, clonedArrays, blockingCommits, nbaCommits);
         }
         return;
       }
@@ -1082,7 +1597,9 @@ export class SimulationSession {
           stmt.expr,
           localEnv,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          localArrays,
+          this.elaborated.arrays
         );
         for (const item of stmt.items) {
           for (const pat of item.patterns) {
@@ -1090,16 +1607,18 @@ export class SimulationSession {
               pat,
               localEnv,
               this.elaborated.signals,
-              this.elaborated.params
+              this.elaborated.params,
+              localArrays,
+              this.elaborated.arrays
             );
             if (matchCasePattern(stmt.kind, target.value, pat, patEv.value)) {
-              this.execSeqStmt(item.body, localEnv, blockingCommits, nbaCommits);
+              this.execSeqStmt(item.body, localEnv, localArrays, clonedArrays, blockingCommits, nbaCommits);
               return;
             }
           }
         }
         if (stmt.defaultBranch) {
-          this.execSeqStmt(stmt.defaultBranch, localEnv, blockingCommits, nbaCommits);
+          this.execSeqStmt(stmt.defaultBranch, localEnv, localArrays, clonedArrays, blockingCommits, nbaCommits);
         }
         return;
       }
@@ -1109,7 +1628,9 @@ export class SimulationSession {
           stmt.init,
           localEnv,
           this.elaborated.signals,
-          this.elaborated.params
+          this.elaborated.params,
+          localArrays,
+          this.elaborated.arrays
         );
         writeLValue(
           { type: 'ident', name: stmt.varName, loc: stmt.loc },
@@ -1123,11 +1644,13 @@ export class SimulationSession {
             stmt.condition,
             localEnv,
             this.elaborated.signals,
-            this.elaborated.params
+            this.elaborated.params,
+            localArrays,
+            this.elaborated.arrays
           );
           if (cond.value === 0) break;
-          this.execSeqStmt(stmt.body, localEnv, blockingCommits, nbaCommits);
-          this.execSeqStmt(stmt.step, localEnv, blockingCommits, nbaCommits);
+          this.execSeqStmt(stmt.body, localEnv, localArrays, clonedArrays, blockingCommits, nbaCommits);
+          this.execSeqStmt(stmt.step, localEnv, localArrays, clonedArrays, blockingCommits, nbaCommits);
         }
         return;
       }

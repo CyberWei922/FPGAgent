@@ -1,11 +1,12 @@
 import type { LintIssue } from '../types/contracts';
-import type { Expr, LValue, PortDirection, Stmt } from './ast';
-import type { ElaboratedModule } from './simulator';
+import type { Expr, LValue, PortDirection, SourceLoc, Stmt } from './ast';
+import { evalExpr, toSigned, type ArrayMeta, type ElaboratedModule } from './simulator';
 
-interface ExpectedPortSpec {
+export interface ExpectedPortSpec {
   name: string;
   direction: PortDirection;
   width: number;
+  optional?: boolean;
 }
 
 export const BOARD_PORT_SPECS: ExpectedPortSpec[] = [
@@ -16,8 +17,14 @@ export const BOARD_PORT_SPECS: ExpectedPortSpec[] = [
   { name: 'led', direction: 'output', width: 8 },
   { name: 'traffic', direction: 'output', width: 3 },
   { name: 'seg', direction: 'output', width: 16 },
+  { name: 'tone', direction: 'output', width: 4, optional: true },
+  { name: 'screen_x', direction: 'output', width: 4, optional: true },
+  { name: 'screen_y', direction: 'output', width: 3, optional: true },
+  { name: 'screen_data', direction: 'output', width: 8, optional: true },
+  { name: 'screen_cmd', direction: 'output', width: 2, optional: true },
 ];
 
+const SCREEN_PORT_NAMES = ['screen_x', 'screen_y', 'screen_data', 'screen_cmd'] as const;
 const EXPECTED_PORT_MAP = new Map(BOARD_PORT_SPECS.map((p) => [p.name, p]));
 
 function collectLValueNames(lv: LValue, out: Set<string>): void {
@@ -25,10 +32,35 @@ function collectLValueNames(lv: LValue, out: Set<string>): void {
     case 'ident':
     case 'index':
     case 'slice':
+    case 'indexed':
       out.add(lv.name);
       return;
     case 'concat':
       for (const item of lv.items) collectLValueNames(item, out);
+      return;
+  }
+}
+
+function collectLValueIndexReads(lv: LValue, out: Set<string>): void {
+  switch (lv.type) {
+    case 'ident':
+      return;
+    case 'index':
+      collectExprReads(lv.index, out);
+      return;
+    case 'slice':
+      collectExprReads(lv.msb, out);
+      collectExprReads(lv.lsb, out);
+      return;
+    case 'indexed':
+      for (const idx of lv.indices) collectExprReads(idx, out);
+      if (lv.slice) {
+        collectExprReads(lv.slice.msb, out);
+        collectExprReads(lv.slice.lsb, out);
+      }
+      return;
+    case 'concat':
+      for (const item of lv.items) collectLValueIndexReads(item, out);
       return;
   }
 }
@@ -280,14 +312,252 @@ function checkCombLatches(
       return intersectSets(branchDefs);
     }
 
-    case 'for':
-      return new Set(alreadyAssigned);
+    case 'for': {
+      const next = new Set(alreadyAssigned);
+      collectAllWrites(stmt.body, next);
+      return next;
+    }
+  }
+}
+
+function isPureConstExpr(
+  expr: Expr,
+  params: Map<string, { value: number; width: number; signed: boolean }>
+): boolean {
+  switch (expr.type) {
+    case 'number':
+      return true;
+    case 'ident':
+      return params.has(expr.name);
+    case 'unary':
+      return isPureConstExpr(expr.operand, params);
+    case 'binary':
+      return isPureConstExpr(expr.left, params) && isPureConstExpr(expr.right, params);
+    case 'ternary':
+      return (
+        isPureConstExpr(expr.condition, params) &&
+        isPureConstExpr(expr.thenExpr, params) &&
+        isPureConstExpr(expr.elseExpr, params)
+      );
+    case 'sysfn':
+      return isPureConstExpr(expr.arg, params);
+    default:
+      return false;
+  }
+}
+
+function tryEvalConstInt(
+  expr: Expr,
+  params: Map<string, { value: number; width: number; signed: boolean }>
+): number | null {
+  if (!isPureConstExpr(expr, params)) return null;
+  const ev = evalExpr(expr, new Map(), new Map(), params);
+  return ev.signed ? toSigned(ev.value, ev.width) : ev.value >>> 0;
+}
+
+function validateArrayAccess(
+  meta: ArrayMeta,
+  indices: Expr[],
+  hasSlice: boolean,
+  loc: SourceLoc,
+  params: Map<string, { value: number; width: number; signed: boolean }>,
+  issues: LintIssue[],
+  reportedKeys: Set<string>
+): void {
+  if (meta.invalidReason) return;
+  const dimsCount = meta.dimensions.length;
+  const maxIndices = hasSlice ? dimsCount : dimsCount + 1;
+  if (indices.length < dimsCount || indices.length > maxIndices) {
+    const key = `dim:${meta.name}:${loc.line}`;
+    if (!reportedKeys.has(key)) {
+      reportedKeys.add(key);
+      issues.push({
+        code: 'ARRAY_BOUNDS_OR_DIM',
+        severity: 'error',
+        line: loc.line,
+        column: loc.column,
+        message: `第 ${loc.line} 行数组 "${meta.name}" 为 ${dimsCount} 维数组，但访问使用了 ${indices.length} 个下标`,
+        hint: `请按声明维度访问数组元素（${dimsCount === 1 ? `${meta.name}[i]` : `${meta.name}[r][c]`}）。`,
+      });
+    }
+    return;
+  }
+
+  for (let d = 0; d < dimsCount; d++) {
+    const val = tryEvalConstInt(indices[d], params);
+    if (val === null) continue;
+    const dim = meta.dimensions[d];
+    const min = Math.min(dim.start, dim.end);
+    const max = Math.max(dim.start, dim.end);
+    if (val < min || val > max) {
+      const key = `oob:${meta.name}:${d}:${val}:${loc.line}`;
+      if (!reportedKeys.has(key)) {
+        reportedKeys.add(key);
+        issues.push({
+          code: 'ARRAY_BOUNDS_OR_DIM',
+          severity: 'warning',
+          line: loc.line,
+          column: loc.column,
+          message: `第 ${loc.line} 行数组 "${meta.name}" 第 ${d + 1} 维下标 ${val} 超出合法范围 [${min}..${max}]`,
+          hint: `请确保下标处于 [${dim.start}:${dim.end}] 内，仿真器将对越界读返回 0 并忽略越界写。`,
+        });
+      }
+    }
+  }
+}
+
+function checkArrayExprAccess(
+  expr: Expr,
+  elaborated: ElaboratedModule,
+  issues: LintIssue[],
+  reportedKeys: Set<string>
+): void {
+  if (elaborated.arrays.size === 0) return;
+
+  if (expr.type === 'index' || expr.type === 'slice') {
+    let cur: Expr = expr;
+    let hasSlice = false;
+    const sliceExprs: Expr[] = [];
+    if (cur.type === 'slice') {
+      hasSlice = true;
+      sliceExprs.push(cur.msb, cur.lsb);
+      cur = cur.target;
+    }
+    const indices: Expr[] = [];
+    while (cur.type === 'index') {
+      indices.unshift(cur.index);
+      cur = cur.target;
+    }
+    if (cur.type === 'ident' && elaborated.arrays.has(cur.name) && indices.length > 0) {
+      validateArrayAccess(
+        elaborated.arrays.get(cur.name)!,
+        indices,
+        hasSlice,
+        expr.loc,
+        elaborated.params,
+        issues,
+        reportedKeys
+      );
+      for (const idx of indices) checkArrayExprAccess(idx, elaborated, issues, reportedKeys);
+      for (const s of sliceExprs) checkArrayExprAccess(s, elaborated, issues, reportedKeys);
+      return;
+    }
+  }
+
+  switch (expr.type) {
+    case 'number':
+    case 'ident':
+      return;
+    case 'index':
+      checkArrayExprAccess(expr.target, elaborated, issues, reportedKeys);
+      checkArrayExprAccess(expr.index, elaborated, issues, reportedKeys);
+      return;
+    case 'slice':
+      checkArrayExprAccess(expr.target, elaborated, issues, reportedKeys);
+      checkArrayExprAccess(expr.msb, elaborated, issues, reportedKeys);
+      checkArrayExprAccess(expr.lsb, elaborated, issues, reportedKeys);
+      return;
+    case 'concat':
+      for (const it of expr.items) checkArrayExprAccess(it, elaborated, issues, reportedKeys);
+      return;
+    case 'repeat':
+      checkArrayExprAccess(expr.count, elaborated, issues, reportedKeys);
+      for (const it of expr.items) checkArrayExprAccess(it, elaborated, issues, reportedKeys);
+      return;
+    case 'unary':
+      checkArrayExprAccess(expr.operand, elaborated, issues, reportedKeys);
+      return;
+    case 'binary':
+      checkArrayExprAccess(expr.left, elaborated, issues, reportedKeys);
+      checkArrayExprAccess(expr.right, elaborated, issues, reportedKeys);
+      return;
+    case 'ternary':
+      checkArrayExprAccess(expr.condition, elaborated, issues, reportedKeys);
+      checkArrayExprAccess(expr.thenExpr, elaborated, issues, reportedKeys);
+      checkArrayExprAccess(expr.elseExpr, elaborated, issues, reportedKeys);
+      return;
+    case 'sysfn':
+      checkArrayExprAccess(expr.arg, elaborated, issues, reportedKeys);
+      return;
+  }
+}
+
+function checkArrayLValueAccess(
+  lv: LValue,
+  elaborated: ElaboratedModule,
+  issues: LintIssue[],
+  reportedKeys: Set<string>
+): void {
+  if (elaborated.arrays.size === 0) return;
+  switch (lv.type) {
+    case 'ident': {
+      const meta = elaborated.arrays.get(lv.name);
+      if (meta && !meta.invalidReason) {
+        validateArrayAccess(meta, [], false, lv.loc, elaborated.params, issues, reportedKeys);
+      }
+      return;
+    }
+    case 'index': {
+      const meta = elaborated.arrays.get(lv.name);
+      if (meta) {
+        validateArrayAccess(meta, [lv.index], false, lv.loc, elaborated.params, issues, reportedKeys);
+      }
+      checkArrayExprAccess(lv.index, elaborated, issues, reportedKeys);
+      return;
+    }
+    case 'slice': {
+      const meta = elaborated.arrays.get(lv.name);
+      if (meta) {
+        validateArrayAccess(meta, [], true, lv.loc, elaborated.params, issues, reportedKeys);
+      }
+      checkArrayExprAccess(lv.msb, elaborated, issues, reportedKeys);
+      checkArrayExprAccess(lv.lsb, elaborated, issues, reportedKeys);
+      return;
+    }
+    case 'indexed': {
+      const meta = elaborated.arrays.get(lv.name);
+      if (meta) {
+        validateArrayAccess(
+          meta,
+          lv.indices,
+          Boolean(lv.slice),
+          lv.loc,
+          elaborated.params,
+          issues,
+          reportedKeys
+        );
+      }
+      for (const idx of lv.indices) checkArrayExprAccess(idx, elaborated, issues, reportedKeys);
+      if (lv.slice) {
+        checkArrayExprAccess(lv.slice.msb, elaborated, issues, reportedKeys);
+        checkArrayExprAccess(lv.slice.lsb, elaborated, issues, reportedKeys);
+      }
+      return;
+    }
+    case 'concat':
+      for (const item of lv.items) checkArrayLValueAccess(item, elaborated, issues, reportedKeys);
+      return;
   }
 }
 
 export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
   const issues: LintIssue[] = [];
-  const { ast, signals, params } = elaborated;
+  const { ast, signals, params, arrays } = elaborated;
+  const reportedArrayKeys = new Set<string>();
+
+  // 0. ARRAY_BOUNDS_OR_DIM: invalid array declarations
+  for (const [, meta] of arrays) {
+    if (meta.invalidReason) {
+      issues.push({
+        code: 'ARRAY_BOUNDS_OR_DIM',
+        severity: 'error',
+        line: meta.loc.line,
+        column: meta.loc.column,
+        message: meta.invalidReason,
+        hint: '请使用 1D 或 2D 定长内部 reg 数组，且元素总数不超过 4096。',
+      });
+    }
+  }
 
   // 1. PORT_MISMATCH: verify top module ports match virtual FPGA board interface
   const declaredPorts = new Map(
@@ -299,6 +569,7 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
   for (const spec of BOARD_PORT_SPECS) {
     const actual = declaredPorts.get(spec.name);
     if (!actual) {
+      if (spec.optional) continue;
       issues.push({
         code: 'PORT_MISMATCH',
         severity: 'error',
@@ -330,6 +601,18 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
     }
   }
 
+  const declaredScreenPorts = SCREEN_PORT_NAMES.filter((name) => declaredPorts.has(name));
+  if (declaredScreenPorts.length > 0 && declaredScreenPorts.length < SCREEN_PORT_NAMES.length) {
+    const missing = SCREEN_PORT_NAMES.filter((name) => !declaredPorts.has(name));
+    issues.push({
+      code: 'PORT_MISMATCH',
+      severity: 'error',
+      line: ast.loc.line,
+      message: `启用 16×8 屏幕外设时缺少端口：${missing.join(', ')}`,
+      hint: '请同时声明完整的 4 个屏幕输出端口：screen_x[3:0], screen_y[2:0], screen_data[7:0], screen_cmd[1:0]。',
+    });
+  }
+
   for (const [portName] of declaredPorts) {
     if (!EXPECTED_PORT_MAP.has(portName)) {
       const portAst = ast.ports.find((p) => p.name === portName);
@@ -338,7 +621,7 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
         severity: 'error',
         line: portAst?.loc.line ?? ast.loc.line,
         message: `端口 "${portName}" 不在虚拟 FPGA 开发板标准接口中`,
-        hint: '请仅使用标准板卡端口：clk, rst_n, key[3:0], sw[7:0], led[7:0], traffic[2:0], seg[15:0]。',
+        hint: '请仅使用标准板卡端口：clk, rst_n, key[3:0], sw[7:0], led[7:0], traffic[2:0], seg[15:0]，以及可选端口 tone[3:0], screen_x[3:0], screen_y[2:0], screen_data[7:0], screen_cmd[1:0]。',
       });
     }
   }
@@ -370,12 +653,16 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
     continuousDrivers.set(wi.name, entry);
     collectExprReads(wi.value, allRead);
     checkUnsignedArithShift(wi.value, elaborated, issues);
+    checkArrayExprAccess(wi.value, elaborated, issues, reportedArrayKeys);
   }
 
   for (const a of ast.assigns) {
     recordContinuous(a.target, a.loc.line);
+    collectLValueIndexReads(a.target, allRead);
+    checkArrayLValueAccess(a.target, elaborated, issues, reportedArrayKeys);
     collectExprReads(a.value, allRead);
     checkUnsignedArithShift(a.value, elaborated, issues);
+    checkArrayExprAccess(a.value, elaborated, issues, reportedArrayKeys);
   }
 
   // 2 & 3 & 4 & 6(shift): Inspect all always blocks
@@ -414,6 +701,8 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
 
         const targets = new Set<string>();
         collectLValueNames(stmt.target, targets);
+        collectLValueIndexReads(stmt.target, allRead);
+        checkArrayLValueAccess(stmt.target, elaborated, issues, reportedArrayKeys);
         for (const name of targets) {
           allDriven.add(name);
           const list = alwaysDriverBlocks.get(name) ?? [];
@@ -424,31 +713,38 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
         }
         collectExprReads(stmt.value, allRead);
         checkUnsignedArithShift(stmt.value, elaborated, issues);
+        checkArrayExprAccess(stmt.value, elaborated, issues, reportedArrayKeys);
         return;
       }
       case 'if':
         collectExprReads(stmt.condition, allRead);
         checkUnsignedArithShift(stmt.condition, elaborated, issues);
+        checkArrayExprAccess(stmt.condition, elaborated, issues, reportedArrayKeys);
         walkStmt(stmt.thenBranch, sensitivity, blockIdx);
         if (stmt.elseBranch) walkStmt(stmt.elseBranch, sensitivity, blockIdx);
         return;
       case 'case':
         collectExprReads(stmt.expr, allRead);
         checkUnsignedArithShift(stmt.expr, elaborated, issues);
+        checkArrayExprAccess(stmt.expr, elaborated, issues, reportedArrayKeys);
         for (const item of stmt.items) {
           for (const pat of item.patterns) {
             collectExprReads(pat, allRead);
             checkUnsignedArithShift(pat, elaborated, issues);
+            checkArrayExprAccess(pat, elaborated, issues, reportedArrayKeys);
           }
           walkStmt(item.body, sensitivity, blockIdx);
         }
         if (stmt.defaultBranch) walkStmt(stmt.defaultBranch, sensitivity, blockIdx);
         return;
       case 'for':
+        allDriven.add(stmt.varName);
         collectExprReads(stmt.init, allRead);
         collectExprReads(stmt.condition, allRead);
         checkUnsignedArithShift(stmt.init, elaborated, issues);
         checkUnsignedArithShift(stmt.condition, elaborated, issues);
+        checkArrayExprAccess(stmt.init, elaborated, issues, reportedArrayKeys);
+        checkArrayExprAccess(stmt.condition, elaborated, issues, reportedArrayKeys);
         walkStmt(stmt.body, sensitivity, blockIdx);
         return;
     }
@@ -461,7 +757,7 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
     }
   });
 
-  // 5. UNDRIVEN_OR_UNASSIGNED: undriven outputs + read-but-never-assigned internals
+  // 5. UNDRIVEN_OR_UNASSIGNED: undriven outputs + read-but-never-assigned internals & arrays
   for (const [name, meta] of signals) {
     if (meta.isPort && meta.direction === 'output' && !allDriven.has(name)) {
       const portAst = ast.ports.find((p) => p.name === name);
@@ -481,6 +777,17 @@ export function lintVerilog(elaborated: ElaboratedModule): LintIssue[] {
         line: sigAst?.loc.line ?? ast.loc.line,
         message: `内部信号 "${name}" 被读取但从未被赋值，仿真中将恒为 0`,
         hint: `请检查 "${name}" 是否遗漏了赋值语句或拼写错误。`,
+      });
+    }
+  }
+  for (const [name, meta] of arrays) {
+    if (!meta.invalidReason && allRead.has(name) && !allDriven.has(name)) {
+      issues.push({
+        code: 'UNDRIVEN_OR_UNASSIGNED',
+        severity: 'warning',
+        line: meta.loc.line,
+        message: `内部数组 "${name}" 被读取但从未被写入，仿真中元素将恒为 0`,
+        hint: `请在复位或时序块中为 "${name}" 写入数据。`,
       });
     }
   }

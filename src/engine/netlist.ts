@@ -22,10 +22,25 @@ interface Source {
 const BOARD_LABELS: Record<string, string> = {
   rst_n: 'RST_N', key: 'KEY[3:0]', sw: 'SW[7:0]',
   led: 'LED[7:0]', traffic: 'TRAFFIC[2:0]', seg: 'SEG[15:0]',
+  tone: 'TONE[3:0]',
+  screen_x: 'SCR_X[3:0]', screen_y: 'SCR_Y[2:0]', screen_data: 'SCR_DATA[7:0]', screen_cmd: 'SCR_CMD[1:0]',
 };
 
 function targetNames(target: LValue): string[] {
   return target.type === 'concat' ? target.items.flatMap(targetNames) : [target.name];
+}
+
+function lvalueIndexDeps(target: LValue): string[] {
+  switch (target.type) {
+    case 'ident': return [];
+    case 'index': return dependencies(target.index);
+    case 'slice': return [...dependencies(target.msb), ...dependencies(target.lsb)];
+    case 'indexed': return [
+      ...target.indices.flatMap(dependencies),
+      ...(target.slice ? [...dependencies(target.slice.msb), ...dependencies(target.slice.lsb)] : []),
+    ];
+    case 'concat': return target.items.flatMap(lvalueIndexDeps);
+  }
 }
 
 function operands(expr: Expr): Expr[] {
@@ -61,7 +76,9 @@ function assignments(stmt: Stmt): Extract<Stmt, { type: 'assign' }>[] {
 function statementInputs(stmt: Stmt, target: string): string[] {
   switch (stmt.type) {
     case 'empty': return [];
-    case 'assign': return targetNames(stmt.target).includes(target) ? dependencies(stmt.value) : [];
+    case 'assign': return targetNames(stmt.target).includes(target)
+      ? [...dependencies(stmt.value), ...lvalueIndexDeps(stmt.target)]
+      : [];
     case 'block': return stmt.statements.flatMap((child) => statementInputs(child, target));
     case 'if': return [
       ...dependencies(stmt.condition), ...statementInputs(stmt.thenBranch, target),
@@ -137,6 +154,7 @@ export class CompiledNetlist {
 
   private formatNodeEvent(node: NetlistNode): string {
     if (node.id === 'out_traffic') return `${node.label}=${node.value}${formatTrafficNote(node.value)}`;
+    if (node.kind === 'MEM') return `${node.label}(存储更新)`;
     if (['INPUT', 'OUTPUT', 'DFF'].includes(node.kind)) return `${node.label}=${node.value}`;
     return node.sampled ? `${node.label}=${node.value}` : node.label;
   }
@@ -147,9 +165,11 @@ export class CompiledNetlist {
     const inputs = changed.filter((node) => node.kind === 'INPUT');
     const input = inputs.find((node) => node.id !== 'in_rst_n') ?? inputs[0];
     const middle = changed.filter((node) => !['INPUT', 'OUTPUT', 'BUS', 'CONST'].includes(node.kind));
-    const outputs = ['out_traffic', 'out_led', 'out_seg'].flatMap((id) => changed.filter((node) => node.id === id));
+    const outputs = ['out_traffic', 'out_led', 'out_seg', 'out_tone', 'out_screen_cmd', 'out_screen_data']
+      .flatMap((id) => changed.filter((node) => node.id === id));
     return [...input ? [input] : [], ...middle.slice(0, 2), ...outputs.slice(0, 2)].map((node) => {
       if (node.id === 'out_traffic') return `${node.label}=${node.value}${formatTrafficNote(node.value)}`;
+      if (node.kind === 'MEM') return `${node.label}(存储更新)`;
       if (['INPUT', 'OUTPUT', 'DFF'].includes(node.kind)) return `${node.label}=${node.value}`;
       return node.label;
     }).join(' → ') || '当前拍内部信号有变化';
@@ -203,18 +223,30 @@ export class CompiledNetlist {
   }
 }
 
-export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModule): CompiledNetlist {
+export function buildNetlist({ ast, signals, params, arrays, wireInits }: ElaboratedModule): CompiledNetlist {
   const nodes: InternalNode[] = [];
   const edges: InternalEdge[] = [];
   const drivers = new Map<string, Source>();
   const pending: Array<{ source: Source; to: string; toPin?: string; activeLow?: boolean }> = [];
   const empty: Frame = new Map();
-  const evaluate = (expr: Expr, frame = empty) => evalExpr(expr, frame, signals, params);
+  const evaluate = (expr: Expr, frame = empty) => evalExpr(expr, frame, signals, params, undefined, arrays);
   const isConstant = (expr: Expr) => dependencies(expr).every((name) => params.has(name));
   const hasVariableWidth = (expr: Expr): boolean =>
     (expr.type === 'slice' && (!isConstant(expr.msb) || !isConstant(expr.lsb))) ||
     (expr.type === 'repeat' && !isConstant(expr.count)) || operands(expr).some(hasVariableWidth);
-  const signal = (name: string): Source => ({ name, signal: name, width: signals.get(name)?.width ?? 1, read: (frame) => frame.get(name) });
+  const signal = (name: string): Source => ({
+    name,
+    signal: name,
+    width: signals.get(name)?.width ?? arrays.get(name)?.elementWidth ?? 1,
+    read: (frame) => frame.get(name),
+  });
+  const isKnownSignal = (name: string) => signals.has(name) || arrays.has(name);
+  const findArrayRoot = (expr: Expr): string | null => {
+    let cur: Expr = expr;
+    if (cur.type === 'slice') cur = cur.target;
+    while (cur.type === 'index') cur = cur.target;
+    return cur.type === 'ident' && arrays.has(cur.name) ? cur.name : null;
+  };
   const connect = (source: Source, to: string, toPin?: string, activeLow?: boolean) => pending.push({ source, to, toPin, activeLow });
 
   function addNode(kind: GateKind, name: string, width: number, read: ReadValue, loc?: SourceLoc, operator?: string, id = `logic_${nodes.length}`): Source {
@@ -348,6 +380,16 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
     if (expr.type === 'ident') return signal(expr.name);
     if (expr.type === 'sysfn') return expression(expr.arg, name);
     if (expr.type === 'concat') return bundle(expr.items.map((part) => expression(part)), name ?? '总线', expr.loc);
+    if (expr.type === 'index' || expr.type === 'slice') {
+      const arrRoot = findArrayRoot(expr);
+      if (arrRoot) {
+        const output = addNode('RTL', name ?? `${arrRoot} 读口`, width, () => undefined, expr.loc, 'MEM_RD');
+        for (const input of new Set(dependencies(expr))) {
+          if (isKnownSignal(input)) connect(signal(input), output.node!);
+        }
+        return output;
+      }
+    }
     if (expr.type === 'index' && isConstant(expr.index) || expr.type === 'slice' && isConstant(expr.msb) && isConstant(expr.lsb)) {
       const target = expression(expr.target);
       const low = expr.type === 'index' ? evaluate(expr.index).value | 0 : Math.min(evaluate(expr.msb).value | 0, evaluate(expr.lsb).value | 0);
@@ -388,7 +430,7 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
       return output;
     }
     const output = addNode('RTL', name ?? '总线取位', width, read, expr.loc, expr.type === 'repeat' ? '复制' : '取位');
-    for (const input of new Set(dependencies(expr))) if (signals.has(input)) connect(signal(input), output.node!);
+    for (const input of new Set(dependencies(expr))) if (isKnownSignal(input)) connect(signal(input), output.node!);
     return output;
   }
 
@@ -398,10 +440,21 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
     drivers.set(name, addNode('INPUT', BOARD_LABELS[name] ?? name.toUpperCase(), width, read, undefined, undefined, `in_${name}`));
   }
 
+  for (const arr of arrays.values()) {
+    if (arr.invalidReason) continue;
+    const dimsLabel = arr.dimensions.map((d) => d.size).join('×');
+    const memLabel = `${arr.name}[${dimsLabel}]`;
+    drivers.set(
+      arr.name,
+      addNode('MEM', memLabel, arr.elementWidth, (frame) => frame.get(arr.name), arr.loc, 'MEM', `mem_${arr.name}`)
+    );
+  }
+
   const blocks = ast.alwaysBlocks.map((block) => ({ block, writes: assignments(block.body) }));
   for (const { block, writes } of blocks) {
     if (block.sensitivity !== 'seq') continue;
     for (const name of new Set(writes.flatMap((item) => targetNames(item.target)))) {
+      if (arrays.has(name)) continue;
       const { width, read } = signal(name);
       drivers.set(name, addNode('DFF', name, width, read, block.loc, undefined, `dff_${name}`));
     }
@@ -410,7 +463,7 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
   function assigned(value: Expr, width: number, name: string): Source {
     if (!hasVariableWidth(value)) return resize(expression(value, name), width, name, value.loc);
     const source = addNode('RTL', name, width, (frame) => maskWidth(evaluate(value, frame).value, width), value.loc, 'RTL');
-    for (const input of new Set(dependencies(value))) if (signals.has(input)) connect(signal(input), source.node!);
+    for (const input of new Set(dependencies(value))) if (isKnownSignal(input)) connect(signal(input), source.node!);
     return source;
   }
 
@@ -445,6 +498,17 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
     const names = new Set(writes.flatMap((item) => targetNames(item.target)));
     const reset = sequential ? resetBranch(block) : undefined;
     for (const name of names) {
+      if (arrays.has(name)) {
+        const memId = `mem_${name}`;
+        const reads = new Set(statementInputs(block.body, name));
+        for (const input of reads) {
+          if (input !== name && isKnownSignal(input)) connect(signal(input), memId, 'WR');
+        }
+        if (sequential && block.clockSignal) {
+          connect(signal(block.clockSignal), memId, 'CLK', block.clockFalling);
+        }
+        continue;
+      }
       const wholeWrites = writes.every((item) =>
         (!sequential || item.kind === 'nonblocking') && (item.target.type === 'ident' || !targetNames(item.target).includes(name)));
       const { width, read } = signal(name);
@@ -459,7 +523,7 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
       if (value) source = assigned(value, width, sequential ? `${name} D` : name);
       else {
         source = addNode('RTL', sequential ? `${name} D` : name, width, sequential ? () => undefined : read, block.loc, 'RTL');
-        for (const input of reads) if (signals.has(input)) connect(signal(input), source.node!);
+        for (const input of reads) if (isKnownSignal(input)) connect(signal(input), source.node!);
       }
       if (sequential) {
         const id = `dff_${name}`;
@@ -496,7 +560,9 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
     });
   }
 
-  const live = new Set(nodes.filter((node) => node.kind === 'OUTPUT' || node.kind === 'DFF').map((node) => node.id));
+  const live = new Set(
+    nodes.filter((node) => node.kind === 'OUTPUT' || node.kind === 'DFF' || node.kind === 'MEM').map((node) => node.id)
+  );
   for (let count = 0; count < nodes.length; count++) {
     const size = live.size;
     for (const edge of edges) if (live.has(edge.to)) live.add(edge.from);
@@ -510,7 +576,7 @@ export function buildNetlist({ ast, signals, params, wireInits }: ElaboratedModu
     for (const edge of shownEdges) {
       const from = nodeById.get(edge.from)!;
       const to = nodeById.get(edge.to)!;
-      if (to.kind === 'DFF' || to.level >= from.level + 1 || from.level + 1 > shownNodes.length) continue;
+      if (to.kind === 'DFF' || to.kind === 'MEM' || to.level >= from.level + 1 || from.level + 1 > shownNodes.length) continue;
       to.level = from.level + 1;
       changed = true;
     }

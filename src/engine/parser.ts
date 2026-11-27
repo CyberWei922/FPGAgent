@@ -735,6 +735,11 @@ class Parser {
 
     while (true) {
       const nameTok = this.expect('ident', undefined, '信号声明缺少标识符名称。');
+      const dimensions: RangeSpec[] = [];
+      while (this.check('punct', '[')) {
+        const dim = this.parseOptionalRange();
+        if (dim) dimensions.push(dim);
+      }
       let init: Expr | undefined;
       if (this.match('op', '=')) {
         init = this.parseExpr();
@@ -745,6 +750,7 @@ class Parser {
         kind: explicitKind ? kind : 'wire',
         signed,
         range,
+        ...(dimensions.length > 0 && { dimensions }),
         init,
         loc: startLoc,
       });
@@ -1029,18 +1035,37 @@ class Parser {
     }
 
     const id = this.expect('ident', undefined, '赋值左侧必须是信号名或位拼接。');
-    if (this.match('punct', '[')) {
+    const indices: Expr[] = [];
+    let slice: { msb: Expr; lsb: Expr } | undefined;
+
+    while (this.match('punct', '[')) {
       const first = this.parseExpr();
       if (this.match('punct', ':')) {
         const lsb = this.parseExpr();
         this.expect('punct', ']', '位切片缺少右中括号 "]"。');
-        return { type: 'slice', name: id.value, msb: first, lsb, loc: id.loc };
+        slice = { msb: first, lsb };
+        break;
       }
-      this.expect('punct', ']', '位选择缺少右中括号 "]"。');
-      return { type: 'index', name: id.value, index: first, loc: id.loc };
+      this.expect('punct', ']', '位选择或数组索引缺少右中括号 "]"。');
+      indices.push(first);
     }
 
-    return { type: 'ident', name: id.value, loc: id.loc };
+    if (indices.length === 0 && !slice) {
+      return { type: 'ident', name: id.value, loc: id.loc };
+    }
+    if (indices.length === 0 && slice) {
+      return { type: 'slice', name: id.value, msb: slice.msb, lsb: slice.lsb, loc: id.loc };
+    }
+    if (indices.length === 1 && !slice) {
+      return { type: 'index', name: id.value, index: indices[0], loc: id.loc };
+    }
+    return {
+      type: 'indexed',
+      name: id.value,
+      indices,
+      ...(slice && { slice }),
+      loc: id.loc,
+    };
   }
 
   private parseExpr(): Expr {

@@ -2352,23 +2352,23 @@ describe('12. 异常语法、模糊压测、边界位宽与长周期性能', () 
     const code = `
       module top(
         input clk, input rst_n, input [3:0] key, input [7:0] sw,
-        output reg [7:0] led, output [2:0] traffic, output [15:0] seg
+        output [7:0] led, output [2:0] traffic, output reg [15:0] seg
       );
         integer i;
         always @(*) begin
-          led = 8'd0;
+          seg = 16'd0;
           for (i = 0; i < 1000; i = i + 1) begin
-            led = led + 8'd1;
+            seg = seg + 16'd1;
           end
         end
+        assign led = 8'd0;
         assign traffic = 3'd0;
-        assign seg = 16'd0;
       endmodule
     `;
     const engine = createRtlEngine();
     expect(engine.compile(code).ok).toBe(true);
-    // 128 iterations capped -> 128
-    expect(engine.step(DEFAULT_IN).sample.outputs.led).toBe(128);
+    // V3 MAX_FOR_ITERATIONS = 256 iterations capped
+    expect(engine.step(DEFAULT_IN).sample.outputs.seg).toBe(256);
   });
 
   it('MULTI_DRIVER 阻断编译并返回 error 级别告警', () => {
@@ -2493,3 +2493,974 @@ describe('13. Verilog 语法着色器 (highlight.ts)', () => {
     }
   });
 });
+
+// ============================================================
+// 14. V3 1D/2D 定长寄存器数组：解析、仿真、边界、Lint 与 MEM 网表
+// ============================================================
+describe('14. V3 1D/2D 定长寄存器数组', () => {
+  it('1D 升序与降序定长数组声明、非阻塞写入与读取正常', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] asc_mem [0:3];
+        reg [7:0] desc_mem [3:0];
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            asc_mem[0] <= 8'h11;
+            asc_mem[1] <= 8'h22;
+            desc_mem[3] <= 8'hAA;
+            desc_mem[2] <= 8'hBB;
+          end else if (key[0]) begin
+            asc_mem[0] <= asc_mem[1];
+            asc_mem[1] <= asc_mem[0];
+          end
+        end
+        assign led = sw[0] ? desc_mem[3] : asc_mem[0];
+        assign traffic = 3'd0;
+        assign seg = {asc_mem[0], asc_mem[1]};
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    const res = engine.compile(code);
+    expect(res.ok).toBe(true);
+    expect(res.issues.filter((i) => i.severity === 'error')).toHaveLength(0);
+
+    // rst_n = 0 初始化
+    let s = engine.step({ rst_n: 0, key: 0, sw: 0 }).sample;
+    expect(s.outputs.led).toBe(0x11);
+    expect(s.outputs.seg).toBe(0x1122);
+
+    // 切到 desc_mem[3]
+    s = engine.step({ rst_n: 1, key: 0, sw: 1 }).sample;
+    expect(s.outputs.led).toBe(0xaa);
+
+    // 非阻塞交换 asc_mem[0] 与 asc_mem[1]
+    s = engine.step({ rst_n: 1, key: 1, sw: 0 }).sample;
+    expect(s.outputs.led).toBe(0x22);
+    expect(s.outputs.seg).toBe(0x2211);
+  });
+
+  it('1D 数组支持变量下标动态读写', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] ram [0:15];
+        wire [3:0] addr = sw[3:0];
+        always @(posedge clk) begin
+          if (key[0]) begin
+            ram[addr] <= {4'hA, sw[7:4]};
+          end
+        end
+        assign led = ram[addr];
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+
+    // 写 addr=5, val=0xA3
+    engine.step({ rst_n: 1, key: 1, sw: 0x35 });
+    // 写 addr=9, val=0xA7
+    engine.step({ rst_n: 1, key: 1, sw: 0x79 });
+    // 读回 addr=5
+    expect(engine.step({ rst_n: 1, key: 0, sw: 0x05 }).sample.outputs.led).toBe(0xa3);
+    // 读回 addr=9
+    expect(engine.step({ rst_n: 1, key: 0, sw: 0x09 }).sample.outputs.led).toBe(0xa7);
+  });
+
+  it('1D 数组支持 parameter / localparam 定义位宽与深度', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        localparam DEPTH = 8;
+        localparam WIDTH = 8;
+        reg [WIDTH-1:0] buf_mem [0:DEPTH-1];
+        integer i;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            for (i = 0; i < DEPTH; i = i + 1) begin
+              buf_mem[i] <= i * 8'd10;
+            end
+          end
+        end
+        assign led = buf_mem[sw[2:0]];
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    const compiled = engine.compile(code);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.metadata?.arrays).toEqual([
+      { name: 'buf_mem', elementWidth: 8, dimensions: [8] },
+    ]);
+
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    expect(engine.step({ rst_n: 1, key: 0, sw: 5 }).sample.outputs.led).toBe(50);
+    expect(engine.step({ rst_n: 1, key: 0, sw: 7 }).sample.outputs.led).toBe(70);
+  });
+
+  it('2D 定长寄存器数组支持双重索引读写与嵌套 for 初始化', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] grid [0:3][0:3];
+        integer r, c;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            for (r = 0; r < 4; r = r + 1) begin
+              for (c = 0; c < 4; c = c + 1) begin
+                grid[r][c] <= (r << 4) | c;
+              end
+            end
+          end else if (key[0]) begin
+            grid[sw[3:2]][sw[1:0]] <= 8'hFF;
+          end
+        end
+        assign led = grid[sw[3:2]][sw[1:0]];
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    const compiled = engine.compile(code);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.metadata?.arrays).toEqual([
+      { name: 'grid', elementWidth: 8, dimensions: [4, 4] },
+    ]);
+
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    // r=2, c=3 -> 0x23
+    expect(engine.step({ rst_n: 1, key: 0, sw: (2 << 2) | 3 }).sample.outputs.led).toBe(0x23);
+    // 写入 (2,3) = 0xFF
+    expect(engine.step({ rst_n: 1, key: 1, sw: (2 << 2) | 3 }).sample.outputs.led).toBe(0xff);
+    // 其他位置不受影响 (1,2) -> 0x12
+    expect(engine.step({ rst_n: 1, key: 0, sw: (1 << 2) | 2 }).sample.outputs.led).toBe(0x12);
+  });
+
+  it('支持数组元素位切片读取与位切片写入', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] regs [0:3];
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            regs[0] <= 8'h00;
+          end else if (key[0]) begin
+            regs[0][3:0] <= sw[3:0];
+          end else if (key[1]) begin
+            regs[0][7:4] <= sw[3:0];
+          end
+        end
+        assign led = {regs[0][7:4], regs[0][3:0]};
+        assign traffic = 3'd0;
+        assign seg = {12'd0, regs[0][7:4]};
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    engine.step({ rst_n: 1, key: 1, sw: 0x05 });
+    const s = engine.step({ rst_n: 1, key: 2, sw: 0x0a }).sample;
+    expect(s.outputs.led).toBe(0xa5);
+    expect(s.outputs.seg).toBe(0x000a);
+  });
+
+  it('数组动态索引越界读取返回 0 且越界写入安全忽略不崩溃', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] small_arr [0:3];
+        always @(posedge clk) begin
+          if (key[0]) small_arr[sw[3:0]] <= 8'h5A;
+        end
+        assign led = small_arr[sw[3:0]];
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+
+    // 越界写入 idx=12
+    expect(() => engine.step({ rst_n: 1, key: 1, sw: 12 })).not.toThrow();
+    // 越界读取 idx=12 返回 0
+    expect(engine.step({ rst_n: 1, key: 0, sw: 12 }).sample.outputs.led).toBe(0);
+    // 合法写入 idx=2 仍正常
+    expect(engine.step({ rst_n: 1, key: 1, sw: 2 }).sample.outputs.led).toBe(0x5a);
+  });
+
+  it('reset() 能将数组全部元素彻底清零', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] mem [0:3];
+        always @(posedge clk) begin
+          if (key[0]) mem[sw[1:0]] <= 8'hC3;
+        end
+        assign led = mem[sw[1:0]];
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+    expect(engine.step({ rst_n: 1, key: 1, sw: 1 }).sample.outputs.led).toBe(0xc3);
+
+    engine.reset();
+    expect(engine.step({ rst_n: 1, key: 0, sw: 1 }).sample.outputs.led).toBe(0x00);
+  });
+
+  it('ARRAY_BOUNDS_OR_DIM 检测超限数组维度（>4096）并阻断编译', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] huge [0:8191];
+        assign led = huge[sw];
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const res = createRtlEngine().compile(code);
+    expect(res.ok).toBe(false);
+    expect(res.issues.some((i) => i.code === 'ARRAY_BOUNDS_OR_DIM' && i.severity === 'error')).toBe(true);
+  });
+
+  it('ARRAY_BOUNDS_OR_DIM 检测静态常数下标越界告警', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] arr [0:3];
+        always @(posedge clk) begin
+          arr[0] <= sw;
+        end
+        assign led = arr[7];
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const res = createRtlEngine().compile(code);
+    expect(res.issues.some((i) => i.code === 'ARRAY_BOUNDS_OR_DIM')).toBe(true);
+  });
+
+  it('含数组模块在网表中生成聚合 MEM 节点而非展开成海量 DFF', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        reg [7:0] vram [0:63];
+        always @(posedge clk) begin
+          if (key[0]) vram[sw[5:0]] <= sw;
+        end
+        assign led = vram[sw[5:0]];
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const res = createRtlEngine().compile(code);
+    expect(res.ok).toBe(true);
+    const memNodes = res.netlist!.nodes.filter((n) => n.kind === 'MEM');
+    expect(memNodes.length).toBe(1);
+    expect(memNodes[0].label).toContain('vram');
+    expect(res.netlist!.nodes.length).toBeLessThan(30);
+  });
+});
+
+// ============================================================
+// 15. V3 扩展外设端口（tone 蜂鸣器 & 16x8 OLED 屏幕）与确定性显存
+// ============================================================
+describe('15. V3 tone 蜂鸣器与 16x8 屏幕显存状态机', () => {
+  it('声明 tone 端口时输出 extendedOutputs.tone 且 metadata.usedOutputs 包含 tone', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] tone
+      );
+        assign led = sw;
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+        assign tone = sw[3:0];
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    const compiled = engine.compile(code);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.metadata?.usedOutputs).toContain('tone');
+    expect(compiled.metadata?.usedOutputs).not.toContain('screen');
+
+    const s1 = engine.step({ rst_n: 1, key: 0, sw: 0x09 }).sample;
+    expect(s1.extendedOutputs?.tone).toBe(9);
+    expect(s1.extendedOutputs?.screen).toBeUndefined();
+    expect(s1.screenBuffer).toBeUndefined();
+
+    const s2 = engine.step({ rst_n: 1, key: 0, sw: 0x00 }).sample;
+    expect(s2.extendedOutputs?.tone).toBe(0);
+  });
+
+  it('纯经典端口模块保持 100% 向后兼容，不产生 extendedOutputs 与 screenBuffer', () => {
+    const engine = createRtlEngine();
+    const compiled = engine.compile(PRESETS[0].verilogCode);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.metadata?.usedOutputs).not.toContain('tone');
+    expect(compiled.metadata?.usedOutputs).not.toContain('screen');
+
+    const sample = engine.step(DEFAULT_IN).sample;
+    expect(sample.extendedOutputs).toBeUndefined();
+    expect(sample.screenBuffer).toBeUndefined();
+  });
+
+  it('可选端口位宽不匹配（如 tone 非 4-bit 或 screen_x 非 4-bit）触发 PORT_MISMATCH', () => {
+    const badTone = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [1:0] tone
+      );
+        assign led = 8'd0; assign traffic = 3'd0; assign seg = 16'd0; assign tone = 2'd1;
+      endmodule
+    `;
+    const r1 = createRtlEngine().compile(badTone);
+    expect(r1.ok).toBe(false);
+    expect(r1.issues.some((i) => i.code === 'PORT_MISMATCH')).toBe(true);
+
+    const badScreenWidth = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [2:0] screen_x, output [2:0] screen_y, output [7:0] screen_data, output [1:0] screen_cmd
+      );
+        assign led = 8'd0; assign traffic = 3'd0; assign seg = 16'd0;
+        assign screen_x = 3'd0; assign screen_y = 3'd0; assign screen_data = 8'd0; assign screen_cmd = 2'd0;
+      endmodule
+    `;
+    const r2 = createRtlEngine().compile(badScreenWidth);
+    expect(r2.ok).toBe(false);
+    expect(r2.issues.some((i) => i.code === 'PORT_MISMATCH')).toBe(true);
+  });
+
+  it('screen_* 端口仅声明不完整子集时触发 PORT_MISMATCH', () => {
+    const partialScreen = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] screen_x, output [2:0] screen_y
+      );
+        assign led = 8'd0; assign traffic = 3'd0; assign seg = 16'd0;
+        assign screen_x = 4'd0; assign screen_y = 3'd0;
+      endmodule
+    `;
+    const res = createRtlEngine().compile(partialScreen);
+    expect(res.ok).toBe(false);
+    expect(res.issues.some((i) => i.code === 'PORT_MISMATCH')).toBe(true);
+  });
+
+  const SCREEN_DRIVER_CODE = `
+    module top(
+      input clk, input rst_n, input [3:0] key, input [7:0] sw,
+      output [7:0] led, output [2:0] traffic, output [15:0] seg,
+      output [3:0] screen_x, output [2:0] screen_y,
+      output [7:0] screen_data, output [1:0] screen_cmd
+    );
+      // key[1:0] 控制 cmd，sw[3:0] 控制 x，sw[6:4] 控制 y，sw[7] 选字符 'A'(0x41) 或 'Z'(0x5A)
+      assign led = sw;
+      assign traffic = 3'd0;
+      assign seg = 16'd0;
+      assign screen_cmd = key[1:0];
+      assign screen_x = sw[3:0];
+      assign screen_y = sw[6:4];
+      assign screen_data = sw[7] ? 8'h5A : 8'h41;
+    endmodule
+  `;
+
+  it('screen_cmd = 2\'b00（无操作）不修改 screenBuffer', () => {
+    const engine = createRtlEngine();
+    const compiled = engine.compile(SCREEN_DRIVER_CODE);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.metadata?.usedOutputs).toContain('screen');
+
+    const s = engine.step({ rst_n: 1, key: 0, sw: 0x12 }).sample;
+    expect(s.screenBuffer).toHaveLength(128);
+    expect(s.screenBuffer!.every((v) => v === 0)).toBe(true);
+    expect(s.extendedOutputs?.screen).toEqual({ x: 2, y: 1, data: 0x41, cmd: 0 });
+  });
+
+  it('screen_cmd = 2\'b01（写入）精确写入 (x, y) 且保留其他单元格', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(SCREEN_DRIVER_CODE).ok).toBe(true);
+
+    // 写 (x=3, y=2) = 'A' (0x41) -> index = 2*16 + 3 = 35
+    const s1 = engine.step({ rst_n: 1, key: 1, sw: (2 << 4) | 3 }).sample;
+    expect(s1.screenBuffer![2 * 16 + 3]).toBe(0x41);
+
+    // 再写 (x=15, y=7) = 'Z' (0x5A) -> index = 7*16 + 15 = 127
+    const s2 = engine.step({ rst_n: 1, key: 1, sw: 0x80 | (7 << 4) | 15 }).sample;
+    expect(s2.screenBuffer![2 * 16 + 3]).toBe(0x41);
+    expect(s2.screenBuffer![127]).toBe(0x5a);
+  });
+
+  it('screen_cmd = 2\'b10（清屏）清空全部 128 格', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(SCREEN_DRIVER_CODE).ok).toBe(true);
+
+    engine.step({ rst_n: 1, key: 1, sw: (1 << 4) | 5 });
+    const cleared = engine.step({ rst_n: 1, key: 2, sw: 0 }).sample;
+    expect(cleared.screenBuffer!.every((v) => v === 0)).toBe(true);
+  });
+
+  it('screen_cmd = 2\'b11（清屏并立即写入）清空旧内容并仅写入当前 (x, y)', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(SCREEN_DRIVER_CODE).ok).toBe(true);
+
+    // 先写 (0,0)='A' 和 (4,4)='A'
+    engine.step({ rst_n: 1, key: 1, sw: 0x00 });
+    engine.step({ rst_n: 1, key: 1, sw: (4 << 4) | 4 });
+
+    // cmd=3 清屏并写入 (2,3)='Z' (0x5A)
+    const s = engine.step({ rst_n: 1, key: 3, sw: 0x80 | (3 << 4) | 2 }).sample;
+    expect(s.screenBuffer![0]).toBe(0);
+    expect(s.screenBuffer![4 * 16 + 4]).toBe(0);
+    expect(s.screenBuffer![3 * 16 + 2]).toBe(0x5a);
+    expect(s.screenBuffer!.filter((v) => v !== 0)).toHaveLength(1);
+  });
+
+  it('engine.reset() 彻底清空 screenBuffer 并将 cycle 归零', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(SCREEN_DRIVER_CODE).ok).toBe(true);
+
+    engine.step({ rst_n: 1, key: 1, sw: (5 << 4) | 1 });
+    engine.reset();
+    const afterReset = engine.step({ rst_n: 1, key: 0, sw: 0 }).sample;
+    expect(afterReset.cycle).toBe(0);
+    expect(afterReset.screenBuffer!.every((v) => v === 0)).toBe(true);
+  });
+
+  it('screenBuffer 快照为独立拷贝，外部篡改不影响引擎内部显存', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(SCREEN_DRIVER_CODE).ok).toBe(true);
+
+    const s1 = engine.step({ rst_n: 1, key: 1, sw: 0x01 }).sample;
+    expect(s1.screenBuffer![1]).toBe(0x41);
+    s1.screenBuffer![1] = 0x99;
+    s1.screenBuffer![0] = 0x88;
+
+    const s2 = engine.step({ rst_n: 1, key: 0, sw: 0 }).sample;
+    expect(s2.screenBuffer![1]).toBe(0x41);
+    expect(s2.screenBuffer![0]).toBe(0x00);
+  });
+});
+
+// ============================================================
+// 16. V3 stepBatch 单帧多拍高速步进
+// ============================================================
+describe('16. V3 stepBatch 单帧多拍步进', () => {
+  const COUNTER_SCREEN_CODE = `
+    module top(
+      input clk, input rst_n, input [3:0] key, input [7:0] sw,
+      output [7:0] led, output [2:0] traffic, output [15:0] seg,
+      output [3:0] screen_x, output [2:0] screen_y,
+      output [7:0] screen_data, output [1:0] screen_cmd
+    );
+      reg [6:0] ptr;
+      always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) ptr <= 7'd0;
+        else ptr <= ptr + 7'd1;
+      end
+      assign led = {1'b0, ptr};
+      assign traffic = 3'd0;
+      assign seg = {9'd0, ptr};
+      assign screen_x = ptr[3:0];
+      assign screen_y = ptr[6:4];
+      assign screen_data = 8'h41 + {4'd0, ptr[3:0]};
+      assign screen_cmd = 2'b01;
+    endmodule
+  `;
+
+  it('stepBatch(inputs, 16) 连续推进 16 拍并准确返回 waveformDelta 与末拍快照', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(COUNTER_SCREEN_CODE).ok).toBe(true);
+
+    // 先复位 1 拍
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    const batch = engine.stepBatch!({ rst_n: 1, key: 0, sw: 0 }, 16);
+    expect(batch.waveformDelta).toHaveLength(16);
+    expect(batch.waveformDelta![0].cycle).toBe(1);
+    expect(batch.sample.cycle).toBe(16);
+    expect(batch.sample.outputs.led).toBe(16);
+  });
+
+  it('stepBatch 单帧 16 拍扫描写满一整行 16 格且显存全部落盘', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(COUNTER_SCREEN_CODE).ok).toBe(true);
+
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    const batch = engine.stepBatch!({ rst_n: 1, key: 0, sw: 0 }, 16);
+    // ptr 依次为 1..16，其中 ptr=1..15 写入 row 0 col 1..15，ptr=16 写入 row 1 col 0
+    for (let x = 1; x < 16; x++) {
+      expect(batch.sample.screenBuffer![x]).toBe(0x41 + x);
+    }
+    expect(batch.sample.screenBuffer![16]).toBe(0x41);
+  });
+
+  it('stepBatch 对异常步数参数进行 [1, 256] 边界钳位', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(COUNTER_SCREEN_CODE).ok).toBe(true);
+
+    const bZero = engine.stepBatch!(DEFAULT_IN, 0);
+    expect(bZero.waveformDelta).toHaveLength(1);
+
+    const bNeg = engine.stepBatch!(DEFAULT_IN, -10);
+    expect(bNeg.waveformDelta).toHaveLength(1);
+
+    const bHuge = engine.stepBatch!(DEFAULT_IN, 999);
+    expect(bHuge.waveformDelta).toHaveLength(256);
+  });
+
+  it('未编译状态下调用 stepBatch 安全返回空快照与空网表', () => {
+    const engine = createRtlEngine();
+    const res = engine.stepBatch!(DEFAULT_IN, 8);
+    expect(res.sample.cycle).toBe(0);
+    expect(res.netlist.nodes).toHaveLength(0);
+    expect(res.waveformDelta).toHaveLength(1);
+  });
+
+  it('stepBatch 遇到组合环路时在 netlist.narration 中标注组合环路保护', () => {
+    const loopCode = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg
+      );
+        wire a, b;
+        assign a = ~b;
+        assign b = a;
+        assign led = {7'd0, a};
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(loopCode).ok).toBe(true);
+    const res = engine.stepBatch!(DEFAULT_IN, 4);
+    expect(res.netlist.narration).toContain('[组合环路保护]');
+  });
+});
+
+// ============================================================
+// 17. V3 自测断言（expectTone / expectScreen）与 exportTestbench
+// ============================================================
+describe('17. V3 自测断言与 Testbench 导出', () => {
+  const V3_DEMO_CODE = `
+    module top(
+      input clk, input rst_n, input [3:0] key, input [7:0] sw,
+      output [7:0] led, output [2:0] traffic, output [15:0] seg,
+      output [3:0] tone,
+      output [3:0] screen_x, output [2:0] screen_y,
+      output [7:0] screen_data, output [1:0] screen_cmd
+    );
+      assign led = sw;
+      assign traffic = 3'd0;
+      assign seg = 16'd0;
+      assign tone = key[3:0];
+      assign screen_x = sw[3:0];
+      assign screen_y = sw[6:4];
+      assign screen_data = 8'h48; // 'H'
+      assign screen_cmd = sw[7] ? 2'b01 : 2'b00;
+    endmodule
+  `;
+
+  it('runSelfTest 验证 expectTone 通过与失败反例报告', () => {
+    const passVecs: TestVectorStep[] = [
+      { cycle: 0, inputs: { rst_n: 1, key: 5, sw: 0 }, expectTone: 5, note: 'beep 5' },
+      { cycle: 1, inputs: { rst_n: 1, key: 0, sw: 0 }, expectTone: 0, note: 'mute' },
+    ];
+    const okRes = runDeterministicSelfTest(V3_DEMO_CODE, passVecs);
+    expect(okRes.passed).toBe(true);
+    expect(okRes.totalChecks).toBe(2);
+    expect(okRes.passedChecks).toBe(2);
+
+    const failVecs: TestVectorStep[] = [
+      { cycle: 0, inputs: { rst_n: 1, key: 5, sw: 0 }, expectTone: 3, note: 'wrong tone' },
+    ];
+    const failRes = runDeterministicSelfTest(V3_DEMO_CODE, failVecs);
+    expect(failRes.passed).toBe(false);
+    expect(failRes.firstFailure).toMatchObject({
+      cycle: 0,
+      signal: 'tone',
+      expected: 3,
+      actual: 5,
+    });
+  });
+
+  it('runSelfTest 验证 expectScreen 多格断言通过与失败坐标定位', () => {
+    const passVecs: TestVectorStep[] = [
+      {
+        cycle: 0,
+        inputs: { rst_n: 1, key: 0, sw: 0x80 | (1 << 4) | 2 },
+        expectScreen: [{ x: 2, y: 1, code: 0x48 }],
+      },
+      {
+        cycle: 1,
+        inputs: { rst_n: 1, key: 0, sw: 0x80 | (3 << 4) | 5 },
+        expectScreen: [
+          { x: 2, y: 1, code: 0x48 },
+          { x: 5, y: 3, code: 0x48 },
+          { x: 0, y: 0, code: 0x00 },
+        ],
+      },
+    ];
+    const okRes = runDeterministicSelfTest(V3_DEMO_CODE, passVecs);
+    expect(okRes.passed).toBe(true);
+    expect(okRes.totalChecks).toBe(4);
+    expect(okRes.passedChecks).toBe(4);
+
+    const failVecs: TestVectorStep[] = [
+      {
+        cycle: 0,
+        inputs: { rst_n: 1, key: 0, sw: 0x80 | (1 << 4) | 2 },
+        expectScreen: [{ x: 2, y: 1, code: 0x49 }],
+        note: 'expect I',
+      },
+    ];
+    const failRes = runDeterministicSelfTest(V3_DEMO_CODE, failVecs);
+    expect(failRes.passed).toBe(false);
+    expect(failRes.firstFailure).toMatchObject({
+      cycle: 0,
+      signal: 'screen',
+      screenCoord: { x: 2, y: 1 },
+      expected: 0x49,
+      actual: 0x48,
+    });
+  });
+
+  it('expectScreen 越界坐标安全判失败而不抛出异常', () => {
+    const vecs: TestVectorStep[] = [
+      {
+        cycle: 0,
+        inputs: DEFAULT_IN,
+        expectScreen: [{ x: 16, y: 0, code: 0 }],
+      },
+    ];
+    const res = runDeterministicSelfTest(V3_DEMO_CODE, vecs);
+    expect(res.passed).toBe(false);
+    expect(res.firstFailure?.signal).toBe('screen');
+    expect(res.firstFailure?.screenCoord).toEqual({ x: 16, y: 0 });
+  });
+
+  it('V3 自测断言同样支持 regressedCycles 无回退检测', () => {
+    const vecs: TestVectorStep[] = [
+      { cycle: 0, inputs: { rst_n: 1, key: 1, sw: 0 }, expectTone: 1 },
+      { cycle: 1, inputs: { rst_n: 1, key: 2, sw: 0 }, expectTone: 9 },
+    ];
+    const res = runDeterministicSelfTest(V3_DEMO_CODE, vecs, [0, 1]);
+    expect(res.passed).toBe(false);
+    expect(res.passedCycles).toEqual([0]);
+    expect(res.regressedCycles).toEqual([1]);
+  });
+
+  it('exportTestbench 对含 tone/screen 端口的模块自动导出对应 wire、例化与检查语句', () => {
+    const engine = createRtlEngine();
+    const tb = engine.exportTestbench!(V3_DEMO_CODE, [
+      {
+        cycle: 0,
+        inputs: { rst_n: 1, key: 4, sw: 0x85 },
+        expectTone: 4,
+        expectScreen: [{ x: 5, y: 0, code: 0x48 }],
+      },
+    ]);
+    expect(tb).toContain('wire [3:0] tone;');
+    expect(tb).toContain('wire [3:0] screen_x;');
+    expect(tb).toContain('wire [2:0] screen_y;');
+    expect(tb).toContain('wire [7:0] screen_data;');
+    expect(tb).toContain('wire [1:0] screen_cmd;');
+    expect(tb).toContain('.tone(tone)');
+    expect(tb).toContain('.screen_cmd(screen_cmd)');
+    expect(tb).toContain("if (tone !== 4'h4)");
+    expect(tb).toContain('screen_mem');
+    expect(tb).toContain("8'h48");
+  });
+
+  it('exportTestbench 对经典模块保持精简，不强行输出 tone 或 screen 端口', () => {
+    const engine = createRtlEngine();
+    const tb = engine.exportTestbench!(PRESETS[0].verilogCode, [
+      { cycle: 0, inputs: { rst_n: 0, key: 0, sw: 0 }, expect: { traffic: 1 } },
+    ]);
+    expect(tb).not.toContain('screen_x');
+    expect(tb).not.toContain('.tone(');
+  });
+});
+
+// ============================================================
+// 18. V3 端到端真实硬件场景集成测试
+// ============================================================
+describe('18. V3 端到端真实硬件场景（终端 / 贪吃蛇 / 2D 帧缓冲 / 电子琴 / 全屏刷屏性能）', () => {
+  it('场景 1：16x8 ASCII 文本终端（ROM 数组 + stepBatch 一帧刷出 "HELLO FPGA!"）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] screen_x, output [2:0] screen_y,
+        output [7:0] screen_data, output [1:0] screen_cmd
+      );
+        reg [7:0] msg [0:10];
+        reg [3:0] idx;
+        reg [3:0] wr_x;
+        reg [7:0] wr_ch;
+        reg wr_en;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            msg[0]  <= 8'h48; // H
+            msg[1]  <= 8'h45; // E
+            msg[2]  <= 8'h4C; // L
+            msg[3]  <= 8'h4C; // L
+            msg[4]  <= 8'h4F; // O
+            msg[5]  <= 8'h20; // space
+            msg[6]  <= 8'h46; // F
+            msg[7]  <= 8'h50; // P
+            msg[8]  <= 8'h47; // G
+            msg[9]  <= 8'h41; // A
+            msg[10] <= 8'h21; // !
+            idx <= 4'd0;
+            wr_x <= 4'd0;
+            wr_ch <= 8'h00;
+            wr_en <= 1'b0;
+          end else if (idx < 4'd11) begin
+            wr_x <= idx;
+            wr_ch <= msg[idx];
+            wr_en <= 1'b1;
+            idx <= idx + 4'd1;
+          end else begin
+            wr_en <= 1'b0;
+          end
+        end
+        assign led = {4'd0, idx};
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+        assign screen_x = wr_x;
+        assign screen_y = 3'd2;
+        assign screen_data = wr_ch;
+        assign screen_cmd = wr_en ? 2'b01 : 2'b00;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    const res = engine.stepBatch!({ rst_n: 1, key: 0, sw: 0 }, 12);
+    const row2 = res.sample.screenBuffer!.slice(2 * 16, 2 * 16 + 11);
+    const text = String.fromCharCode(...row2);
+    expect(text).toBe('HELLO FPGA!');
+  });
+
+  it('场景 2：简易贪吃蛇核心逻辑（1D 坐标队列数组 + 按键转向 + 吃食物触发 tone + 图块绘制）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] tone,
+        output [3:0] screen_x, output [2:0] screen_y,
+        output [7:0] screen_data, output [1:0] screen_cmd
+      );
+        reg [3:0] sx [0:3];
+        reg [2:0] sy [0:3];
+        reg [3:0] food_x;
+        reg [2:0] food_y;
+        reg ate;
+        integer k;
+
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            sx[0] <= 4'd4; sy[0] <= 3'd3;
+            sx[1] <= 4'd3; sy[1] <= 3'd3;
+            sx[2] <= 4'd2; sy[2] <= 3'd3;
+            sx[3] <= 4'd1; sy[3] <= 3'd3;
+            food_x <= 4'd6; food_y <= 3'd3;
+            ate <= 1'b0;
+          end else begin
+            for (k = 3; k > 0; k = k - 1) begin
+              sx[k] <= sx[k-1];
+              sy[k] <= sy[k-1];
+            end
+            // key[0]=右, key[1]=下
+            if (key[1]) begin
+              sx[0] <= sx[0];
+              sy[0] <= sy[0] + 3'd1;
+            end else begin
+              sx[0] <= sx[0] + 4'd1;
+              sy[0] <= sy[0];
+            end
+            ate <= ((sx[0] + 4'd1) == food_x) && (sy[0] == food_y) && !key[1];
+          end
+        end
+
+        assign led = {4'd0, sx[0]};
+        assign traffic = 3'd0;
+        assign seg = {4'd0, sx[0], 5'd0, sy[0]};
+        assign tone = ate ? 4'd8 : 4'd0;
+        assign screen_x = sx[0];
+        assign screen_y = sy[0];
+        assign screen_data = 8'h81; // 蛇头图块
+        assign screen_cmd = rst_n ? 2'b01 : 2'b00;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    const compiled = engine.compile(code);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.metadata?.arrays?.map((a) => a.name).sort()).toEqual(['sx', 'sy']);
+
+    // 复位
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    // 第 1 拍向右走到 (5,3)
+    const s1 = engine.step({ rst_n: 1, key: 0, sw: 0 }).sample;
+    expect(s1.outputs.led).toBe(5);
+    expect(s1.extendedOutputs?.tone).toBe(0);
+    expect(s1.screenBuffer![3 * 16 + 5]).toBe(0x81);
+
+    // 第 2 拍向右走到 (6,3) 吃到食物 -> tone = 8
+    const s2 = engine.step({ rst_n: 1, key: 0, sw: 0 }).sample;
+    expect(s2.outputs.led).toBe(6);
+    expect(s2.extendedOutputs?.tone).toBe(8);
+    expect(s2.screenBuffer![3 * 16 + 6]).toBe(0x81);
+
+    // 第 3 拍按 key[1] 向下走到 (6,4)
+    const s3 = engine.step({ rst_n: 1, key: 2, sw: 0 }).sample;
+    expect(s3.screenBuffer![4 * 16 + 6]).toBe(0x81);
+    expect(s3.extendedOutputs?.tone).toBe(0);
+  });
+
+  it('场景 3：2D 帧缓冲数组 fb[0:3][0:3] 逐拍扫描输出到屏幕', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] screen_x, output [2:0] screen_y,
+        output [7:0] screen_data, output [1:0] screen_cmd
+      );
+        reg [7:0] fb [0:3][0:3];
+        reg [3:0] scan;
+        integer y, x;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) begin
+            for (y = 0; y < 4; y = y + 1)
+              for (x = 0; x < 4; x = x + 1)
+                fb[y][x] <= ((x + y) & 1) ? 8'h80 : 8'h2E;
+            scan <= 4'd0;
+          end else begin
+            scan <= scan + 4'd1;
+          end
+        end
+        assign led = {4'd0, scan};
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+        assign screen_x = {2'b00, scan[1:0]};
+        assign screen_y = {1'b0, scan[3:2]};
+        assign screen_data = fb[scan[3:2]][scan[1:0]];
+        assign screen_cmd = rst_n ? 2'b01 : 2'b00;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+    const res = engine.stepBatch!({ rst_n: 1, key: 0, sw: 0 }, 16);
+    for (let y = 0; y < 4; y++) {
+      for (let x = 0; x < 4; x++) {
+        expect(res.sample.screenBuffer![y * 16 + x]).toBe((x + y) % 2 === 1 ? 0x80 : 0x2e);
+      }
+    }
+  });
+
+  it('场景 4：4-bit 简易电子琴（sw 选音阶驱动 tone + seg 显示音符）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output reg [3:0] tone
+      );
+        always @(*) begin
+          case (1'b1)
+            sw[7]: tone = 4'd8;
+            sw[6]: tone = 4'd7;
+            sw[5]: tone = 4'd6;
+            sw[4]: tone = 4'd5;
+            sw[3]: tone = 4'd4;
+            sw[2]: tone = 4'd3;
+            sw[1]: tone = 4'd2;
+            sw[0]: tone = 4'd1;
+            default: tone = 4'd0;
+          endcase
+        end
+        assign led = sw;
+        assign traffic = 3'd0;
+        assign seg = {12'd0, tone};
+      endmodule
+    `;
+    const vecs: TestVectorStep[] = [
+      { cycle: 0, inputs: { rst_n: 1, key: 0, sw: 0x00 }, expect: { seg: 0 }, expectTone: 0 },
+      { cycle: 1, inputs: { rst_n: 1, key: 0, sw: 0x01 }, expect: { seg: 1 }, expectTone: 1 },
+      { cycle: 2, inputs: { rst_n: 1, key: 0, sw: 0x10 }, expect: { seg: 5 }, expectTone: 5 },
+      { cycle: 3, inputs: { rst_n: 1, key: 0, sw: 0x80 }, expect: { seg: 8 }, expectTone: 8 },
+    ];
+    const res = runDeterministicSelfTest(code, vecs);
+    expect(res.passed).toBe(true);
+    expect(res.passedChecks).toBe(8);
+  });
+
+  it('场景 5：stepBatch(in, 128) 全屏 128 格刷新性能 < 200ms 且全格精确命中', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] screen_x, output [2:0] screen_y,
+        output [7:0] screen_data, output [1:0] screen_cmd
+      );
+        reg [6:0] cnt;
+        always @(posedge clk or negedge rst_n) begin
+          if (!rst_n) cnt <= 7'd0;
+          else cnt <= cnt + 7'd1;
+        end
+        assign led = {1'b0, cnt};
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+        assign screen_x = cnt[3:0];
+        assign screen_y = cnt[6:4];
+        assign screen_data = 8'h20 + {1'b0, cnt[5:0]};
+        assign screen_cmd = rst_n ? 2'b01 : 2'b00;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+    engine.step({ rst_n: 0, key: 0, sw: 0 });
+
+    const t0 = performance.now();
+    const batch = engine.stepBatch!({ rst_n: 1, key: 0, sw: 0 }, 128);
+    const elapsed = performance.now() - t0;
+
+    expect(elapsed).toBeLessThan(200);
+    expect(batch.sample.screenBuffer).toHaveLength(128);
+    for (let i = 0; i < 128; i++) {
+      expect(batch.sample.screenBuffer![i]).toBe(0x20 + (i & 0x3f));
+    }
+  });
+});
+

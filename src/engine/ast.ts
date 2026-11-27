@@ -36,6 +36,7 @@ export interface SignalDecl {
   kind: SignalKind;
   signed: boolean;
   range: RangeSpec | null;
+  dimensions?: RangeSpec[];
   init?: Expr;
   loc: SourceLoc;
 }
@@ -71,6 +72,13 @@ export type LValue =
   | { type: 'ident'; name: string; loc: SourceLoc }
   | { type: 'index'; name: string; index: Expr; loc: SourceLoc }
   | { type: 'slice'; name: string; msb: Expr; lsb: Expr; loc: SourceLoc }
+  | {
+      type: 'indexed';
+      name: string;
+      indices: Expr[];
+      slice?: { msb: Expr; lsb: Expr };
+      loc: SourceLoc;
+    }
   | { type: 'concat'; items: LValue[]; loc: SourceLoc };
 
 export type Stmt =

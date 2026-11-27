@@ -1,5 +1,7 @@
 import type {
+  ArrayDescriptor,
   BoardInputs,
+  BoardPeripheralId,
   CircuitMetadata,
   CompileResult,
   NetlistGraph,
@@ -72,6 +74,14 @@ function collectLValueTargets(lv: LValue, reads: Set<string>, writes: Set<string
       collectExprIdentReads(lv.msb, reads);
       collectExprIdentReads(lv.lsb, reads);
       return;
+    case 'indexed':
+      writes.add(lv.name);
+      for (const idx of lv.indices) collectExprIdentReads(idx, reads);
+      if (lv.slice) {
+        collectExprIdentReads(lv.slice.msb, reads);
+        collectExprIdentReads(lv.slice.lsb, reads);
+      }
+      return;
     case 'concat':
       for (const item of lv.items) collectLValueTargets(item, reads, writes);
       return;
@@ -133,10 +143,28 @@ function extractCircuitMetadata(elaborated: ElaboratedModule): CircuitMetadata {
   }
 
   const inputOrder: Array<'rst_n' | 'key' | 'sw'> = ['rst_n', 'key', 'sw'];
-  const outputOrder: Array<'led' | 'traffic' | 'seg'> = ['led', 'traffic', 'seg'];
+  const classicOutputOrder: Array<'led' | 'traffic' | 'seg'> = ['led', 'traffic', 'seg'];
 
   const usedInputs = inputOrder.filter((name) => reads.has(name));
-  const usedOutputs = outputOrder.filter((name) => writes.has(name));
+  const usedOutputs: BoardPeripheralId[] = classicOutputOrder.filter((name) => writes.has(name));
+
+  if (elaborated.signals.has('tone') && writes.has('tone')) {
+    usedOutputs.push('tone');
+  }
+  const hasScreenPorts =
+    elaborated.signals.has('screen_x') &&
+    elaborated.signals.has('screen_y') &&
+    elaborated.signals.has('screen_data') &&
+    elaborated.signals.has('screen_cmd');
+  if (
+    hasScreenPorts &&
+    (writes.has('screen_cmd') ||
+      writes.has('screen_data') ||
+      writes.has('screen_x') ||
+      writes.has('screen_y'))
+  ) {
+    usedOutputs.push('screen');
+  }
 
   const internalSignals: SignalDescriptor[] = [];
   for (const meta of elaborated.signals.values()) {
@@ -145,11 +173,23 @@ function extractCircuitMetadata(elaborated: ElaboratedModule): CircuitMetadata {
     }
   }
 
+  const arrays: ArrayDescriptor[] = [];
+  for (const arr of elaborated.arrays.values()) {
+    if (!arr.invalidReason) {
+      arrays.push({
+        name: arr.name,
+        elementWidth: arr.elementWidth,
+        dimensions: arr.dimensions.map((d) => d.size),
+      });
+    }
+  }
+
   return {
     moduleName: elaborated.ast.name,
     usedInputs,
     usedOutputs,
     internalSignals,
+    ...(arrays.length > 0 && { arrays }),
   };
 }
 
@@ -252,6 +292,44 @@ export const createRtlEngine: RtlEngineFactory = (): RtlEngine => {
       }
 
       return { sample, netlist };
+    },
+
+    stepBatch(
+      inputs: BoardInputs,
+      steps: number
+    ): { sample: SignalSample; netlist: NetlistGraph; waveformDelta?: SignalSample[] } {
+      if (!session || !compiledNetlist) {
+        const emptySample: SignalSample = {
+          cycle: 0,
+          inputs,
+          outputs: { led: 0, traffic: 0, seg: 0 },
+          internals: {},
+        };
+        return {
+          sample: emptySample,
+          netlist: createEmptyNetlist('尚未编译有效模块'),
+          waveformDelta: [emptySample],
+        };
+      }
+
+      const count = Math.max(1, Math.min(256, Math.floor(Number.isFinite(steps) ? steps : 1)));
+      const waveformDelta: SignalSample[] = [];
+      let anyCombLoop = false;
+      let lastSample!: SignalSample;
+
+      for (let i = 0; i < count; i++) {
+        const { sample, combLoopDetected } = session.step(inputs);
+        if (combLoopDetected) anyCombLoop = true;
+        lastSample = sample;
+        waveformDelta.push(sample);
+      }
+
+      const netlist = compiledNetlist.evaluate(session.getSignalsSnapshot());
+      if (anyCombLoop) {
+        netlist.narration = `[组合环路保护] ${netlist.narration}`;
+      }
+
+      return { sample: lastSample, netlist, waveformDelta };
     },
 
     runSelfTest(
