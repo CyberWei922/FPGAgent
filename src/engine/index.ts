@@ -161,7 +161,8 @@ function extractCircuitMetadata(elaborated: ElaboratedModule): CircuitMetadata {
     (writes.has('screen_cmd') ||
       writes.has('screen_data') ||
       writes.has('screen_x') ||
-      writes.has('screen_y'))
+      writes.has('screen_y') ||
+      writes.has('screen_color'))
   ) {
     usedOutputs.push('screen');
   }
@@ -349,7 +350,14 @@ export const createRtlEngine: RtlEngineFactory = (): RtlEngine => {
 export const rtlEngine: RtlEngine = createRtlEngine();
 
 export { parseVerilog } from './parser';
-export { elaborate, SimulationSession } from './simulator';
+export {
+  elaborate,
+  SimulationSession,
+  SCREEN_PALETTE,
+  packScreenCell,
+  decodeScreenCell,
+  screenColorHex,
+} from './simulator';
 export { buildNetlist, CompiledNetlist } from './netlist';
 export { lintVerilog, BOARD_PORT_SPECS } from './linter';
 export { runDeterministicSelfTest, exportVerilogTestbench } from './selftest';

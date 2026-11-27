@@ -9,9 +9,10 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useI18n } from '../services/i18n';
-import type { BoardInputs } from '../types/contracts';
+import type { BoardInputs, BoardOutputs } from '../types/contracts';
 import { OLED_TINT_CONFIG, OledScreen, type OledTint } from './OledScreen';
 import { ClockControls, type ClockSpeed } from './TopBar';
+import { VirtualBoard } from './VirtualBoard';
 
 export type ScreenKeyLayout = 'dpad' | 'classic';
 
@@ -140,6 +141,7 @@ export function ScreenView({
   filename,
   cycle,
   inputs,
+  outputs,
   onInputsChange,
   speed,
   running,
@@ -155,6 +157,7 @@ export function ScreenView({
   filename?: string;
   cycle?: number;
   inputs: BoardInputs;
+  outputs?: BoardOutputs;
   onInputsChange: (inputs: BoardInputs) => void;
   speed: ClockSpeed;
   running: boolean;
@@ -485,6 +488,19 @@ export function ScreenView({
                 </>
               )}
             </p>
+          </section>
+
+          <section className="screen-board-dock" aria-label={L('虚拟 FPGA 板卡', 'Virtual FPGA Board')}>
+            <div className="screen-board-dock-head">
+              <h2>{L('虚拟板卡', 'Virtual Board')}</h2>
+              {cycle !== undefined && <span className="instrument-meta mono">CLK ↑ {cycle}</span>}
+            </div>
+            <VirtualBoard
+              inputs={inputs}
+              outputs={outputs}
+              onInputsChange={onInputsChange}
+              disabled={!compiled}
+            />
           </section>
         </div>
       </div>

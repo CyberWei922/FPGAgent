@@ -24,6 +24,7 @@ const BOARD_LABELS: Record<string, string> = {
   led: 'LED[7:0]', traffic: 'TRAFFIC[2:0]', seg: 'SEG[15:0]',
   tone: 'TONE[3:0]',
   screen_x: 'SCR_X[3:0]', screen_y: 'SCR_Y[2:0]', screen_data: 'SCR_DATA[7:0]', screen_cmd: 'SCR_CMD[1:0]',
+  screen_color: 'SCR_COLOR[7:0]',
 };
 
 function targetNames(target: LValue): string[] {

@@ -1,4 +1,6 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { decodeScreenCell } from '../engine';
+import { resolveScreenColorHex, subscribePaletteChange } from '../services/screenPalette';
 import { BOARD_SCREEN_COLS, BOARD_SCREEN_ROWS } from '../types/contracts';
 
 export type OledTint = 'white' | 'green' | 'ice';
@@ -173,6 +175,27 @@ const PIXEL_SIZE = 3;
 const CANVAS_W = BOARD_SCREEN_COLS * 8 * PIXEL_PITCH;
 const CANVAS_H = BOARD_SCREEN_ROWS * 8 * PIXEL_PITCH;
 
+function hexToRgba(hex: string, alpha: number): string {
+  const value = hex.replace('#', '');
+  const r = Number.parseInt(value.slice(0, 2), 16);
+  const g = Number.parseInt(value.slice(2, 4), 16);
+  const b = Number.parseInt(value.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function resolveCellVisual(
+  packed: number,
+  tint: OledTint,
+): { lit: string; glow: string } {
+  const { color } = decodeScreenCell(packed);
+  if (color > 0) {
+    const hex = resolveScreenColorHex(color);
+    return { lit: hex, glow: hexToRgba(hex, 0.3) };
+  }
+  const palette = OLED_TINT_CONFIG[tint];
+  return { lit: palette.lit, glow: palette.glow };
+}
+
 export function OledScreen({
   buffer,
   tint = 'white',
@@ -183,6 +206,9 @@ export function OledScreen({
   ariaLabel?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [paletteVersion, setPaletteVersion] = useState(0);
+
+  useEffect(() => subscribePaletteChange(() => setPaletteVersion((v) => v + 1)), []);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -205,12 +231,13 @@ export function OledScreen({
 
     if (!buffer || buffer.length === 0) return;
 
-    // Pass 1: subtle phosphor bloom for lit pixels
-    ctx.fillStyle = palette.glow;
+    // Pass 1: subtle phosphor bloom for lit pixels (per-cell color aware)
     for (let row = 0; row < BOARD_SCREEN_ROWS; row++) {
       for (let col = 0; col < BOARD_SCREEN_COLS; col++) {
-        const glyph = resolveGlyphBitmap(buffer[row * BOARD_SCREEN_COLS + col] ?? 0);
+        const packed = buffer[row * BOARD_SCREEN_COLS + col] ?? 0;
+        const glyph = resolveGlyphBitmap(packed);
         if (!glyph) continue;
+        ctx.fillStyle = resolveCellVisual(packed, tint).glow;
         const baseX = col * 8;
         const baseY = row * 8;
         for (let gy = 0; gy < 8; gy++) {
@@ -230,12 +257,13 @@ export function OledScreen({
       }
     }
 
-    // Pass 2: crisp monochrome OLED pixels
-    ctx.fillStyle = palette.lit;
+    // Pass 2: crisp OLED pixels (color 0 keeps the phosphor tint, 1..255 use 256-color palette)
     for (let row = 0; row < BOARD_SCREEN_ROWS; row++) {
       for (let col = 0; col < BOARD_SCREEN_COLS; col++) {
-        const glyph = resolveGlyphBitmap(buffer[row * BOARD_SCREEN_COLS + col] ?? 0);
+        const packed = buffer[row * BOARD_SCREEN_COLS + col] ?? 0;
+        const glyph = resolveGlyphBitmap(packed);
         if (!glyph) continue;
+        ctx.fillStyle = resolveCellVisual(packed, tint).lit;
         const baseX = col * 8;
         const baseY = row * 8;
         for (let gy = 0; gy < 8; gy++) {
@@ -254,7 +282,7 @@ export function OledScreen({
         }
       }
     }
-  }, [buffer, tint]);
+  }, [buffer, tint, paletteVersion]);
 
   return (
     <div className="oled-bezel" data-tint={tint}>

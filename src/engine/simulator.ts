@@ -82,6 +82,69 @@ export const MAX_COMB_ITERATIONS = 16;
 export const MAX_FOR_ITERATIONS = 256;
 export const MAX_ARRAY_ELEMENTS = 4096;
 
+// 256 色板（ANSI/xterm-256 风格）：
+//   0        单色默认（保持 V3 契约经典荧光观感，显存中 0 表示“不指定颜色”）
+//   1..15    基础 16 色（本项目自定义，与旧 4-bit 调色板一致）
+//   16..231  6×6×6 RGB 色立方（每通道 0/95/135/175/215/255）
+//   232..255 灰阶（8 + 10*i）
+function buildScreenPalette(): readonly string[] {
+  const base = [
+    '#bff230', // 0 默认（经典单色）
+    '#ff4747', // 1 红
+    '#ffb320', // 2 琥珀
+    '#4de2ff', // 3 青
+    '#ff5edb', // 4 品红
+    '#f2f8ef', // 5 白
+    '#4d7fff', // 6 蓝
+    '#b06bff', // 7 紫
+    '#6ee06e', // 8 绿
+    '#ff8a3d', // 9 橙
+    '#2fe0c0', // 10 蒂芙尼
+    '#ff8fb1', // 11 粉
+    '#ffe968', // 12 黄
+    '#7fd8ff', // 13 天蓝
+    '#9aa79a', // 14 灰
+    '#6b7a6b', // 15 暗绿
+  ];
+  const hex2 = (n: number) => n.toString(16).padStart(2, '0');
+  const levels = [0, 95, 135, 175, 215, 255];
+  const palette = [...base];
+  for (let r = 0; r < 6; r++) {
+    for (let g = 0; g < 6; g++) {
+      for (let b = 0; b < 6; b++) {
+        palette.push(`#${hex2(levels[r])}${hex2(levels[g])}${hex2(levels[b])}`);
+      }
+    }
+  }
+  for (let i = 0; i < 24; i++) {
+    const v = 8 + i * 10;
+    palette.push(`#${hex2(v)}${hex2(v)}${hex2(v)}`);
+  }
+  return palette;
+}
+
+export const SCREEN_PALETTE: readonly string[] = buildScreenPalette();
+
+export const SCREEN_COLOR_MASK = 0xff;
+export const SCREEN_COLOR_SHIFT = 8;
+
+export function packScreenCell(code: number, color: number): number {
+  const safeCode = code & 0xff;
+  const safeColor = color & 0xff;
+  return safeColor === 0 ? safeCode : (safeColor << SCREEN_COLOR_SHIFT) | safeCode;
+}
+
+export function decodeScreenCell(value: number): { code: number; color: number } {
+  return {
+    code: value & 0xff,
+    color: (value >>> SCREEN_COLOR_SHIFT) & 0xff,
+  };
+}
+
+export function screenColorHex(color: number): string {
+  return SCREEN_PALETTE[color & 0xff] ?? SCREEN_PALETTE[0];
+}
+
 function isExprStatic(
   expr: Expr,
   params: Map<string, { value: number; width: number; signed: boolean }>,
@@ -1110,13 +1173,14 @@ export class SimulationSession {
   readonly elaborated: ElaboratedModule;
   readonly hasTone: boolean;
   readonly hasScreen: boolean;
+  readonly hasScreenColor: boolean;
   private values = new Map<string, number>();
   private prevValues = new Map<string, number>();
   private arrays = new Map<string, Uint32Array>();
   private arrayDigests = new Map<string, number>();
   private prevArrayDigests = new Map<string, number>();
   private arrayVersion = 0;
-  private screenBuffer = new Uint8Array(BOARD_SCREEN_CELLS);
+  private screenBuffer = new Uint16Array(BOARD_SCREEN_CELLS);
   private cycle = 0;
 
   constructor(elaborated: ElaboratedModule) {
@@ -1127,6 +1191,7 @@ export class SimulationSession {
       elaborated.signals.has('screen_y') &&
       elaborated.signals.has('screen_data') &&
       elaborated.signals.has('screen_cmd');
+    this.hasScreenColor = this.hasScreen && elaborated.signals.has('screen_color');
     this.reset();
   }
 
@@ -1268,13 +1333,17 @@ export class SimulationSession {
           data: maskWidth(this.values.get('screen_data') ?? 0, 8),
           cmd: maskWidth(this.values.get('screen_cmd') ?? 0, 2),
         };
+        const color = this.hasScreenColor
+          ? maskWidth(this.values.get('screen_color') ?? 0, 8)
+          : 0;
+        const cellValue = packScreenCell(screen.data, color);
         if (screen.cmd === 1) {
-          this.screenBuffer[screen.y * BOARD_SCREEN_COLS + screen.x] = screen.data;
+          this.screenBuffer[screen.y * BOARD_SCREEN_COLS + screen.x] = cellValue;
         } else if (screen.cmd === 2) {
           this.screenBuffer.fill(0);
         } else if (screen.cmd === 3) {
           this.screenBuffer.fill(0);
-          this.screenBuffer[screen.y * BOARD_SCREEN_COLS + screen.x] = screen.data;
+          this.screenBuffer[screen.y * BOARD_SCREEN_COLS + screen.x] = cellValue;
         }
         extendedOutputs.screen = screen;
         screenBufferSnapshot = Array.from(this.screenBuffer);

@@ -2046,6 +2046,7 @@ export default function App() {
                   filename={code ? activeFilename : undefined}
                   cycle={latest?.cycle}
                   inputs={inputs}
+                  outputs={latest?.outputs}
                   onInputsChange={changeInputs}
                   speed={speed}
                   running={running}

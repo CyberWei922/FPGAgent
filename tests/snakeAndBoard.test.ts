@@ -12,7 +12,7 @@ import { BOARD_SCREEN_COLS } from '../src/types/contracts';
 function readRowAscii(buf: number[], y: number, xStart: number, length: number): string {
   let out = '';
   for (let i = 0; i < length; i++) {
-    out += String.fromCharCode(buf[y * BOARD_SCREEN_COLS + xStart + i] ?? 0);
+    out += String.fromCharCode((buf[y * BOARD_SCREEN_COLS + xStart + i] ?? 0) & 0xff);
   }
   return out;
 }
@@ -39,7 +39,7 @@ describe('OLED 贪吃蛇完整局内行为验证', () => {
 
     // Snake is moving RIGHT at (6,3); pressing LEFT (key=4) must be ignored
     const afterReverseAttempt = engine.step({ rst_n: 1, key: 4, sw: 0 }).sample;
-    expect(afterReverseAttempt.screenBuffer![3 * 16 + 7]).toBe(0x83);
+    expect(afterReverseAttempt.screenBuffer![3 * 16 + 7] & 0xff).toBe(0x83);
 
     // Keep moving RIGHT until hitting right wall (x=15) and writing GAME OVER
     let lastSample = afterReverseAttempt;
@@ -59,8 +59,11 @@ describe('OLED 贪吃蛇完整局内行为验证', () => {
       lastSample = engine.step({ rst_n: 1, key: 0, sw: 0 }).sample;
     }
     expect(lastSample.outputs.led & 1).toBe(1);
-    expect(lastSample.screenBuffer![3 * 16 + 6]).toBe(0x83);
-    expect(lastSample.screenBuffer![3 * 16 + 10]).toBe(0x85);
+    expect(lastSample.screenBuffer![3 * 16 + 6] & 0xff).toBe(0x83);
+    expect(lastSample.screenBuffer![3 * 16 + 10] & 0xff).toBe(0x85);
+    // 256 色调色板：蛇头应为绿色索引 8，食物应为红色索引 1
+    expect(lastSample.screenBuffer![3 * 16 + 6] >>> 8).toBe(8);
+    expect(lastSample.screenBuffer![3 * 16 + 10] >>> 8).toBe(1);
   });
 
   it('贪吃蛇预设带有 arcade 板卡与 screen 外设元数据', () => {
@@ -71,7 +74,7 @@ describe('OLED 贪吃蛇完整局内行为验证', () => {
   });
 });
 
-describe('单色 OLED 字模与板卡配置服务', () => {
+describe('OLED 字模与板卡配置服务', () => {
   it('resolveGlyphBitmap 覆盖 ASCII 字符与 0x80..0x8F 全部 16 个 V3 图块', () => {
     expect(resolveGlyphBitmap(0x00)).toBeNull();
     expect(resolveGlyphBitmap(0x47)).toHaveLength(8); // 'G'

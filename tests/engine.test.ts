@@ -8,6 +8,10 @@ import {
   runDeterministicSelfTest,
   SimulationSession,
   tokenizeVerilogForHighlight,
+  SCREEN_PALETTE,
+  packScreenCell,
+  decodeScreenCell,
+  screenColorHex,
 } from '../src/engine/index';
 import { MOCK_PRESETS } from '../src/agent/mockPresets';
 import { PRESETS } from '../src/agent/presets';
@@ -3461,6 +3465,192 @@ describe('18. V3 端到端真实硬件场景（终端 / 贪吃蛇 / 2D 帧缓冲
     for (let i = 0; i < 128; i++) {
       expect(batch.sample.screenBuffer![i]).toBe(0x20 + (i & 0x3f));
     }
+  });
+});
+
+// ============================================================
+// 19. V3 多色屏幕扩展（可选 screen_color[7:0] + 16 位打包显存，256 色）
+// ============================================================
+describe('19. V3 多色屏幕编码（screen_color 端口）', () => {
+  const COLOR_DRIVER_CODE = `
+    module top(
+      input clk, input rst_n, input [3:0] key, input [7:0] sw,
+      output [7:0] led, output [2:0] traffic, output [15:0] seg,
+      output [3:0] screen_x, output [2:0] screen_y,
+      output [7:0] screen_data, output [1:0] screen_cmd,
+      output [7:0] screen_color
+    );
+      assign led = sw;
+      assign traffic = 3'd0;
+      assign seg = 16'd0;
+      assign screen_x = sw[3:0];
+      assign screen_y = sw[6:4];
+      assign screen_data = 8'h41;
+      assign screen_color = {4'd0, key};
+      assign screen_cmd = sw[7] ? 2'b01 : 2'b00;
+    endmodule
+  `;
+
+  it('packScreenCell / decodeScreenCell 往返无损，颜色 0 保持单色兼容', () => {
+    expect(packScreenCell(0x41, 0)).toBe(0x41);
+    expect(packScreenCell(0x41, 1)).toBe((1 << 8) | 0x41);
+    expect(packScreenCell(0x41, 15)).toBe((15 << 8) | 0x41);
+    expect(packScreenCell(0x41, 255)).toBe((0xff << 8) | 0x41);
+
+    expect(decodeScreenCell(0x41)).toEqual({ code: 0x41, color: 0 });
+    expect(decodeScreenCell((7 << 8) | 0x8a)).toEqual({ code: 0x8a, color: 7 });
+    expect(decodeScreenCell((200 << 8) | 0x41)).toEqual({ code: 0x41, color: 200 });
+
+    // 颜色与内容均按 8 位截断
+    expect(packScreenCell(0x1ff, 0x1ff)).toBe((0xff << 8) | 0xff);
+  });
+
+  it('调色板提供 256 色（含 6×6×6 RGB 立方与灰阶）且 screenColorHex 自动钳位', () => {
+    expect(SCREEN_PALETTE).toHaveLength(256);
+    for (const hex of SCREEN_PALETTE) {
+      expect(hex).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+    expect(screenColorHex(0)).toBe(SCREEN_PALETTE[0]);
+    expect(screenColorHex(3)).toBe(SCREEN_PALETTE[3]);
+    // 16..231 为 RGB 色立方：全红 (level=255, g=b=0) 位于 16 + 5*36 = 196
+    expect(SCREEN_PALETTE[196].toLowerCase()).toBe('#ff0000');
+    // 232..255 为灰阶：索引 255 -> 8 + 23*10 = 238
+    expect(SCREEN_PALETTE[255].toLowerCase()).toBe('#eeeeee');
+    // 越界颜色自动按 8 位钳位：300 & 0xff = 44
+    expect(screenColorHex(300)).toBe(SCREEN_PALETTE[44]);
+  });
+
+  it('256 色 RGB 立方中相邻色值互不相同，可在一屏呈现丰富渐变', () => {
+    const cube = SCREEN_PALETTE.slice(16, 232);
+    expect(new Set(cube).size).toBe(216);
+    const gray = SCREEN_PALETTE.slice(232);
+    expect(new Set(gray).size).toBe(24);
+  });
+
+  it('未声明 screen_color 的旧模块显存仍为 0..255 单色编码（100% 向后兼容）', () => {
+    const mono = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] screen_x, output [2:0] screen_y,
+        output [7:0] screen_data, output [1:0] screen_cmd
+      );
+        assign led = 8'd0; assign traffic = 3'd0; assign seg = 16'd0;
+        assign screen_x = 4'd1; assign screen_y = 3'd1;
+        assign screen_data = 8'h5A;
+        assign screen_cmd = 2'b01;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(mono).ok).toBe(true);
+    const s = engine.step(DEFAULT_IN).sample;
+    expect(s.screenBuffer![1 * 16 + 1]).toBe(0x5a);
+  });
+
+  it('声明 screen_color 后写屏按 (color<<8)|data 打包，多格可呈现不同颜色', () => {
+    const engine = createRtlEngine();
+    const compiled = engine.compile(COLOR_DRIVER_CODE);
+    expect(compiled.ok).toBe(true);
+    expect(compiled.metadata?.usedOutputs).toContain('screen');
+
+    // 写 (1,0) 色 1（红）
+    let s = engine.step({ rst_n: 1, key: 1, sw: 0x80 | 0x01 }).sample;
+    expect(s.screenBuffer![1]).toBe(packScreenCell(0x41, 1));
+
+    // 写 (2,0) 色 3（青）
+    s = engine.step({ rst_n: 1, key: 3, sw: 0x80 | 0x02 }).sample;
+    expect(s.screenBuffer![2]).toBe(packScreenCell(0x41, 3));
+
+    // 写 (3,0) 色 0（默认单色）
+    s = engine.step({ rst_n: 1, key: 0, sw: 0x80 | 0x03 }).sample;
+    expect(s.screenBuffer![3]).toBe(0x41);
+
+    // 已写入的不同颜色格互不影响
+    expect(s.screenBuffer![1]).toBe((1 << 8) | 0x41);
+    expect(s.screenBuffer![2]).toBe((3 << 8) | 0x41);
+  });
+
+  it('screen_color 取 8 位时支持 256 色调色板（如 RGB 色立方索引 200）', () => {
+    const code = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] screen_x, output [2:0] screen_y,
+        output [7:0] screen_data, output [1:0] screen_cmd,
+        output [7:0] screen_color
+      );
+        assign led = sw;
+        assign traffic = 3'd0;
+        assign seg = 16'd0;
+        assign screen_x = 4'd5;
+        assign screen_y = 3'd2;
+        assign screen_data = 8'h41;
+        assign screen_color = sw;
+        assign screen_cmd = key[0] ? 2'b01 : 2'b00;
+      endmodule
+    `;
+    const engine = createRtlEngine();
+    expect(engine.compile(code).ok).toBe(true);
+
+    const s = engine.step({ rst_n: 1, key: 1, sw: 200 }).sample;
+    expect(s.screenBuffer![2 * 16 + 5]).toBe((200 << 8) | 0x41);
+    expect(decodeScreenCell(s.screenBuffer![2 * 16 + 5])).toEqual({ code: 0x41, color: 200 });
+    // 色立方全红索引 196
+    expect(screenColorHex(196).toLowerCase()).toBe('#ff0000');
+  });
+
+  it('screen_cmd = 11 清屏并写入时正确携带颜色，且清屏会重置颜色', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(COLOR_DRIVER_CODE).ok).toBe(true);
+
+    engine.step({ rst_n: 1, key: 5, sw: 0x80 | 0x00 });
+    const s = engine.step({ rst_n: 1, key: 9, sw: 0x80 | 0x05 }).sample;
+    // 注意：driver 的 cmd 由 sw[7] 决定为 01，这里单独验证清屏用独立代码
+    expect(s.screenBuffer![0]).toBe((5 << 8) | 0x41);
+
+    const clearAndWrite = `
+      module top(
+        input clk, input rst_n, input [3:0] key, input [7:0] sw,
+        output [7:0] led, output [2:0] traffic, output [15:0] seg,
+        output [3:0] screen_x, output [2:0] screen_y,
+        output [7:0] screen_data, output [1:0] screen_cmd,
+        output [7:0] screen_color
+      );
+        assign led = 8'd0; assign traffic = 3'd0; assign seg = 16'd0;
+        assign screen_x = 4'd2; assign screen_y = 3'd1;
+        assign screen_data = 8'h2A;
+        assign screen_color = 8'd7;
+        assign screen_cmd = key[0] ? 2'b11 : 2'b00;
+      endmodule
+    `;
+    const e2 = createRtlEngine();
+    expect(e2.compile(clearAndWrite).ok).toBe(true);
+    e2.step({ rst_n: 1, key: 0, sw: 0 });
+    const out = e2.step({ rst_n: 1, key: 1, sw: 0 }).sample;
+    expect(out.screenBuffer![1 * 16 + 2]).toBe(packScreenCell(0x2a, 7));
+    expect(out.screenBuffer!.filter((v) => v !== 0)).toHaveLength(1);
+  });
+
+  it('带颜色显存下 expectScreen 仅比较低 8 位内容编码，自测可通过', () => {
+    const vecs: TestVectorStep[] = [
+      {
+        cycle: 0,
+        inputs: { rst_n: 1, key: 4, sw: 0x80 | 0x03 },
+        expectScreen: [{ x: 3, y: 0, code: 0x41 }],
+      },
+    ];
+    const res = runDeterministicSelfTest(COLOR_DRIVER_CODE, vecs);
+    expect(res.passed).toBe(true);
+    expect(res.totalChecks).toBe(1);
+  });
+
+  it('屏幕上色后 engine.reset() 清空全部颜色与内容', () => {
+    const engine = createRtlEngine();
+    expect(engine.compile(COLOR_DRIVER_CODE).ok).toBe(true);
+    engine.step({ rst_n: 1, key: 6, sw: 0x80 | 0x07 });
+    engine.reset();
+    const s = engine.step({ rst_n: 1, key: 0, sw: 0 }).sample;
+    expect(s.screenBuffer!.every((v) => v === 0)).toBe(true);
   });
 });
 

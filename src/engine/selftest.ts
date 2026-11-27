@@ -127,10 +127,12 @@ export function runDeterministicSelfTest(
             cell.x < BOARD_SCREEN_COLS &&
             cell.y >= 0 &&
             cell.y < BOARD_SCREEN_ROWS;
-          const actual =
+          const raw =
             inBounds && sample.screenBuffer
               ? sample.screenBuffer[cell.y * BOARD_SCREEN_COLS + cell.x] ?? 0
               : 0;
+          // 显存单元高 4 位为颜色（0 = 单色默认），断言只比较低 8 位内容编码
+          const actual = raw & 0xff;
           if (inBounds && actual === cell.code) {
             if (!combLoopDetected) passedChecks += 1;
           } else {

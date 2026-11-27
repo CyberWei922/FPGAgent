@@ -301,7 +301,7 @@ const BUZZER_BLUEPRINT: PresetProject['blueprint'] = {
 // ============================================================
 
 // ============================================================
-// 16×8 单色 OLED 贪吃蛇（V3 屏幕 + 方向键游戏案例）
+// 16×8 256 色 OLED 贪吃蛇（V3 屏幕 + 方向键游戏案例）
 // ============================================================
 
 export const SNAKE_CODE = `module top (
@@ -316,7 +316,8 @@ export const SNAKE_CODE = `module top (
     output reg [3:0] screen_x,
     output reg [2:0] screen_y,
     output reg [7:0] screen_data,
-    output reg [1:0] screen_cmd
+    output reg [1:0] screen_cmd,
+    output     [7:0] screen_color
 );
     localparam ST_INIT = 2'd0;
     localparam ST_PLAY = 2'd1;
@@ -602,6 +603,12 @@ export const SNAKE_CODE = `module top (
     assign traffic = (state == ST_OVER) ? 3'b100 : ((state == ST_PLAY) ? 3'b001 : 3'b010);
     assign seg     = {8'd0, score_hi, score_lo};
     assign tone    = tone_r;
+
+    // 256 色调色板：蛇头绿(8) / 蛇身青(3) / 食物红(1) / ASCII 文字琥珀(2) / 其余默认色(0)
+    assign screen_color = (screen_data == TILE_HEAD) ? 8'd8 :
+                          (screen_data == TILE_BODY) ? 8'd3 :
+                          (screen_data == TILE_FOOD) ? 8'd1 :
+                          ((screen_data >= 8'h20) && (screen_data <= 8'h7E)) ? 8'd2 : 8'd0;
 endmodule
 `;
 

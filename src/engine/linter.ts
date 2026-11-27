@@ -22,6 +22,7 @@ export const BOARD_PORT_SPECS: ExpectedPortSpec[] = [
   { name: 'screen_y', direction: 'output', width: 3, optional: true },
   { name: 'screen_data', direction: 'output', width: 8, optional: true },
   { name: 'screen_cmd', direction: 'output', width: 2, optional: true },
+  { name: 'screen_color', direction: 'output', width: 8, optional: true },
 ];
 
 const SCREEN_PORT_NAMES = ['screen_x', 'screen_y', 'screen_data', 'screen_cmd'] as const;

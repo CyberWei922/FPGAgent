@@ -4619,6 +4619,29 @@ button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-
   font: 700 10px/1.45 var(--mono);
 }
 
+.screen-board-dock {
+  width: 100%;
+  max-width: 720px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--line);
+  background: var(--elevated);
+}
+
+.screen-board-dock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.screen-board-dock-head h2 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+}
+
 /* ============================================================
    Responsive Breakpoints
    ============================================================ */
